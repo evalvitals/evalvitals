@@ -1,0 +1,4 @@
+# Minimal config — model name resolves to the default Qwen2.5-7B-Instruct checkpoint.
+# `analysis` is the registered analyzer name (see registry.analyzers.list()).
+model: qwen
+analysis: attention

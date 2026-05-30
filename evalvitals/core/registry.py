@@ -1,0 +1,101 @@
+"""Registries — the agent's discovery surface.
+
+Models and analyzers register themselves by name.  An agent (or the framework)
+then enumerates them and matches analyzers to models by capability::
+
+    registry.models.list()                  # ["qwen", ...]
+    registry.analyzers.list()               # ["attention", ...]
+    registry.analyzers.compatible_with(qwen)  # [AttentionAnalyzer, ...]
+
+This is what makes the package programmatically explorable rather than something
+you have to read source code to use.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Callable, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from evalvitals.core.analyzer import Analyzer
+    from evalvitals.core.model import Model
+
+T = TypeVar("T")
+
+
+class _Registry(Generic[T]):
+    """Name → class mapping with a registration decorator."""
+
+    def __init__(self, kind: str) -> None:
+        self._kind = kind
+        self._items: dict[str, type[T]] = {}
+
+    def register(self, name: str) -> Callable[[type[T]], type[T]]:
+        """Decorator: ``@registry.register("qwen")``."""
+
+        def decorator(cls: type[T]) -> type[T]:
+            key = name.lower()
+            if key in self._items:
+                raise ValueError(f"{self._kind} '{name}' is already registered.")
+            self._items[key] = cls
+            return cls
+
+        return decorator
+
+    def get(self, name: str) -> type[T]:
+        key = name.lower()
+        if key not in self._items:
+            raise KeyError(
+                f"Unknown {self._kind} '{name}'. Registered: {self.list()}"
+            )
+        return self._items[key]
+
+    def has(self, name: str) -> bool:
+        return name.lower() in self._items
+
+    def list(self) -> list[str]:
+        return sorted(self._items)
+
+    def all(self) -> dict[str, type[T]]:
+        return dict(self._items)
+
+
+class AnalyzerRegistry(_Registry["Analyzer"]):
+    """Analyzer registry with capability-based matching."""
+
+    def compatible_with(self, model: "Model") -> list[type["Analyzer"]]:
+        """Return analyzer classes whose ``requires`` the *model* satisfies."""
+        return [
+            cls
+            for cls in self._items.values()
+            if model.supports(cls.requires)
+        ]
+
+    def names_compatible_with(self, model: "Model") -> list[str]:
+        """Same as :meth:`compatible_with` but returns registered names."""
+        return sorted(
+            name
+            for name, cls in self._items.items()
+            if model.supports(cls.requires)
+        )
+
+
+class Registry:
+    """Top-level namespace bundling the model and analyzer registries."""
+
+    def __init__(self) -> None:
+        self.models: _Registry["Model"] = _Registry("model")
+        self.analyzers: AnalyzerRegistry = AnalyzerRegistry("analyzer")
+
+
+# Singleton used across the package.
+registry = Registry()
+
+
+def register_model(name: str):
+    """Class decorator registering a model under *name*."""
+    return registry.models.register(name)
+
+
+def register_analyzer(name: str):
+    """Class decorator registering an analyzer under *name*."""
+    return registry.analyzers.register(name)
