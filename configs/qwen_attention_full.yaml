@@ -1,0 +1,15 @@
+# Full config with explicit checkpoint and analyzer hyper-parameters.
+model:
+  name: qwen
+  checkpoint: Qwen/Qwen2.5-7B-Instruct
+  device: cuda
+  dtype: float16
+
+# Registered analyzer name.
+analysis: attention
+
+# analysis_kwargs are the analyzer's hyper-parameters (sklearn-style __init__ args).
+analysis_kwargs:
+  layer: -1       # -1 = last layer
+  head: mean      # "mean" or an integer head index
+  top_k: 10       # number of top attended tokens in the findings summary
