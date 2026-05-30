@@ -1,9 +1,10 @@
 """Example: Qwen attention analysis.
 
-Three equivalent usage patterns are shown:
-  1. Canonical  — configure an analyzer, run it on a model (sklearn-style)
-  2. Config-driven — load a YAML file and call run()
-  3. Hybrid shim — model.call_attention(), auto-derived from capabilities
+Shows the unified path — build a model from a spec key, run an analyzer:
+  1. Friendly       — evalvitals.load(key)
+  2. Config-driven  — load_config() + run()
+  3. Hybrid shim    — model.call_attention()
+  4. Explicit engine — compose(spec, backend, want=...)
 
 Run:
     python examples/qwen_attention.py
@@ -14,13 +15,13 @@ from __future__ import annotations
 PROMPT = "The Eiffel Tower is located in the city of"
 
 # ======================================================================
-# Option 1 — canonical, analyzer-centric
+# Option 1 — friendly load() + canonical analyzer
 # ======================================================================
 
+import evalvitals
 from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
-from evalvitals.models.whitebox.qwen import QwenLLM
 
-model = QwenLLM(checkpoint="Qwen/Qwen2.5-7B-Instruct", device="cuda")
+model = evalvitals.load("qwen2.5-7b-instruct")   # hf_local backend (full internals)
 analyzer = AttentionAnalyzer(layer=-1, head="mean", top_k=10)
 result = analyzer.run(model, PROMPT)
 
@@ -41,12 +42,22 @@ result2 = run(config, PROMPT)
 assert result2.num_layers == result.num_layers
 
 # ======================================================================
-# Option 3 — hybrid convenience shim (same result, derived from capabilities)
+# Option 3 — hybrid convenience shim (auto-derived from capabilities)
 # ======================================================================
 
 result3 = model.call_attention(PROMPT)
 assert result3.num_layers == result.num_layers
-print("\nAll three options produced the same result. ✓")
+print("\nOptions 1-3 produced the same result. ✓")
+
+# ======================================================================
+# Option 4 — explicit engine: pick the backend, negotiate capabilities
+# ======================================================================
+
+from evalvitals import Capability
+from evalvitals.models import compose
+
+model4 = compose("qwen2.5-7b-instruct", "hf_local", want={Capability.ATTENTION})
+assert model4.supports({Capability.ATTENTION})
 
 # ======================================================================
 # Discovery — what can an agent run on this model?

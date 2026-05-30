@@ -26,6 +26,23 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class CaptureSpec:
+    """Optional knobs that bound what ``forward`` records, to control memory.
+
+    Capturing every layer/head of attention for a long sequence is O(L^2) and
+    can be tens of GB.  A backend that honours this spec captures only the
+    requested layers/heads and can keep tensors off the CPU.  ``None`` fields
+    mean "everything" (the simple default).  Backends that don't support
+    sub-selection ignore it — the ``capture`` set alone still works.
+    """
+
+    layers: "list[int] | None" = None    # which decoder layers to keep (None = all)
+    heads: "list[int] | None" = None     # which attention heads to keep (None = all)
+    to_cpu: bool = True                   # move captured tensors to CPU (frees GPU mem)
+    with_grad: bool = False               # keep the graph for GRADIENTS (else no_grad)
+
+
+@dataclass
 class Trace:
     """Captured internals from a single forward pass.
 
@@ -80,8 +97,18 @@ class Model(ABC):
         """Produce a text response for *inputs* (a prompt or :class:`Inputs`)."""
 
     @abstractmethod
-    def forward(self, inputs: Any, capture: set[Capability]) -> Trace:
-        """Run one forward pass, capturing the requested internals into a :class:`Trace`."""
+    def forward(
+        self,
+        inputs: Any,
+        capture: set[Capability],
+        spec: "CaptureSpec | None" = None,
+    ) -> Trace:
+        """Run one forward pass, capturing the requested internals into a :class:`Trace`.
+
+        ``capture`` names *what* to record; the optional ``spec`` bounds *how
+        much* (layers/heads/device) for memory control.  Backends free to ignore
+        ``spec`` when they cannot sub-select.
+        """
 
     # ------------------------------------------------------------------
     # Capability checks

@@ -1,9 +1,10 @@
-# Full config with explicit checkpoint and analyzer hyper-parameters.
+# Full config — spec key + backend/runtime + analyzer hyper-parameters.
 model:
-  name: qwen
-  checkpoint: Qwen/Qwen2.5-7B-Instruct
-  device: cuda
-  dtype: float16
+  name: qwen2.5-7b-instruct   # identity (evalvitals.specs); checkpoint comes from the spec
+  backend: hf_local           # hf_local (internals) | api | vllm_offline
+  device: auto
+  dtype: bfloat16
+  want: [attention]           # capabilities the backend must provide (negotiated up front)
 
 # Registered analyzer name.
 analysis: attention

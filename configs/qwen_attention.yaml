@@ -1,4 +1,4 @@
-# Minimal config — model name resolves to the default Qwen2.5-7B-Instruct checkpoint.
-# `analysis` is the registered analyzer name (see registry.analyzers.list()).
-model: qwen
+# Minimal config. `model` is a spec key (evalvitals.list_specs()); a legacy alias
+# like `qwen` also resolves. `analysis` is a registered analyzer name.
+model: qwen2.5-7b-instruct
 analysis: attention

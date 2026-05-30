@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Optional
 
 
 class Label(str, Enum):
@@ -54,6 +54,111 @@ class Inputs:
         return self.prompt
 
 
+# ----------------------------------------------------------------------
+# Agent / trajectory data model
+# ----------------------------------------------------------------------
+# A FailureCase can be a single (unit) interaction OR carry a multi-step agent
+# trajectory.  The trajectory schema below is the canonical substrate for both
+# execution logging and agent failure analysis (loop detection, first-error
+# attribution, recovery).  It deliberately mirrors the keys an OTel/OpenInference
+# span carries and an existing node-tree conversation already stores, so a real
+# engine's trace adapts in via ``Trajectory.from_records`` without re-modelling.
+
+class StepRole(str, Enum):
+    """Role of a single trajectory step."""
+
+    USER = "user"
+    PLANNER = "planner"
+    ACTOR = "actor"
+    TOOL = "tool"
+    VERIFIER = "verifier"
+    MEMORY = "memory"
+    SYSTEM = "system"
+
+
+@dataclass
+class Step:
+    """One atomic step in an agent trajectory.
+
+    Execution fills the top block; analyzers WRITE the annotation block
+    (``is_first_error`` / ``failure_mode`` / ``judge_confidence``).
+    """
+
+    idx: int
+    role: StepRole = StepRole.ACTOR
+    content: Any = None                    # thought / message / final text
+    agent_id: str = "main"                 # which agent acted (multi-agent traces)
+    tool_call: Optional[dict] = None       # {"name": ..., "args": {...}, "id": ...}
+    observation: Any = None                # tool/env result (images by ref)
+    span: dict = field(default_factory=dict)   # OTel-ish attrs: tokens, latency_ms, cost, model
+    # --- analysis annotations (written by analyzers, not execution) ---
+    is_first_error: Optional[bool] = None
+    failure_mode: Optional[str] = None     # MAST code, e.g. "FM-2.4"
+    judge_confidence: Optional[float] = None
+
+
+@dataclass
+class Trajectory:
+    """The full sequence of an agent run — the unit of trajectory analysis."""
+
+    sample_id: str
+    goal: str = ""
+    steps: list[Step] = field(default_factory=list)
+    final_answer: Any = None
+    ground_truth: Any = None
+    outcome: Label = Label.UNKNOWN          # reuse the engine's outcome, don't recompute
+    metrics: dict[str, Any] = field(default_factory=dict)  # n_steps, tool_cost, latency, tokens, recovery_rate
+
+    def __len__(self) -> int:
+        return len(self.steps)
+
+    def __iter__(self) -> Iterator[Step]:
+        return iter(self.steps)
+
+    @classmethod
+    def from_records(
+        cls,
+        records: Iterable[dict],
+        *,
+        sample_id: str,
+        goal: str = "",
+        final_answer: Any = None,
+        ground_truth: Any = None,
+        outcome: Label = Label.UNKNOWN,
+        metrics: dict | None = None,
+    ) -> "Trajectory":
+        """Build a Trajectory from a list of plain dict step-records.
+
+        This is the seam for an external engine (e.g. the node-tree
+        ``conversation_history`` of an existing API runner): map each turn to a
+        ``{role, content, tool_call, observation, span, agent_id}`` dict and
+        pass them here.  No engine internals leak into the analysis layer.
+        """
+        steps: list[Step] = []
+        for i, rec in enumerate(records):
+            role = rec.get("role", StepRole.ACTOR)
+            steps.append(
+                Step(
+                    idx=i,
+                    role=StepRole(role) if not isinstance(role, StepRole) else role,
+                    content=rec.get("content"),
+                    agent_id=rec.get("agent_id", "main"),
+                    tool_call=rec.get("tool_call"),
+                    observation=rec.get("observation"),
+                    span=rec.get("span", {}),
+                )
+            )
+        return cls(
+            sample_id=sample_id,
+            goal=goal,
+            steps=steps,
+            final_answer=final_answer,
+            ground_truth=ground_truth,
+            outcome=outcome,
+            metrics=metrics or {},
+        )
+
+
 @dataclass
 class FailureCase:
     """A single unit of failure analysis.
@@ -72,6 +177,7 @@ class FailureCase:
     inputs: Inputs
     expected: Any = None
     observed: Any = None
+    trajectory: Optional[Trajectory] = None  # set for multi-step / agent cases
     label: Label = Label.UNKNOWN
     tags: set[str] = field(default_factory=set)
     provenance: Provenance = field(default_factory=Provenance)

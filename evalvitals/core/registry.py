@@ -1,14 +1,15 @@
 """Registries — the agent's discovery surface.
 
-Models and analyzers register themselves by name.  An agent (or the framework)
-then enumerates them and matches analyzers to models by capability::
+Analyzers register themselves by name.  An agent (or the framework) enumerates
+them and matches them to a model by capability::
 
-    registry.models.list()                  # ["qwen", ...]
-    registry.analyzers.list()               # ["attention", ...]
-    registry.analyzers.compatible_with(qwen)  # [AttentionAnalyzer, ...]
+    registry.analyzers.list()                  # ["attention", "token_entropy", ...]
+    registry.analyzers.compatible_with(model)  # [AttentionAnalyzer, ...]
 
-This is what makes the package programmatically explorable rather than something
-you have to read source code to use.
+Model *identity* lives in :mod:`evalvitals.specs` (``ModelSpec``), not here;
+``registry.models`` is a deprecated shim that delegates to it.  This is what
+makes the package programmatically explorable rather than something you have to
+read source code to use.
 """
 
 from __future__ import annotations
@@ -79,11 +80,51 @@ class AnalyzerRegistry(_Registry["Analyzer"]):
         )
 
 
+class _DeprecatedModelRegistry(_Registry["Model"]):
+    """Deprecated shim: model identity now lives in :mod:`evalvitals.specs`.
+
+    ``registry.models`` is kept so older code keeps working, but it delegates to
+    the spec registry and warns.  Use ``evalvitals.list_specs()`` /
+    ``evalvitals.get_spec()`` (or ``evalvitals.load`` / ``compose``) instead.
+    """
+
+    @staticmethod
+    def _warn() -> None:
+        import warnings
+
+        warnings.warn(
+            "registry.models is deprecated; model identity now lives in "
+            "evalvitals.specs (use evalvitals.list_specs() / get_spec(), or "
+            "evalvitals.load / compose to build a model).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    def list(self) -> list[str]:
+        self._warn()
+        from evalvitals.specs import list_specs
+
+        return list_specs()
+
+    def has(self, name: str) -> bool:
+        self._warn()
+        from evalvitals.specs import REGISTRY
+
+        return name.lower() in REGISTRY
+
+    def get(self, name: str):  # returns a ModelSpec, not a class
+        self._warn()
+        from evalvitals.specs import get_spec
+
+        return get_spec(name.lower())
+
+
 class Registry:
     """Top-level namespace bundling the model and analyzer registries."""
 
     def __init__(self) -> None:
-        self.models: _Registry["Model"] = _Registry("model")
+        # Model identity is the spec registry's job now; this is a back-compat shim.
+        self.models: _DeprecatedModelRegistry = _DeprecatedModelRegistry("model")
         self.analyzers: AnalyzerRegistry = AnalyzerRegistry("analyzer")
 
 

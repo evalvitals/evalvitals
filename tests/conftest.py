@@ -34,19 +34,29 @@ class FakeModel(Model):
     def generate(self, inputs, **kwargs) -> str:
         return "fake-output"
 
-    def forward(self, inputs, capture: set[Capability]) -> Trace:
+    def forward(self, inputs, capture: set[Capability], spec=None) -> Trace:
         torch.manual_seed(0)
-        attentions = None
-        if Capability.ATTENTION in capture:
+        provided: set[Capability] = set()
+        attentions = hidden_states = logits = None
+        if Capability.ATTENTION in capture and Capability.ATTENTION in self.capabilities:
             attentions = [
                 torch.rand(self._n_heads, self._seq_len, self._seq_len)
                 for _ in range(self._n_layers)
             ]
+            provided.add(Capability.ATTENTION)
+        if Capability.HIDDEN_STATES in capture and Capability.HIDDEN_STATES in self.capabilities:
+            hidden_states = [torch.rand(self._seq_len, 8) for _ in range(self._n_layers + 1)]
+            provided.add(Capability.HIDDEN_STATES)
+        if Capability.LOGITS in capture and Capability.LOGITS in self.capabilities:
+            logits = torch.rand(self._seq_len, 32)
+            provided.add(Capability.LOGITS)
         return Trace(
             tokens=[f"t{i}" for i in range(self._seq_len)],
             token_ids=list(range(self._seq_len)),
-            provided={Capability.ATTENTION} if attentions is not None else set(),
+            provided=provided,
             attentions=attentions,
+            hidden_states=hidden_states,
+            logits=logits,
         )
 
     def __repr__(self) -> str:

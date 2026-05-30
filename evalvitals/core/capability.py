@@ -20,7 +20,9 @@ class Capability(str, Enum):
     """
 
     GENERATE = "generate"           # produce text output
-    LOGITS = "logits"               # next-token logit distribution
+    TOOL_CALLS = "tool_calls"       # emit/consume tool calls (agent mode)
+    LOGPROBS = "logprobs"           # top-k token logprobs (API-feasible; OpenAI yes / Gemini no)
+    LOGITS = "logits"               # full next-token logit tensor (white-box forward)
     ATTENTION = "attention"         # per-layer, per-head attention weights
     HIDDEN_STATES = "hidden_states" # per-layer residual-stream activations
     EMBEDDINGS = "embeddings"       # input/output embedding vectors

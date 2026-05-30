@@ -29,8 +29,10 @@ if TYPE_CHECKING:
 # ----------------------------------------------------------------------
 
 def list_models() -> list[str]:
-    """All registered model names."""
-    return registry.models.list()
+    """All known model spec keys (the agent's model-selection surface)."""
+    from evalvitals.specs import list_specs
+
+    return list_specs()
 
 
 def list_analyses() -> list[str]:

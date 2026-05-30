@@ -21,10 +21,13 @@ from evalvitals.core.case import (
     Label,
     Provenance,
     Source,
+    Step,
+    StepRole,
+    Trajectory,
     as_casebatch,
 )
 from evalvitals.core.experiment import Experiment, ExperimentRunner
-from evalvitals.core.model import Model, Trace
+from evalvitals.core.model import CaptureSpec, Model, Trace
 from evalvitals.core.pipeline import Pipeline
 from evalvitals.core.registry import (
     Registry,
@@ -33,12 +36,19 @@ from evalvitals.core.registry import (
     registry,
 )
 from evalvitals.core.result import Result
+from evalvitals.core.spec import (
+    AttnSemantics,
+    ModelSpec,
+    ModulePaths,
+    VisionSpec,
+)
 
 __all__ = [
     "Capability",
     "CapabilityError",
     "Model",
     "Trace",
+    "CaptureSpec",
     "Analyzer",
     "FailureCase",
     "CaseBatch",
@@ -46,7 +56,14 @@ __all__ = [
     "Label",
     "Provenance",
     "Source",
+    "Step",
+    "StepRole",
+    "Trajectory",
     "as_casebatch",
+    "ModelSpec",
+    "VisionSpec",
+    "ModulePaths",
+    "AttnSemantics",
     "Result",
     "registry",
     "Registry",

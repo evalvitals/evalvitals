@@ -1,0 +1,182 @@
+"""HF-local backend — the only InternalsHandle path.
+
+Loads any spec via ``transformers`` and captures internals.  Two-tier capture:
+
+  * **HF flags** (``output_attentions`` / ``output_hidden_states`` / logits) cover
+    attention, residual-stream hidden states and logits with NO module-path
+    surgery — this is the high-value common path.
+  * **hooks + runtime path discovery** (:mod:`evalvitals.models._discover`) are
+    only needed beyond what flags give (activation patching, MoE routing,
+    gradients) — reserved for Stage 2.
+
+Attention capture REQUIRES eager attention (sdpa/flash silently return ``None``),
+so when the model declares ``eager_required_for_attn`` we force
+``attn_implementation="eager"``.  ``torch`` / ``transformers`` are imported
+lazily so this module imports on a torch-free install.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from evalvitals.core.capability import Capability
+from evalvitals.core.case import Inputs
+from evalvitals.core.model import Model, Trace
+from evalvitals.core.spec import AttnSemantics
+from evalvitals.models.backends.base import Backend, RuntimeConfig
+
+# capability -> HF forward flag
+_CAPTURE_FLAGS = {
+    Capability.ATTENTION: "output_attentions",
+    Capability.HIDDEN_STATES: "output_hidden_states",
+}
+
+
+class HFLocalModel(Model):
+    """A locally-loaded HF model, constructed from a :class:`ModelSpec`."""
+
+    def __init__(self, spec, runtime: RuntimeConfig) -> None:
+        self.spec = spec
+        self.runtime = runtime
+        self._hf = None  # (model, processor) — lazy
+        caps = {
+            Capability.GENERATE,
+            Capability.LOGITS,
+            Capability.LOGPROBS,
+            Capability.HIDDEN_STATES,
+        }
+        if spec.attn_semantics is not AttnSemantics.NONE:
+            caps.add(Capability.ATTENTION)
+        if spec.is_vlm:
+            # vision tower present; image-text generation is in scope, image-token
+            # white-box capture (TokenTypeMap) is Stage 2.
+            pass
+        self.capabilities = frozenset(caps)
+
+    # -- lazy load -----------------------------------------------------
+    def load(self) -> None:
+        import torch
+        import transformers
+
+        auto_cls = getattr(transformers, self.spec.auto_class)
+        proc_cls = getattr(transformers, self.spec.processor_class, transformers.AutoProcessor)
+
+        attn_impl = self.runtime.attn_impl
+        if attn_impl is None and self.spec.eager_required_for_attn and Capability.ATTENTION in self.capabilities:
+            attn_impl = "eager"  # sdpa/flash return None attentions
+
+        kwargs: dict[str, Any] = dict(
+            dtype=getattr(torch, self.runtime.dtype),
+            device_map=self.runtime.device,
+            trust_remote_code=self.spec.trust_remote_code,
+        )
+        if attn_impl:
+            kwargs["attn_implementation"] = attn_impl
+
+        model = auto_cls.from_pretrained(self.spec.hf_repo, **kwargs)
+        model.eval()
+        processor = proc_cls.from_pretrained(self.spec.hf_repo, trust_remote_code=self.spec.trust_remote_code)
+        self._hf = (model, processor)
+
+    @property
+    def _loaded(self):
+        if self._hf is None:
+            self.load()
+        return self._hf
+
+    @staticmethod
+    def _as_prompt(inputs: Any) -> str:
+        return inputs.prompt if isinstance(inputs, Inputs) else str(inputs)
+
+    def _encode(self, prompt: str):
+        import torch  # noqa: F401
+
+        model, processor = self._loaded
+        tok = getattr(processor, "tokenizer", processor)
+        enc = tok(prompt, return_tensors="pt")
+        device = next(model.parameters()).device
+        return {k: v.to(device) for k, v in enc.items()}
+
+    # -- interface -----------------------------------------------------
+    def generate(self, inputs: Any, **kwargs) -> str:
+        import torch
+
+        model, processor = self._loaded
+        tok = getattr(processor, "tokenizer", processor)
+        prompt = self._as_prompt(inputs)
+        enc = self._encode(prompt)
+        max_new = kwargs.pop("max_new_tokens", self.runtime.max_new_tokens)
+        with torch.no_grad():
+            out = model.generate(**enc, max_new_tokens=max_new, **kwargs)
+        new = out[0][enc["input_ids"].shape[1]:]
+        return tok.decode(new, skip_special_tokens=True)
+
+    def forward(self, inputs: Any, capture: set[Capability], spec=None) -> Trace:
+        import torch
+
+        if self.spec.is_vlm:
+            raise NotImplementedError(
+                f"{self.spec.key}: VLM forward-capture (image tokens + TokenTypeMap) is Stage 2. "
+                "Text generation works; white-box image-token capture is not wired yet."
+            )
+        model, processor = self._loaded
+        tok = getattr(processor, "tokenizer", processor)
+        prompt = self._as_prompt(inputs)
+        enc = self._encode(prompt)
+        token_ids = enc["input_ids"][0].tolist()
+        tokens = [tok.decode([t]) for t in token_ids]
+
+        flags = {flag: True for cap, flag in _CAPTURE_FLAGS.items() if cap in capture}
+        with torch.no_grad():
+            outputs = model(**enc, **flags)
+
+        layers = spec.layers if spec is not None else None
+        to_cpu = spec.to_cpu if spec is not None else True
+
+        def _maybe_subset(seq):
+            return [seq[i] for i in layers] if layers is not None else list(seq)
+
+        def _move(t):
+            return t.cpu() if to_cpu else t
+
+        provided: set[Capability] = set()
+        attentions = hidden_states = logits = None
+        if Capability.ATTENTION in capture and getattr(outputs, "attentions", None) is not None:
+            attentions = [_move(a.squeeze(0)) for a in _maybe_subset(outputs.attentions)]
+            provided.add(Capability.ATTENTION)
+        if Capability.HIDDEN_STATES in capture and getattr(outputs, "hidden_states", None) is not None:
+            hidden_states = [_move(h.squeeze(0)) for h in _maybe_subset(outputs.hidden_states)]
+            provided.add(Capability.HIDDEN_STATES)
+        if Capability.LOGITS in capture:
+            logits = _move(outputs.logits.squeeze(0))
+            provided.add(Capability.LOGITS)
+
+        return Trace(
+            tokens=tokens,
+            token_ids=token_ids,
+            provided=provided,
+            attentions=attentions,
+            hidden_states=hidden_states,
+            logits=logits,
+            extras={"attn_semantics": self.spec.attn_semantics.value},
+        )
+
+    def __repr__(self) -> str:
+        status = "loaded" if self._hf else "lazy"
+        return f"HFLocalModel(key={self.spec.key!r}, {status})"
+
+
+class HFLocalBackend(Backend):
+    kind = "hf_local"
+    capabilities = frozenset(
+        {
+            Capability.GENERATE,
+            Capability.LOGITS,
+            Capability.LOGPROBS,
+            Capability.HIDDEN_STATES,
+            Capability.ATTENTION,
+        }
+    )
+
+    def build(self, spec, runtime: RuntimeConfig) -> HFLocalModel:
+        return HFLocalModel(spec, runtime)
