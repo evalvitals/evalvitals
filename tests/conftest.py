@@ -55,10 +55,12 @@ class FakeModel(Model):
             ]
             provided.add(Capability.ATTENTION)
         if Capability.HIDDEN_STATES in capture and Capability.HIDDEN_STATES in self.capabilities:
-            hidden_states = [torch.rand(self._seq_len, 8) for _ in range(self._n_layers + 1)]
+            hidden_states = [
+                torch.rand(self._seq_len, self._hidden_dim) for _ in range(self._n_layers + 1)
+            ]
             provided.add(Capability.HIDDEN_STATES)
         if Capability.LOGITS in capture and Capability.LOGITS in self.capabilities:
-            logits = torch.rand(self._seq_len, 32)
+            logits = torch.rand(self._seq_len, self._vocab)
             provided.add(Capability.LOGITS)
         return Trace(
             tokens=[f"t{i}" for i in range(self._seq_len)],

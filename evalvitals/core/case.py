@@ -249,13 +249,16 @@ class CaseBatch:
         return f"CaseBatch(n={len(self)})"
 
 
-def as_casebatch(data: str | FailureCase | Inputs | Iterable | CaseBatch) -> CaseBatch:
+def as_casebatch(
+    data: str | FailureCase | Inputs | Trajectory | Iterable | CaseBatch,
+) -> CaseBatch:
     """Normalise common inputs into a :class:`CaseBatch`.
 
     Accepts:
       - a ``str``                → single-case batch from the prompt,
       - a :class:`FailureCase`   → single-case batch,
       - an :class:`Inputs`       → single-case batch,
+      - a :class:`Trajectory`    → single-case batch,
       - a :class:`CaseBatch`     → returned unchanged,
       - any iterable of the above.
     """
@@ -278,5 +281,5 @@ def as_casebatch(data: str | FailureCase | Inputs | Iterable | CaseBatch) -> Cas
         return batch
     raise TypeError(
         f"Cannot interpret {type(data).__name__} as cases. "
-        "Pass a str, FailureCase, Inputs, CaseBatch, or an iterable of these."
+        "Pass a str, FailureCase, Inputs, Trajectory, CaseBatch, or an iterable of these."
     )
