@@ -1,0 +1,16 @@
+# Full config — spec key + backend/runtime + analyzer hyper-parameters.
+model:
+  name: qwen2.5-7b-instruct   # identity (evalvitals.specs); checkpoint comes from the spec
+  backend: hf_local           # hf_local (internals) | api | vllm_offline
+  device: auto
+  dtype: bfloat16
+  want: [attention]           # capabilities the backend must provide (negotiated up front)
+
+# Registered analyzer name.
+analysis: attention
+
+# analysis_kwargs are the analyzer's hyper-parameters (sklearn-style __init__ args).
+analysis_kwargs:
+  layer: -1       # -1 = last layer
+  head: mean      # "mean" or an integer head index
+  top_k: 10       # number of top attended tokens in the findings summary
