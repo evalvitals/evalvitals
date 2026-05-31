@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer, AttentionResult
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer, AttentionResult
 from evalvitals.core import Capability, CaseBatch
 from tests.conftest import FakeModel
 

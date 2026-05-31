@@ -1,0 +1,22 @@
+"""OPERA — over-trust penalty + retrospection-allocation on attention (Stage 2).
+
+Diagnoses object hallucination from the attention pattern (over-trust on a few
+summary tokens). ``requires=ATTENTION`` (+ decode-loop control for the mitigation).
+White-box, VLM.
+"""
+
+from __future__ import annotations
+
+from evalvitals.core.analyzer import Analyzer
+from evalvitals.core.capability import Capability
+from evalvitals.core.registry import register_analyzer
+
+
+@register_analyzer("opera")
+class OPERAAnalyzer(Analyzer):
+    name = "opera"
+    requires = frozenset({Capability.ATTENTION})
+    applies_to_modalities = frozenset({"image"})
+
+    def _run(self, model, cases):
+        raise NotImplementedError("Stage 2: attention over-trust diagnosis (needs decode-loop control).")

@@ -1,0 +1,25 @@
+"""Grad-CAM on the vision tower (Stage 2).
+
+Gradient-weighted activation maps over the ViT feature map → spatial saliency.
+``requires=GRADIENTS`` (backward pass); VLM vision tower only. Needs a
+``reshape_transform`` for ViT and the per-arch vision-tower target layer.
+"""
+
+from __future__ import annotations
+
+from evalvitals.core.analyzer import Analyzer
+from evalvitals.core.capability import Capability
+from evalvitals.core.registry import register_analyzer
+
+
+@register_analyzer("gradcam")
+class GradCAMAnalyzer(Analyzer):
+    name = "gradcam"
+    requires = frozenset({Capability.GRADIENTS})
+    applies_to_modalities = frozenset({"image"})
+
+    def _run(self, model, cases):
+        raise NotImplementedError(
+            "Stage 2: register a hook on the vision-tower target block, backward through a "
+            "target logit, weight activations by gradients (pytorch-grad-cam + reshape_transform)."
+        )

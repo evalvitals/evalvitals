@@ -10,7 +10,7 @@ Equivalent ways to run an analysis:
 1. Friendly + canonical — build a model, run an analyzer on it::
 
     import evalvitals
-    from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+    from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
     model = evalvitals.load("qwen2.5-7b-instruct")          # spec key
     result = AttentionAnalyzer(top_k=5).run(model, "The capital of France is")
@@ -33,8 +33,8 @@ Equivalent ways to run an analysis:
     model = compose("qwen2.5-7b-instruct", "hf_local", want={evalvitals.Capability.ATTENTION})
 """
 
-# Importing these populates the registry (analyzers self-register).
-import evalvitals.analysis as _analysis  # noqa: E402,F401
+# Importing these populates the registry (models + analyzers self-register).
+import evalvitals.analyzers as _analyzers  # noqa: E402,F401
 from evalvitals.config import AnalysisConfig, load_config
 from evalvitals.core import (
     Analyzer,

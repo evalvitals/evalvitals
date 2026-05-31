@@ -63,21 +63,21 @@ class _Registry(Generic[T]):
 class AnalyzerRegistry(_Registry["Analyzer"]):
     """Analyzer registry with capability-based matching."""
 
+    @staticmethod
+    def _matches(cls: type["Analyzer"], model: "Model") -> bool:
+        """Analyzer runs on *model* iff capabilities are satisfied AND modalities overlap."""
+        if not model.supports(cls.requires):
+            return False
+        model_modalities = getattr(model, "modalities", frozenset({"text"}))
+        return bool(cls.applies_to_modalities & model_modalities)
+
     def compatible_with(self, model: "Model") -> list[type["Analyzer"]]:
-        """Return analyzer classes whose ``requires`` the *model* satisfies."""
-        return [
-            cls
-            for cls in self._items.values()
-            if model.supports(cls.requires)
-        ]
+        """Return analyzer classes runnable on *model* (capability + modality match)."""
+        return [cls for cls in self._items.values() if self._matches(cls, model)]
 
     def names_compatible_with(self, model: "Model") -> list[str]:
         """Same as :meth:`compatible_with` but returns registered names."""
-        return sorted(
-            name
-            for name, cls in self._items.items()
-            if model.supports(cls.requires)
-        )
+        return sorted(name for name, cls in self._items.items() if self._matches(cls, model))
 
 
 class _DeprecatedModelRegistry(_Registry["Model"]):

@@ -53,11 +53,16 @@ class HFLocalModel(Model):
         # template renders tools (declared per-model via spec.tool_calling).
         if spec.tool_calling:
             caps.add(Capability.TOOL_CALLS)
-        if spec.is_vlm:
-            # vision tower present; image-text generation is in scope, image-token
-            # white-box capture (TokenTypeMap) is Stage 2.
-            pass
         self.capabilities = frozenset(caps)
+        self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
+
+    def unembed_weight(self):
+        """The lm_head / unembedding weight ``(vocab, dim)`` for logit-lens."""
+        from evalvitals.models._discover import get_unembed
+
+        model, _ = self._loaded
+        head = get_unembed(model)
+        return getattr(head, "weight", None)
 
     # -- lazy load -----------------------------------------------------
     def load(self) -> None:

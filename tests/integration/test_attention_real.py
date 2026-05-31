@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer, AttentionResult
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer, AttentionResult
 
 pytestmark = pytest.mark.gpu
 
