@@ -1,0 +1,12 @@
+services:
+  qwen_attention:
+    build:
+      context: ../..
+      dockerfile: examples/qwen_attention/Dockerfile
+    image: evalvitals-qwen-attention
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_HOME=/models
+    volumes:
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/models

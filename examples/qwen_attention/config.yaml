@@ -1,0 +1,10 @@
+model:
+  name: qwen2.5-7b-instruct
+  backend: hf_local
+  device: auto
+  dtype: bfloat16
+  want: [attention]
+analysis: attention
+analysis_kwargs:
+  layer: -1
+  top_k: 10
