@@ -17,7 +17,7 @@ PROMPT = "The Eiffel Tower is located in the city of"
 # Option 1 — canonical, analyzer-centric
 # ======================================================================
 
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 from evalvitals.models.whitebox.qwen import QwenLLM
 
 model = QwenLLM(checkpoint="Qwen/Qwen2.5-7B-Instruct", device="cuda")

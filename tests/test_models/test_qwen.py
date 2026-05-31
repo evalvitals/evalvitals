@@ -110,7 +110,7 @@ def test_generate_returns_string():
 # ------------------------------------------------------------------
 
 def test_call_attention_shim():
-    from evalvitals.analysis.whitebox.attention import AttentionResult
+    from evalvitals.analyzers.attention.summary import AttentionResult
 
     model = _make_qwen(n_layers=2, n_heads=4, seq_len=5)
     result = model.call_attention("The capital of France is")

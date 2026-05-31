@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import evalvitals.analysis  # noqa: F401  (populate registries)
-import evalvitals.models    # noqa: F401
+import evalvitals.analyzers  # noqa: F401  (populate registries)
+import evalvitals.models     # noqa: F401
 from evalvitals.core import Result, registry
 from tests.conftest import FakeModel
 
@@ -19,7 +19,8 @@ def test_models_registered():
 def test_analyzers_registered():
     names = registry.analyzers.list()
     assert "attention" in names
-    assert "saliency" in names
+    assert "rise" in names          # perturbation
+    assert "loop_detect" in names   # agent heuristic
 
 
 def test_registry_get_unknown_raises():
@@ -35,7 +36,7 @@ def test_duplicate_registration_raises():
 # -- sklearn-style introspection --------------------------------------
 
 def test_get_set_params():
-    from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+    from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
     a = AttentionAnalyzer(layer=-1, top_k=5)
     assert a.get_params() == {"layer": -1, "head": "mean", "top_k": 5}
@@ -47,7 +48,7 @@ def test_get_set_params():
 # -- call_x shim -------------------------------------------------------
 
 def test_call_attention_shim_dispatches():
-    from evalvitals.analysis.whitebox.attention import AttentionResult
+    from evalvitals.analyzers.attention.summary import AttentionResult
 
     model = FakeModel()
     result = model.call_attention("the capital of france is")

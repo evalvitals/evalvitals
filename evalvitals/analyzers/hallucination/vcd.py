@@ -1,0 +1,22 @@
+"""VCD — Visual Contrastive Decoding (Leng et al.) (Stage 2).
+
+Contrast logits on the original vs a distorted image to suppress
+language-prior-driven hallucination. Needs decode-time logit control (in-process
+HF), VLM. Modeled here as an analyzer that reports the contrastive shift.
+"""
+
+from __future__ import annotations
+
+from evalvitals.core.analyzer import Analyzer
+from evalvitals.core.capability import Capability
+from evalvitals.core.registry import register_analyzer
+
+
+@register_analyzer("vcd")
+class VCDAnalyzer(Analyzer):
+    name = "vcd"
+    requires = frozenset({Capability.LOGITS})
+    applies_to_modalities = frozenset({"image"})
+
+    def _run(self, model, cases):
+        raise NotImplementedError("Stage 2: contrastive decoding over original vs distorted image (logit control).")

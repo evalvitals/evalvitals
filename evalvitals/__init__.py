@@ -5,7 +5,7 @@ Three equivalent ways to run an analysis:
 1. Canonical (sklearn-style) — configure an analyzer, run it on a model::
 
     from evalvitals.models.whitebox.qwen import QwenLLM
-    from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+    from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
     model = QwenLLM()
     result = AttentionAnalyzer(top_k=5).run(model, "The capital of France is")
@@ -24,7 +24,7 @@ Three equivalent ways to run an analysis:
 """
 
 # Importing these populates the registry (models + analyzers self-register).
-import evalvitals.analysis as _analysis  # noqa: E402,F401
+import evalvitals.analyzers as _analyzers  # noqa: E402,F401
 from evalvitals.config import AnalysisConfig, load_config
 from evalvitals.core import (
     Analyzer,

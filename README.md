@@ -29,7 +29,7 @@ fails at `compose()` time, not deep in a hook.
 
 ```python
 from evalvitals.models.whitebox.qwen import QwenLLM
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
 model = QwenLLM(checkpoint="Qwen/Qwen2.5-7B-Instruct")
 result = AttentionAnalyzer(layer=-1, top_k=5).run(model, "The Eiffel Tower is in")
@@ -65,9 +65,9 @@ result = model.call_attention("The Eiffel Tower is in")
 ```python
 from evalvitals import registry
 
-registry.models.list()                          # ['qwen']
-registry.analyzers.list()                        # ['attention', 'saliency', ...]
-registry.analyzers.names_compatible_with(model)  # analyses runnable on this model
+registry.models.list()                           # ['qwen']
+registry.analyzers.list()                         # ['attention', 'rise', 'loop_detect', 'logit_lens', ...]
+registry.analyzers.names_compatible_with(model)   # analyses runnable on this model (capability + modality)
 ```
 
 An analyzer run on a model that lacks a required capability raises a clear
@@ -164,12 +164,18 @@ evalvitals/
 │   ├── _discover.py            runtime decoder-layer discovery (anti-hardcoding)  ← NEW
 │   ├── backends/{api,hf_local,vllm_offline}.py   ModelSpec × Backend runtimes  ← NEW
 │   └── whitebox/qwen.py        QwenLLM (legacy concrete model; still supported)
-├── analysis/                   Analyzers; declare `requires`
-│   ├── whitebox/attention.py   AttentionAnalyzer (findings + artifacts)
-│   ├── whitebox/uncertainty.py TokenEntropyAnalyzer (free, LOGITS-only)  ← NEW
-│   ├── whitebox/{saliency,probing,shapley,activation,embedding_geometry}.py  (Stage 2)
-│   ├── blackbox/{rise,vl_shap,transformer_mm}.py   (Stage 2)
-│   └── agent/{failure_attribution,trajectory_eval}.py  (Stage 2; consume Trajectory)
+├── analyzers/                  # functional taxonomy by CAPABILITY (not black/white-box)  ← NEW
+│   │                           #   each declares required_capabilities + applies_to_modalities
+│   ├── perturbation/  rise✓ vl_shap mm_shap            # GENERATE / LOGPROBS
+│   ├── uncertainty/   entropy✓ self_consistency✓ verbalized_conf✓   # LOGITS / GENERATE (black-box-feasible)
+│   ├── hallucination/ pope chair(metric✓) opera vcd    # GENERATE / ATTENTION (VLM)
+│   ├── attention/     summary✓ rollout✓ sink✓ relative_attn   # ATTENTION
+│   ├── attribution/   gradcam generic_attn             # GRADIENTS (white-box)
+│   ├── lens/          logit_lens✓ tuned_lens           # HIDDEN_STATES
+│   ├── patching/      causal_trace                     # HIDDEN_STATES read+write (nnsight)
+│   ├── geometry/      cka✓ linear_probe                # HIDDEN_STATES (CLIP/SigLIP-scoped)
+│   └── agent/         loop_detect✓ ignored_obs✓ first_error_judge✓ counterfactual   # Trajectory
+│                      #  ✓ = implemented + unit-tested; others declare contract, raise (Stage 2)
 ├── datasets/                   loaders → CaseBatch (Stage 2)
 ├── stats/                      consume Results (Stage 2)
 └── eval_agent/                 self-evolving loop (interfaces + stubs)
@@ -194,7 +200,7 @@ so the package's public API *is* the agent's action space.
 ## Running tests
 
 ```bash
-pytest        # 101 tests, no GPU required (models are mocked)
+pytest        # 117 tests, no GPU required (models are mocked)
 ```
 
 ## Docker

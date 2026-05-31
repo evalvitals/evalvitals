@@ -267,6 +267,8 @@ def as_casebatch(data: str | FailureCase | Inputs | Iterable | CaseBatch) -> Cas
         return CaseBatch([data])
     if isinstance(data, Inputs):
         return CaseBatch([FailureCase(inputs=data)])
+    if isinstance(data, Trajectory):  # agent analyzers accept a Trajectory directly
+        return CaseBatch([FailureCase(inputs=Inputs(prompt=data.goal), trajectory=data)])
     if isinstance(data, Iterable):
         batch = CaseBatch()
         for item in data:

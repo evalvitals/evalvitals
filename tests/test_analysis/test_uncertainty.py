@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from evalvitals.analysis.whitebox.uncertainty import TokenEntropyAnalyzer, UncertaintyResult
+from evalvitals.analyzers.uncertainty.entropy import TokenEntropyAnalyzer, UncertaintyResult
 from evalvitals.core.capability import Capability, CapabilityError
 from tests.conftest import FakeModel
 

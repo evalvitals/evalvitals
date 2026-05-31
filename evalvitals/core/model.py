@@ -92,6 +92,17 @@ class Model(ABC):
     #: Capabilities this model provides. Override in subclasses.
     capabilities: frozenset[Capability] = frozenset()
 
+    #: Modalities this model handles (e.g. {"text"}, {"text","image"}). Analyzers
+    #: declare ``applies_to_modalities`` and are matched against this.
+    modalities: frozenset[str] = frozenset({"text"})
+
+    def unembed_weight(self):
+        """Optional: the unembedding matrix ``(vocab, dim)`` for logit-lens analyzers.
+
+        Returns ``None`` unless a white-box backend exposes it.
+        """
+        return None
+
     @abstractmethod
     def generate(self, inputs: Any, **kwargs) -> str:
         """Produce a text response for *inputs* (a prompt or :class:`Inputs`)."""

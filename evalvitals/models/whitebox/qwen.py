@@ -48,7 +48,7 @@ class QwenLLM(WhiteboxModel):
         print(model.generate("What is the capital of France?"))
 
         # canonical, analyzer-centric:
-        from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+        from evalvitals.analyzers.attention.summary import AttentionAnalyzer
         result = AttentionAnalyzer().run(model, "The Eiffel Tower is in")
 
         # hybrid convenience shim (same thing, derived from capabilities):

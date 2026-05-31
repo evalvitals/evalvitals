@@ -39,6 +39,9 @@ class Analyzer(ABC):
 
     name: str = "analyzer"
     requires: frozenset[Capability] = frozenset()
+    #: Modalities this analysis applies to; matched against ``model.modalities``.
+    #: ``{"text"}`` runs on any text-capable model; ``{"image"}`` only on VLMs.
+    applies_to_modalities: frozenset[str] = frozenset({"text"})
 
     def __init__(self, **params: Any) -> None:
         # Store hyper-parameters sklearn-style for introspection / reproduction.
@@ -92,7 +95,9 @@ class Analyzer(ABC):
     # ------------------------------------------------------------------
 
     def _check_capabilities(self, model: "Model") -> None:
-        missing = set(self.requires) - set(model.capabilities)
+        if not self.requires:  # capability-free (e.g. trajectory heuristics) — model may be None
+            return
+        missing = set(self.requires) - set(getattr(model, "capabilities", frozenset()))
         if missing:
             raise CapabilityError(
                 analyzer=self.name,

@@ -17,8 +17,8 @@ from __future__ import annotations
 import torch
 
 from evalvitals import Agent, Tool, compose
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
-from evalvitals.analysis.whitebox.uncertainty import TokenEntropyAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
+from evalvitals.analyzers.uncertainty.entropy import TokenEntropyAnalyzer
 from evalvitals.core.capability import Capability
 from evalvitals.models import RuntimeConfig
 

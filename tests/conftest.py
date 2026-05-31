@@ -21,18 +21,28 @@ class FakeModel(Model):
         n_layers: int = 3,
         n_heads: int = 4,
         seq_len: int = 5,
+        hidden_dim: int = 8,
+        vocab: int = 32,
+        modalities: set[str] | None = None,
     ) -> None:
         self.capabilities = frozenset(
             capabilities
             if capabilities is not None
             else {Capability.GENERATE, Capability.ATTENTION, Capability.HIDDEN_STATES}
         )
+        self.modalities = frozenset(modalities or {"text"})
         self._n_layers = n_layers
         self._n_heads = n_heads
         self._seq_len = seq_len
+        self._hidden_dim = hidden_dim
+        self._vocab = vocab
 
     def generate(self, inputs, **kwargs) -> str:
         return "fake-output"
+
+    def unembed_weight(self):
+        torch.manual_seed(1)
+        return torch.rand(self._vocab, self._hidden_dim)
 
     def forward(self, inputs, capture: set[Capability], spec=None) -> Trace:
         torch.manual_seed(0)
