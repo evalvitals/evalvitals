@@ -31,7 +31,9 @@ from evalvitals.analyzers.base import Analyzer, Result
 
 try:  # attention/summary imports torch+numpy at module load
     from evalvitals.analyzers import attention  # noqa: F401
-except ImportError:  # pragma: no cover - light install
+except ModuleNotFoundError as e:  # pragma: no cover - light install
+    if e.name not in {"torch", "numpy"}:
+        raise
     attention = None  # type: ignore
 
 __all__ = ["Analyzer", "Result"]
