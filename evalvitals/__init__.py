@@ -45,7 +45,8 @@ from evalvitals.core import (
     Result,
     registry,
 )
-from evalvitals.models import RuntimeConfig, compose, load, load_model
+from evalvitals.core.tool import Tool, ToolCall
+from evalvitals.models import Agent, RuntimeConfig, compose, load, load_model
 from evalvitals.specs import get_spec, list_specs
 
 __version__ = "0.1.0"
@@ -55,6 +56,9 @@ __all__ = [
     "load_model",
     "compose",
     "RuntimeConfig",
+    "Agent",
+    "Tool",
+    "ToolCall",
     "get_spec",
     "list_specs",
     "run",

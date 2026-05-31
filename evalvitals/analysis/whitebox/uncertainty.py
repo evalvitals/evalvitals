@@ -11,7 +11,7 @@ runs on any model that provides it (and, unlike attention, does not need eager).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from evalvitals.core.analyzer import Analyzer
 from evalvitals.core.capability import Capability

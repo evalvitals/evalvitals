@@ -16,10 +16,13 @@ from evalvitals.config import ModelConfig
 from evalvitals.core.capability import Capability
 from evalvitals.core.model import Model
 
-# Backend layer (torch-free at import; heavy deps are lazy inside build/load).
-from evalvitals.models.backends import BACKENDS, RuntimeConfig
+# Backend layer + agent loop (torch-free at import; heavy deps are lazy in build/load).
+from evalvitals.core.tool import ChatTurn, Tool, ToolCall
+from evalvitals.models.agent import Agent, APIToolHandlerExecutor, ToolExecutor
+from evalvitals.models.backends import BACKENDS, RuntimeConfig, call_vision_api_chat_fn
 from evalvitals.models.base import BaseAgent
 from evalvitals.models.compose import compose
+from evalvitals.models.toolcodec import OpenAIToolCodec, QwenToolCodec, codec_for
 
 # Legacy concrete white-box model (now a thin deprecated alias) — optional on the
 # light, pure-API install (its module imports nothing heavy at top level).
@@ -37,6 +40,16 @@ __all__ = [
     "RuntimeConfig",
     "BACKENDS",
     "resolve_spec_key",
+    "Agent",
+    "ToolExecutor",
+    "APIToolHandlerExecutor",
+    "Tool",
+    "ToolCall",
+    "ChatTurn",
+    "OpenAIToolCodec",
+    "QwenToolCodec",
+    "codec_for",
+    "call_vision_api_chat_fn",
 ]
 
 # Legacy name → canonical spec key.  Keeps old configs/code working.

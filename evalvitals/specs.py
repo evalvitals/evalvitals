@@ -7,7 +7,10 @@ the live config via the attribute NAMES in ``VisionSpec`` — never baked as val
 (GLM-4.5V 151363 vs GLM-4.1V 151343 is exactly why).
 
 Paths reflect the verified post-VLM-refactor transformers layout (single
-``.model``; Kimi/Llama4 have no outer ``.model``).  This module is torch-free.
+``.model``; Kimi/Llama4 have no outer ``.model``).  ``tool_calling=True`` marks
+instruct/thinking checkpoints whose chat template renders tools (grants
+TOOL_CALLS on the local backend; verified against the template at load time).
+This module is torch-free.
 """
 
 from __future__ import annotations
@@ -37,28 +40,38 @@ def list_specs() -> list[str]:
 _add(ModelSpec(
     key="qwen2.5-7b-instruct", family="qwen2", model_type="qwen2",
     hf_repo="Qwen/Qwen2.5-7B-Instruct", auto_class="AutoModelForCausalLM",
-    processor_class="AutoTokenizer", min_transformers="4.43.0",
+    processor_class="AutoTokenizer", min_transformers="4.43.0", tool_calling=True,
     module_paths=ModulePaths(decoder_layers="model.layers"),
     caveats=("matches the legacy QwenLLM default checkpoint",),
 ))
 _add(ModelSpec(
+    key="qwen3-4b", family="qwen3", model_type="qwen3",
+    hf_repo="Qwen/Qwen3-4B", auto_class="AutoModelForCausalLM",
+    processor_class="AutoTokenizer", min_transformers="4.51.0",
+    is_reasoning=True, tool_calling=True,
+    chat_template_kwargs={"enable_thinking": False},  # fast/clean tool-calling for the smoke test
+    module_paths=ModulePaths(decoder_layers="model.layers"),
+    caveats=("small smoke-test checkpoint; q_norm/k_norm before RoPE; emits <think> by default",),
+))
+_add(ModelSpec(
     key="qwen3-8b", family="qwen3", model_type="qwen3",
     hf_repo="Qwen/Qwen3-8B", auto_class="AutoModelForCausalLM",
-    processor_class="AutoTokenizer", min_transformers="4.51.0", is_reasoning=True,
+    processor_class="AutoTokenizer", min_transformers="4.51.0",
+    is_reasoning=True, tool_calling=True,
     module_paths=ModulePaths(decoder_layers="model.layers"),
     caveats=("q_norm/k_norm applied to Q/K before RoPE (account for it in lens)",),
 ))
 _add(ModelSpec(
     key="qwen3-30b-a3b", family="qwen3_moe", model_type="qwen3_moe",
     hf_repo="Qwen/Qwen3-30B-A3B", auto_class="AutoModelForCausalLM",
-    processor_class="AutoTokenizer", min_transformers="4.51.0", is_moe=True,
+    processor_class="AutoTokenizer", min_transformers="4.51.0", is_moe=True, tool_calling=True,
     module_paths=ModulePaths(decoder_layers="model.layers", router="mlp.gate", experts="mlp.experts"),
     caveats=("v5 stores experts as fused stacked Parameters (not ModuleList) — detect at runtime",),
 ))
 _add(ModelSpec(
     key="deepseek-v3", family="deepseek_v3", model_type="deepseek_v3",
     hf_repo="deepseek-ai/DeepSeek-V3", auto_class="AutoModelForCausalLM",
-    processor_class="AutoTokenizer", min_transformers="4.51.0", is_moe=True,
+    processor_class="AutoTokenizer", min_transformers="4.51.0", is_moe=True, tool_calling=True,
     attn_semantics=AttnSemantics.MLA_LATENT,
     module_paths=ModulePaths(decoder_layers="model.layers", router="mlp.gate", experts="mlp.experts"),
     caveats=(
@@ -69,9 +82,12 @@ _add(ModelSpec(
 _add(ModelSpec(
     key="llama-3.1-8b-instruct", family="llama", model_type="llama",
     hf_repo="meta-llama/Llama-3.1-8B-Instruct", auto_class="AutoModelForCausalLM",
-    processor_class="AutoTokenizer", min_transformers="4.43.0",
+    processor_class="AutoTokenizer", min_transformers="4.43.0", tool_calling=True,
     module_paths=ModulePaths(decoder_layers="model.layers"),
-    caveats=("cleanest arch; also loads in TransformerLens",),
+    caveats=(
+        "cleanest arch; also loads in TransformerLens",
+        "tool-call format differs from Qwen/Hermes — add a Llama codec before agent use",
+    ),
 ))
 _add(ModelSpec(
     key="gemma-3-1b-it", family="gemma3", model_type="gemma3",
@@ -87,7 +103,7 @@ _add(ModelSpec(
 _add(ModelSpec(
     key="qwen3-vl-8b-instruct", family="qwen3_vl", model_type="qwen3_vl",
     hf_repo="Qwen/Qwen3-VL-8B-Instruct", auto_class="AutoModelForImageTextToText",
-    processor_class="AutoProcessor", min_transformers="4.57.0",
+    processor_class="AutoProcessor", min_transformers="4.57.0", tool_calling=True,
     module_paths=ModulePaths(
         decoder_layers="model.language_model.layers", vision_tower="model.visual",
         vision_blocks="model.visual.blocks"),
@@ -102,7 +118,8 @@ _add(ModelSpec(
 _add(ModelSpec(
     key="glm-4.5v", family="glm4v_moe", model_type="glm4v_moe",
     hf_repo="zai-org/GLM-4.5V", auto_class="AutoModelForImageTextToText",
-    processor_class="AutoProcessor", min_transformers="4.57.1", is_moe=True, is_reasoning=True,
+    processor_class="AutoProcessor", min_transformers="4.57.1",
+    is_moe=True, is_reasoning=True, tool_calling=True,
     module_paths=ModulePaths(decoder_layers="model.language_model.layers", vision_tower="model.visual"),
     vision=VisionSpec(image_token_id_attr="image_token_id"),
     caveats=("106B MoE needs multi-GPU/FP8", "<think> on by default", "read image_token_id from config (151363)"),
@@ -110,7 +127,7 @@ _add(ModelSpec(
 _add(ModelSpec(
     key="glm-4.1v-9b-thinking", family="glm4v", model_type="glm4v",
     hf_repo="THUDM/GLM-4.1V-9B-Thinking", auto_class="AutoModelForImageTextToText",
-    processor_class="AutoProcessor", min_transformers="4.57.0", is_reasoning=True,
+    processor_class="AutoProcessor", min_transformers="4.57.0", is_reasoning=True, tool_calling=True,
     module_paths=ModulePaths(decoder_layers="model.language_model.layers", vision_tower="model.visual"),
     vision=VisionSpec(image_token_id_attr="image_token_id"),
     caveats=("dense 40L; image_token_id=151343 (≠ GLM-4.5V) — always read from config",),
@@ -137,7 +154,10 @@ _add(ModelSpec(
     module_paths=ModulePaths(
         decoder_layers="language_model.model.layers", vision_tower="vision_model"),
     vision=VisionSpec(image_token_id_attr="image_token_index"),
-    caveats=("no outer .model (language_model.model.layers)", "fused experts; iRoPE NoPE layers; chunked attention"),
+    caveats=(
+        "no outer .model (language_model.model.layers)", "fused experts; iRoPE NoPE layers; chunked attention",
+        "Llama tool-call format ≠ Qwen/Hermes — add a Llama codec before agent use",
+    ),
 ))
 _add(ModelSpec(
     key="step-1o-vision", family="step", model_type="step1o",

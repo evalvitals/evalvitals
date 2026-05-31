@@ -95,6 +95,7 @@ class ModelSpec:
     chat_template_kwargs: dict = field(default_factory=dict)
     is_moe: bool = False
     is_reasoning: bool = False                # emits <think>...</think>
+    tool_calling: bool = False                # chat template renders tools -> grants TOOL_CALLS on local backends
     eager_required_for_attn: bool = True
     attn_semantics: AttnSemantics = AttnSemantics.STANDARD
     module_paths: Optional[ModulePaths] = None  # None -> rely fully on discovery

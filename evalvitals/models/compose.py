@@ -47,13 +47,15 @@ def compose(
             f"{spec.key!r} is api-only (closed weights); cannot use backend {backend.kind!r}."
         )
 
-    want = set(want)
-    missing = want - set(backend.capabilities)
+    # Build first (lazy — no weights load), then negotiate against the ACTUAL
+    # handle capabilities.  This is precise for conditional caps like TOOL_CALLS,
+    # which depend on the model (chat template), not just the backend.
+    handle = backend.build(spec, runtime)
+    missing = set(want) - set(handle.capabilities)
     if missing:
         raise CapabilityError(
             analyzer=f"request@{backend.kind}",
             model=spec.key,
             missing=missing,
         )
-
-    return backend.build(spec, runtime)
+    return handle

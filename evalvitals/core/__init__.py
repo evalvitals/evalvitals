@@ -42,6 +42,7 @@ from evalvitals.core.spec import (
     ModulePaths,
     VisionSpec,
 )
+from evalvitals.core.tool import ChatTurn, Tool, ToolCall
 
 __all__ = [
     "Capability",
@@ -64,6 +65,9 @@ __all__ = [
     "VisionSpec",
     "ModulePaths",
     "AttnSemantics",
+    "Tool",
+    "ToolCall",
+    "ChatTurn",
     "Result",
     "registry",
     "Registry",
