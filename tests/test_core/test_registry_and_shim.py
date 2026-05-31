@@ -9,11 +9,20 @@ import evalvitals.models     # noqa: F401
 from evalvitals.core import Result, registry
 from tests.conftest import FakeModel
 
-
 # -- registry ----------------------------------------------------------
 
-def test_models_registered():
-    assert "qwen" in registry.models.list()
+def test_models_live_in_specs():
+    # specs.REGISTRY is the single source of truth for model identity now.
+    from evalvitals.specs import list_specs
+
+    assert "qwen2.5-7b-instruct" in list_specs()
+
+
+def test_registry_models_is_deprecated_shim():
+    # registry.models still works but warns and delegates to specs.
+    with pytest.warns(DeprecationWarning):
+        names = registry.models.list()
+    assert "qwen2.5-7b-instruct" in names
 
 
 def test_analyzers_registered():

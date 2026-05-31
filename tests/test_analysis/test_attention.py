@@ -8,7 +8,6 @@ from evalvitals.analyzers.attention.summary import AttentionAnalyzer, AttentionR
 from evalvitals.core import Capability, CaseBatch
 from tests.conftest import FakeModel
 
-
 # ------------------------------------------------------------------
 # Running the analyzer
 # ------------------------------------------------------------------

@@ -29,13 +29,6 @@ from evalvitals.core.case import (
 from evalvitals.core.experiment import Experiment, ExperimentRunner
 from evalvitals.core.model import CaptureSpec, Model, Trace
 from evalvitals.core.pipeline import Pipeline
-from evalvitals.core.spec import (
-    AttnSemantics,
-    ModelSpec,
-    ModulePaths,
-    VisionSpec,
-)
-from evalvitals.core.tool import ChatTurn, Tool, ToolCall
 from evalvitals.core.registry import (
     Registry,
     register_analyzer,
@@ -43,6 +36,13 @@ from evalvitals.core.registry import (
     registry,
 )
 from evalvitals.core.result import Result
+from evalvitals.core.spec import (
+    AttnSemantics,
+    ModelSpec,
+    ModulePaths,
+    VisionSpec,
+)
+from evalvitals.core.tool import ChatTurn, Tool, ToolCall
 
 __all__ = [
     "Capability",

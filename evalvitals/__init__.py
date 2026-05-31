@@ -1,13 +1,18 @@
 """EvalVitals — failure case analysis for LLMs and VLMs.
 
-Three equivalent ways to run an analysis:
+A model is built once from a **spec** (identity, in :mod:`evalvitals.specs`) and a
+**backend** (runtime: ``hf_local`` / ``api`` / ``vllm_offline``); the backend
+determines the capability set.  Analyzers are sklearn-style estimators matched to
+models by capability.
 
-1. Canonical (sklearn-style) — configure an analyzer, run it on a model::
+Equivalent ways to run an analysis:
 
-    from evalvitals.models.whitebox.qwen import QwenLLM
+1. Friendly + canonical — build a model, run an analyzer on it::
+
+    import evalvitals
     from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
-    model = QwenLLM()
+    model = evalvitals.load("qwen2.5-7b-instruct")          # spec key
     result = AttentionAnalyzer(top_k=5).run(model, "The capital of France is")
     print(result.summary())
 
@@ -21,6 +26,11 @@ Three equivalent ways to run an analysis:
 3. Hybrid convenience shim (auto-derived from capabilities)::
 
     result = model.call_attention("The capital of France is")
+
+4. Explicit engine — pick the backend yourself::
+
+    from evalvitals.models import compose
+    model = compose("qwen2.5-7b-instruct", "hf_local", want={evalvitals.Capability.ATTENTION})
 """
 
 # Importing these populates the registry (models + analyzers self-register).
@@ -36,11 +46,12 @@ from evalvitals.core import (
     registry,
 )
 from evalvitals.core.tool import Tool, ToolCall
-from evalvitals.models import Agent, RuntimeConfig, compose, load_model
+from evalvitals.models import Agent, RuntimeConfig, compose, load, load_model
 from evalvitals.specs import get_spec, list_specs
 
 __version__ = "0.1.0"
 __all__ = [
+    "load",
     "load_config",
     "load_model",
     "compose",

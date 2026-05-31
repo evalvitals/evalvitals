@@ -76,8 +76,9 @@ class HFLocalModel(Model):
         if attn_impl is None and self.spec.eager_required_for_attn and Capability.ATTENTION in self.capabilities:
             attn_impl = "eager"  # sdpa/flash return None attentions
 
+        # Use `dtype` (the current transformers param; `torch_dtype` is deprecated).
         kwargs: dict[str, Any] = dict(
-            torch_dtype=getattr(torch, self.runtime.dtype),
+            dtype=getattr(torch, self.runtime.dtype),
             trust_remote_code=self.spec.trust_remote_code,
         )
         if attn_impl:

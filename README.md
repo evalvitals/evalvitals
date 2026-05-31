@@ -1,45 +1,44 @@
 # EvalVitals
 
-Failure case analysis for LLMs and VLMs — built so an agent can drive it.
+EvalVitals is an sklearn-like toolkit for failure-case analysis in the era of
+LLMs, VLMs, and agentic systems.
 
-The package is organised around four uniform, sklearn-like contracts so that
-both humans and an automated agent can explore and run it programmatically:
+The package is organized around a small set of uniform contracts so researchers,
+engineers, and automated agents can discover, compose, and run evaluations
+programmatically:
 
-| Contract | What it is |
+| Contract | Role |
 |---|---|
-| **`Capability`** | the vocabulary connecting models and analyses (`GENERATE`, `TOOL_CALLS`, `LOGPROBS`, `ATTENTION`, `HIDDEN_STATES`, `GRADIENTS`, …) |
-| **`Model`** | an analyzable model: `generate()` + `forward(capture, spec) -> Trace`; declares the capabilities it provides |
-| **`Analyzer`** | a sklearn-style estimator: `Analyzer(**params).run(model, data) -> Result`; declares the capabilities it requires |
-| **`FailureCase`** | the central data unit (unit OR multi-step `Trajectory`); datasets produce it, analyzers attribute it, the agent accumulates it |
-| **`ModelSpec` × `Backend`** | identity (spec) is orthogonal to runtime (backend); `compose(spec, backend)` builds a Model whose **capabilities come from the backend** |
+| `ModelSpec` | Model identity: family, Hugging Face repo, architecture traits, VLM/MoE/MLA caveats. |
+| `Backend` | Runtime: local Hugging Face internals, black-box API calls, or offline batch engines. |
+| `Model` | A runnable object with `generate()` and `forward(capture=...) -> Trace`. |
+| `Analyzer` | An sklearn-style estimator: `Analyzer(**params).run(model, data) -> Result`. |
+| `Capability` | The vocabulary used to match analyzers to compatible model runtimes. |
+| `FailureCase` | The central data unit for prompts, labels, provenance, and agent trajectories. |
+| `Result` | Uniform output with human-readable summaries and structured findings. |
 
-Models and analyses connect by **capability matching** — an analyzer runs on any
-model that provides what it requires, with no per-model wiring. Adding a new
-analysis instantly makes it available on every compatible model.
-
-`black-box` vs `white-box` is **not** a type here — it's the capability set a
-backend grants. The same `ModelSpec` runs as a remote API (`GENERATE`), an
-in-process vLLM batch (`+LOGPROBS`), or an HF-eager capture (`+ATTENTION`,
-`+HIDDEN_STATES`), and an analyzer requesting `ATTENTION` against the API backend
-fails at `compose()` time, not deep in a hook.
+The key idea is simple: model identity is separate from runtime, and analyzers
+connect to models by capability matching. The same spec can run through a
+black-box API backend or a white-box local backend; only the capability set
+changes.
 
 ## Quickstart
 
-**1. Canonical (sklearn-style)** — configure an analyzer, run it on a model:
-
 ```python
-from evalvitals.models.whitebox.qwen import QwenLLM
+import evalvitals
 from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
-model = QwenLLM(checkpoint="Qwen/Qwen2.5-7B-Instruct")
-result = AttentionAnalyzer(layer=-1, top_k=5).run(model, "The Eiffel Tower is in")
+model = evalvitals.load("qwen2.5-7b-instruct")
+result = AttentionAnalyzer(layer=-1, top_k=5).run(
+    model,
+    "The Eiffel Tower is in",
+)
 
-print(result.summary())          # human/LLM-readable
-print(result.findings)           # agent-facing dict (JSON-serialisable)
-result.plot()                    # heavy artifacts (requires evalvitals[viz])
+print(result.summary())
+print(result.findings)
 ```
 
-**2. Config-driven** — declare model + analysis in YAML:
+Config-driven runs use the same contracts:
 
 ```python
 from evalvitals import load_config, run
@@ -49,18 +48,33 @@ result = run(config, "The Eiffel Tower is in")
 ```
 
 ```yaml
-# configs/qwen_attention.yaml
-model: qwen
-analysis: attention        # registered analyzer name
+model: qwen2.5-7b-instruct
+analysis: attention
+analysis_kwargs:
+  layer: -1
+  top_k: 5
 ```
 
-**3. Hybrid shim** — `model.call_<analysis>()`, auto-derived from capabilities:
+For explicit runtime selection:
 
 ```python
-result = model.call_attention("The Eiffel Tower is in")
+from evalvitals import Capability
+from evalvitals.models import compose
+
+model = compose(
+    "qwen2.5-7b-instruct",
+    "hf_local",
+    want={Capability.ATTENTION},
+)
 ```
 
-## Discovery (the agent's planning surface)
+## Documentation
+
+- [Docs overview](docs/index.md)
+- [Architecture](docs/architecture.md)
+- [Quickstart](docs/quickstart.md)
+- [Extending EvalVitals](docs/extending.md)
+- [Roadmap](docs/roadmap.md)
 
 ```python
 from evalvitals import registry
@@ -133,12 +147,9 @@ renders tools (`spec.tool_calling`, verified against the template at load). So
 ## Install
 
 ```bash
-pip install -e .              # LIGHT core: pure-API failure analysis, no torch
-pip install -e ".[local]"     # + torch/transformers — local white-box models
-pip install -e ".[api]"       # + openai client (or inject your own call_vision_api)
-pip install -e ".[interp]"    # + captum / inseq / nnsight (Stage 2 analyzers)
-pip install -e ".[viz]"       # + matplotlib for heatmaps
-pip install -e ".[dev]"       # + pytest / ruff / mypy
+pip install -e .
+pip install -e ".[viz]"
+pip install -e ".[dev]"
 ```
 
 ## Package structure
@@ -208,14 +219,4 @@ pytest        # 117 tests, no GPU required (models are mocked)
 ```bash
 docker build -f docker/Dockerfile.qwen_attention -t evalvitals-qwen-attention .
 docker run --gpus all evalvitals-qwen-attention
-```
-
-## Roadmap
-
-| Stage | Scope | Timeline |
-|---|---|---|
-| 1a | Capability-matched core + Qwen + attention (this release) | 1–2 weeks |
-| 1b | More models + analysis strategies | 1 month |
-| 1c (parallel) | VLM cases + real data | 1 month |
-| 2 | Statistical testing, A/B, self-evolving agent loop | TBD |
 ```
