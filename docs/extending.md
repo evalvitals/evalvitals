@@ -49,6 +49,38 @@ Guidelines:
 - Keep heavy artifacts out of `findings`; put them in `artifacts`.
 - Make `summary()` useful for humans and `findings` useful for agents.
 
+## Use a Custom or Fine-Tuned Model
+
+If you have a model that is already loaded in memory — a fine-tuned checkpoint,
+a research model, or anything `from_pretrained` returns — use `evalvitals.wrap`
+instead of registering a spec:
+
+```python
+import evalvitals
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained("my-org/my-llama")
+tokenizer = AutoTokenizer.from_pretrained("my-org/my-llama")
+
+wrapped = evalvitals.wrap(model, tokenizer)
+
+# Discover which analyzers are compatible
+print(evalvitals.registry.analyzers.names_compatible_with(wrapped))
+
+# Run any compatible analyzer
+from evalvitals.analyzers.lens.logit_lens import LogitLensAnalyzer
+result = LogitLensAnalyzer().run(wrapped, "The capital of France is")
+```
+
+`wrap()` infers capabilities from the live model: attention, hidden states, and
+logits are available for any text decoder-only model. Attention capture requires
+eager attention — `wrap` enables it automatically when the model supports it; if
+not, reload with `attn_implementation="eager"`.
+
+`wrap()` currently supports text decoder-only (causal LM) models. VLM internals
+capture is Stage 2. If your model has an unusual architecture not supported by
+automatic inference, add a `ModelSpec` (see below) and use `evalvitals.load`.
+
 ## Add a Model Spec
 
 Add model identity to `evalvitals/specs.py`:

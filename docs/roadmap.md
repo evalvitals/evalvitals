@@ -10,10 +10,11 @@ surfaces and planned interfaces.
 | Core contracts | Implemented: `Model`, `Analyzer`, `Result`, `FailureCase`, registry, pipeline, experiment. |
 | Model specs | Implemented as a torch-free registry in `evalvitals.specs`. |
 | Backend composition | Implemented through `compose(spec, backend, want=...)`. |
+| Public `wrap()` on-ramp | Implemented: wrap any loaded HF causal LM + tokenizer; capabilities auto-inferred; attention fix-up applied. |
 | Capability matching | Implemented for analyzer discovery and early backend negotiation. |
 | Attention analysis | Implemented for compatible white-box runtimes. |
 | Token entropy analysis | Implemented as a white-box logits analyzer. |
-| Tests | Core/model/analysis tests are present and do not require loading large weights. |
+| Tests | Core/model/analysis/wrap tests present; run without downloading model weights. |
 
 ## Planned
 
@@ -30,7 +31,7 @@ surfaces and planned interfaces.
 ## Near-Term Priorities
 
 1. Keep the public API narrow and stable.
-2. Convert roadmap stubs into implemented modules incrementally.
-3. Ensure optional dependency boundaries match runtime choices.
-4. Add docs examples for each implemented analyzer.
-5. Add a small, CPU-safe demo path that exercises the full user workflow.
+2. Implement black-box model API (`BlackboxLLM`, `BlackboxVLM`) — tests first, then implementation.
+3. Convert roadmap stubs into implemented modules incrementally.
+4. Ensure optional dependency boundaries match runtime choices.
+5. Add docs examples for each implemented analyzer.

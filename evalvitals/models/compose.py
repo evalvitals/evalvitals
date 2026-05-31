@@ -18,6 +18,18 @@ from evalvitals.core.capability import Capability, CapabilityError
 from evalvitals.models.backends import BACKENDS, Backend, RuntimeConfig
 
 
+def negotiate(handle, want: Iterable[Capability], model_id: str, where: str):
+    """Raise ``CapabilityError`` if *handle* cannot provide every wanted capability.
+
+    Shared by :func:`compose` (spec/registry path) and :func:`evalvitals.wrap`
+    (live-model path) so both negotiate capabilities identically.
+    """
+    missing = set(want) - set(handle.capabilities)
+    if missing:
+        raise CapabilityError(analyzer=where, model=model_id, missing=missing)
+    return handle
+
+
 def compose(
     spec,
     backend: "str | Backend" = "hf_local",
@@ -51,11 +63,4 @@ def compose(
     # handle capabilities.  This is precise for conditional caps like TOOL_CALLS,
     # which depend on the model (chat template), not just the backend.
     handle = backend.build(spec, runtime)
-    missing = set(want) - set(handle.capabilities)
-    if missing:
-        raise CapabilityError(
-            analyzer=f"request@{backend.kind}",
-            model=spec.key,
-            missing=missing,
-        )
-    return handle
+    return negotiate(handle, want, model_id=spec.key, where=f"request@{backend.kind}")

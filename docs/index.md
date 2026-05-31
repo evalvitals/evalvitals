@@ -15,7 +15,7 @@ EvalVitals separates three things that are often mixed together:
 
 | Concern | EvalVitals object | Example |
 |---|---|---|
-| Model identity | `ModelSpec` | `qwen2.5-7b-instruct`, `llama-3.1-8b-instruct` |
+| Model identity | `ModelSpec` (curated) or inferred via `wrap()` | `qwen2.5-7b-instruct`, or any loaded HF model |
 | Runtime | `Backend` | `hf_local`, `api`, `vllm_offline` |
 | Analysis | `Analyzer` | `AttentionAnalyzer`, `TokenEntropyAnalyzer` |
 
@@ -26,18 +26,29 @@ it.
 
 ## Mental Model
 
+There are two ways to get a `Model`:
+
 ```text
-ModelSpec + Backend -> Model
+# Public on-ramp (captum-style): user brings their own loaded model
+wrap(hf_model, tokenizer)  ->  Model
+
+# Curated path: load from the spec registry by key
+ModelSpec + Backend  ->  compose(...)  ->  Model
+```
+
+Both paths produce the same `Model` object — the same analyzers work on both.
+
+```text
 Model + data + Analyzer -> Result
-Result + Experiment -> comparable evidence
+Result + Experiment    -> comparable evidence
 FailureCase + Trajectory -> reusable cases for humans and agents
 ```
 
 The intended workflow is:
 
-1. Declare or select model identity with `ModelSpec`.
-2. Choose a runtime backend based on what data the analysis needs.
-3. Run analyzers that are compatible with that runtime's capabilities.
+1. Get a model: `evalvitals.wrap(your_model, tokenizer)` or `evalvitals.load("key")`.
+2. Discover compatible analyzers from the registry.
+3. Run analyzers that match the model's capabilities.
 4. Store results as structured findings and artifacts.
 5. Use those results to refine cases, hypotheses, and experiments.
 
@@ -51,6 +62,6 @@ The intended workflow is:
 ## Current Status
 
 EvalVitals is currently an alpha package. The core contracts, spec/backend
-composition, capability matching, attention analysis, token-entropy analysis,
-and test scaffolding are in place. Several modules exist as planned Stage 2/3
-surfaces and intentionally raise `NotImplementedError`.
+composition, capability matching, public `wrap()` on-ramp, attention analysis,
+token-entropy analysis, and test scaffolding are in place. Several modules exist
+as planned Stage 2/3 surfaces and intentionally raise `NotImplementedError`.

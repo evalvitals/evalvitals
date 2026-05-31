@@ -56,6 +56,54 @@ class HFLocalModel(Model):
         self.capabilities = frozenset(caps)
         self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
 
+    @classmethod
+    def from_loaded(cls, model, tokenizer, spec=None, runtime: "RuntimeConfig | None" = None) -> "HFLocalModel":
+        """Wrap an ALREADY-LOADED HF model + tokenizer (the ``wrap()`` on-ramp).
+
+        Unlike the spec-driven path, no weights are fetched: we inject the live
+        ``(model, processor)`` directly and skip :meth:`load`.  The spec is inferred
+        from the model when not given, and the attention capability is verified
+        against the live ``attn_implementation`` (eager is required, else the model
+        returns ``None`` attentions) — flipping it to eager when possible.
+        """
+        from evalvitals.models.inference import infer_spec
+
+        spec = spec or infer_spec(model, tokenizer)
+        self = cls(spec, runtime or RuntimeConfig())
+        self._hf = (model, tokenizer)  # bypass lazy load(); a bare tokenizer acts as processor
+        if Capability.ATTENTION in self.capabilities:
+            self._ensure_eager_attention(model)
+        return self
+
+    @staticmethod
+    def _ensure_eager_attention(model) -> None:
+        """Best-effort switch to eager attention so ``output_attentions`` is populated.
+
+        sdpa / flash_attention_2 silently return ``None`` attentions.  Newer
+        transformers expose ``set_attn_implementation``; otherwise we set the config
+        flag and warn that a reload may be required for it to take effect.
+        """
+        config = getattr(model, "config", None)
+        current = getattr(config, "_attn_implementation", None) if config is not None else None
+        if current == "eager":
+            return
+        if hasattr(model, "set_attn_implementation"):
+            try:
+                model.set_attn_implementation("eager")
+                return
+            except Exception:  # pragma: no cover - falls through to the config flag
+                pass
+        if config is not None:
+            config._attn_implementation = "eager"
+            import warnings
+
+            warnings.warn(
+                f"wrapped model used attn_implementation={current!r}; set it to 'eager' for "
+                "attention capture. If attentions come back empty, reload the model with "
+                "from_pretrained(..., attn_implementation='eager').",
+                stacklevel=2,
+            )
+
     def unembed_weight(self):
         """The lm_head / unembedding weight ``(vocab, dim)`` for logit-lens."""
         from evalvitals.models._discover import get_unembed
@@ -193,7 +241,12 @@ class HFLocalModel(Model):
 
         provided: set[Capability] = set()
         attentions = hidden_states = logits = None
-        if Capability.ATTENTION in capture and getattr(outputs, "attentions", None) is not None:
+        if Capability.ATTENTION in capture:
+            if getattr(outputs, "attentions", None) is None:
+                raise RuntimeError(
+                    f"{self!r}: ATTENTION was requested but the model returned no attentions. "
+                    "Load it with attn_implementation='eager' (sdpa/flash silently return None)."
+                )
             attentions = [_move(a.squeeze(0)) for a in _maybe_subset(outputs.attentions)]
             provided.add(Capability.ATTENTION)
         if Capability.HIDDEN_STATES in capture and getattr(outputs, "hidden_states", None) is not None:
