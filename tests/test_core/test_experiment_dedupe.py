@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 from evalvitals.core import Experiment, ExperimentRunner
 from tests.conftest import FakeModel
 

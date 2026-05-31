@@ -19,7 +19,7 @@ PROMPT = "The Eiffel Tower is located in the city of"
 # ======================================================================
 
 import evalvitals
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
 model = evalvitals.load("qwen2.5-7b-instruct")   # hf_local backend (full internals)
 analyzer = AttentionAnalyzer(layer=-1, head="mean", top_k=10)

@@ -89,6 +89,7 @@ class APIModel(Model):
         if runtime.client_kwargs.get("logprobs"):
             caps.add(Capability.LOGPROBS)
         self.capabilities = frozenset(caps)
+        self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
 
     def generate(self, inputs: Any, **kwargs) -> str:
         if self._generate_fn is None:

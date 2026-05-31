@@ -6,7 +6,7 @@ This page shows the common ways to run EvalVitals.
 
 ```python
 import evalvitals
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
 model = evalvitals.load("qwen2.5-7b-instruct")
 result = AttentionAnalyzer(layer=-1, top_k=5).run(
@@ -85,7 +85,7 @@ result = model.call_attention(
 This is convenience syntax for:
 
 ```python
-from evalvitals.analysis.whitebox.attention import AttentionAnalyzer
+from evalvitals.analyzers.attention.summary import AttentionAnalyzer
 
 result = AttentionAnalyzer(layer=-1, top_k=5).run(model, data)
 ```
