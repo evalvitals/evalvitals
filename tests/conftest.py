@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from evalvitals.core.capability import Capability
@@ -73,3 +74,26 @@ class FakeModel(Model):
 
     def __repr__(self) -> str:
         return f"FakeModel(caps={sorted(c.value for c in self.capabilities)})"
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-gpu", action="store_true", default=False, help="run GPU integration tests"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-gpu"):
+        # If --run-gpu is passed, verify CUDA is available
+        if not torch.cuda.is_available():
+            skip_gpu = pytest.mark.skip(reason="--run-gpu specified but no CUDA GPU is available")
+            for item in items:
+                if "gpu" in item.keywords:
+                    item.add_marker(skip_gpu)
+        return
+
+    # Skip all GPU/heavy tests by default
+    skip_gpu = pytest.mark.skip(reason="GPU tests skipped by default. Pass --run-gpu to run them.")
+    for item in items:
+        if "gpu" in item.keywords:
+            item.add_marker(skip_gpu)

@@ -208,10 +208,23 @@ hypothesize → construct cases → experiment → run → attribute → evaluat
 The agent acts only through `eval_agent/tools.py` (discovery + run + memory),
 so the package's public API *is* the agent's action space.
 
-## Running tests
+## Testing Principles & Running Tests
 
+We follow a tiered testing strategy modeled after standard practices in scientific computing libraries (like `scikit-learn` and `matplotlib`):
+
+*   **Fast Unit Tests (Default)**: Use simulated, in-memory mocks ([FakeModel](file:///tealab-data/rjin02/evalvitals/tests/conftest.py)) to verify all core logic, APIs, registers, and analysis helpers. These run in **milliseconds** on standard CPUs without any model weight downloads or network dependencies, making them perfect for local development and standard CI commits.
+*   **GPU Integration Tests**: Run actual forward passes and analyzers on real model weights (e.g. `Qwen2.5-7B-Instruct`). These are kept separate to prevent network/API flakiness and high compute costs from slowing down iteration.
+
+### Commands
+
+**Run fast unit tests only (CPU, offline-friendly):**
 ```bash
-pytest        # 117 tests, no GPU required (models are mocked)
+pytest
+```
+
+**Run GPU integration tests (requires CUDA GPU and model checkpoint cache):**
+```bash
+pytest --run-gpu
 ```
 
 ## Docker
