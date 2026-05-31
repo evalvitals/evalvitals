@@ -63,6 +63,10 @@ include = ["evalvitals*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "gpu: requires CUDA GPU and cached model weights — skip with -m 'not gpu'",
+    "slow: takes more than a few seconds on CPU",
+]
 
 [tool.ruff]
 line-length = 100
