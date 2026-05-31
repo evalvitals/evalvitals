@@ -34,7 +34,16 @@ class ToolCallCodec(ABC):
 
     @abstractmethod
     def decode(self, turn: ChatTurn) -> Optional[ToolCall]:
-        """Return the tool call in *turn*, or ``None`` if it's a final answer."""
+        """Return the FIRST tool call in *turn*, or ``None`` if it's a final answer."""
+
+    def decode_all(self, turn: ChatTurn) -> list[ToolCall]:
+        """All tool calls in *turn* (for parallel calling). Default: the first only."""
+        call = self.decode(turn)
+        return [call] if call else []
+
+    def final_text(self, turn: ChatTurn) -> str:
+        """The clean assistant text to record as a final answer (codecs may strip reasoning)."""
+        return turn.text or ""
 
     # -- message threading (sensible defaults; OpenAI overrides) -------
     def assistant_message(self, turn: ChatTurn, call: Optional[ToolCall]) -> dict:
@@ -73,25 +82,41 @@ class OpenAIToolCodec(ToolCallCodec):
 
 
 class QwenToolCodec(ToolCallCodec):
-    """Hermes-style ``<tool_call>{json}</tool_call>`` parsing (Qwen2.5 / Qwen3 / many locals).
+    """Qwen2.5 / Qwen3 tool-calling: Hermes-style ``<tool_call>…</tool_call>`` blocks.
 
-    Note: other families differ (Llama 3.1 uses a different convention) — add a
-    sibling codec and route it in :func:`codec_for` when you onboard them.
+    Robust to Qwen's real output:
+      * captures the FULL JSON between the tags (handles **nested** ``arguments``,
+        unlike a ``{...}`` regex that stops at the first brace),
+      * supports **multiple** ``<tool_call>`` blocks (parallel calls) via ``decode_all``,
+      * strips ``<think>…</think>`` reasoning from the final answer.
+
+    Other families differ (Llama 3.1, etc.) — add a sibling codec and route it in
+    :func:`codec_for`.
     """
 
     name = "qwen"
-    _PATTERN = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+    # capture everything between the tags (non-greedy stops at the first </tool_call>,
+    # which nested JSON never contains) -> nested arguments parse correctly.
+    _BLOCK = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+    _THINK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
     def decode(self, turn: ChatTurn) -> Optional[ToolCall]:
-        m = self._PATTERN.search(turn.text or "")
-        if not m:
-            return None
-        try:
-            payload = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            return None
-        args = payload.get("arguments", payload.get("args", {})) or {}
-        return ToolCall(name=payload.get("name", ""), args=args)
+        calls = self.decode_all(turn)
+        return calls[0] if calls else None
+
+    def decode_all(self, turn: ChatTurn) -> list[ToolCall]:
+        out: list[ToolCall] = []
+        for block in self._BLOCK.findall(turn.text or ""):
+            try:
+                payload = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            args = payload.get("arguments", payload.get("args", {})) or {}
+            out.append(ToolCall(name=payload.get("name", ""), args=args))
+        return out
+
+    def final_text(self, turn: ChatTurn) -> str:
+        return self._THINK.sub("", turn.text or "").strip()
 
 
 # family -> local codec (default Hermes/Qwen style covers most template models)

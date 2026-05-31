@@ -73,13 +73,18 @@ class HFLocalModel(Model):
 
         kwargs: dict[str, Any] = dict(
             torch_dtype=getattr(torch, self.runtime.dtype),
-            device_map=self.runtime.device,
             trust_remote_code=self.spec.trust_remote_code,
         )
         if attn_impl:
             kwargs["attn_implementation"] = attn_impl
 
-        model = auto_cls.from_pretrained(self.spec.hf_repo, **kwargs)
+        device = self.runtime.device
+        if device in (None, "auto") or isinstance(device, dict):
+            # device_map path (multi-GPU / sharded) — needs accelerate
+            model = auto_cls.from_pretrained(self.spec.hf_repo, device_map=device or "auto", **kwargs)
+        else:
+            # explicit single device ("cuda" / "cuda:0" / "cpu") — no accelerate dependency
+            model = auto_cls.from_pretrained(self.spec.hf_repo, **kwargs).to(device)
         model.eval()
         processor = proc_cls.from_pretrained(self.spec.hf_repo, trust_remote_code=self.spec.trust_remote_code)
 
@@ -143,7 +148,8 @@ class HFLocalModel(Model):
         model, processor = self._loaded
         tok = getattr(processor, "tokenizer", processor)
         text = tok.apply_chat_template(
-            messages, tools=tools, add_generation_prompt=True, tokenize=False
+            messages, tools=tools, add_generation_prompt=True, tokenize=False,
+            **self.spec.chat_template_kwargs,  # e.g. {"enable_thinking": False} for Qwen3
         )
         enc = tok(text, return_tensors="pt").to(next(model.parameters()).device)
         with torch.no_grad():

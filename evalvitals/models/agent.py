@@ -51,6 +51,45 @@ class ToolExecutor:
             return f"[tool error in {call.name!r}: {exc}]"
 
 
+class APIToolHandlerExecutor:
+    """Bridge the Agent's tool execution to the XSkill engine's ``APIToolHandler``.
+
+    The handler is INJECTED (not imported here), keeping evalvitals decoupled from
+    the engine repo.  It faithfully calls the real signature
+    ``execute_tool_call(tool_name, parameters, node, turn_idx, tool_call_id)`` and
+    returns the processed text; tool-output images accumulate in ``self.new_images``
+    for the caller to attach to the trajectory.
+
+    Usage::
+
+        from engine.api_tool_handler import APIToolHandler          # your repo
+        handler = APIToolHandler(args, save_dir)
+        agent = Agent(handle, tools, executor=APIToolHandlerExecutor(handler, node))
+
+    ``node`` is the engine's ``SearchNode`` (the handler mutates it, e.g. image_map);
+    pass the same node the engine drives so multi-turn image/state threading works.
+    """
+
+    def __init__(self, handler: Any, node: Any = None, *, result_key: str = "processed_result") -> None:
+        self.handler = handler
+        self.node = node
+        self.result_key = result_key
+        self._turn = 0
+        self.new_images: list = []
+        self.feedback_messages: list = []
+
+    def execute(self, call: ToolCall) -> Any:
+        self._turn += 1
+        out = self.handler.execute_tool_call(
+            call.name, call.args or {}, self.node, self._turn, getattr(call, "id", None)
+        )
+        if isinstance(out, dict):
+            self.new_images.extend(out.get("new_images") or [])
+            self.feedback_messages.extend(out.get("feedback_messages") or [])
+            return out.get(self.result_key) or out.get("tool_result") or ""
+        return out
+
+
 def _as_case(data: Any) -> FailureCase:
     if isinstance(data, FailureCase):
         return data
@@ -124,7 +163,7 @@ class Agent:
             messages.append(self.codec.assistant_message(chat, call))
 
             if call is None:
-                final_answer = chat.text
+                final_answer = self.codec.final_text(chat)  # strips <think> etc.
                 terminated = "final"
                 break
 

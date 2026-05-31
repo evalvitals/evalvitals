@@ -12,7 +12,7 @@ from evalvitals.core.registry import registry
 
 # Backend layer + agent loop (torch-free at import; heavy deps are lazy in build/load).
 from evalvitals.core.tool import ChatTurn, Tool, ToolCall
-from evalvitals.models.agent import Agent, ToolExecutor
+from evalvitals.models.agent import Agent, APIToolHandlerExecutor, ToolExecutor
 from evalvitals.models.backends import BACKENDS, RuntimeConfig, call_vision_api_chat_fn
 from evalvitals.models.base import BaseAgent
 from evalvitals.models.compose import compose
@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - light install
 
 __all__ = [
     "Model", "BaseAgent", "load_model", "compose", "RuntimeConfig", "BACKENDS",
-    "Agent", "ToolExecutor", "Tool", "ToolCall", "ChatTurn",
+    "Agent", "ToolExecutor", "APIToolHandlerExecutor", "Tool", "ToolCall", "ChatTurn",
     "OpenAIToolCodec", "QwenToolCodec", "codec_for", "call_vision_api_chat_fn",
 ]
 

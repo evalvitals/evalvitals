@@ -55,6 +55,27 @@ def test_qwen_codec_returns_none_on_plain_text():
     assert QwenToolCodec().decode(ChatTurn(text="just a final answer")) is None
 
 
+def test_qwen_codec_handles_nested_arguments():
+    # nested JSON in arguments — a naive {...} regex would truncate at the first brace
+    turn = ChatTurn(text='<tool_call>\n{"name": "q", "arguments": {"filter": {"city": "NYC", "n": 2}}}\n</tool_call>')
+    call = QwenToolCodec().decode(turn)
+    assert call.name == "q" and call.args == {"filter": {"city": "NYC", "n": 2}}
+
+
+def test_qwen_codec_decodes_multiple_parallel_calls():
+    turn = ChatTurn(text=(
+        '<tool_call>{"name": "a", "arguments": {"x": 1}}</tool_call>'
+        '<tool_call>{"name": "b", "arguments": {"y": 2}}</tool_call>'
+    ))
+    calls = QwenToolCodec().decode_all(turn)
+    assert [c.name for c in calls] == ["a", "b"]
+
+
+def test_qwen_codec_strips_think_from_final_text():
+    turn = ChatTurn(text="<think>let me reason...</think>\nThe answer is 42.")
+    assert QwenToolCodec().final_text(turn) == "The answer is 42."
+
+
 def test_openai_codec_parses_structured_tool_calls():
     turn = ChatTurn(raw_tool_calls=[{"id": "c1", "function": {"name": "f", "arguments": '{"x": 1}'}}])
     call = OpenAIToolCodec().decode(turn)

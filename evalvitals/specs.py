@@ -45,6 +45,15 @@ _add(ModelSpec(
     caveats=("matches the legacy QwenLLM default checkpoint",),
 ))
 _add(ModelSpec(
+    key="qwen3-4b", family="qwen3", model_type="qwen3",
+    hf_repo="Qwen/Qwen3-4B", auto_class="AutoModelForCausalLM",
+    processor_class="AutoTokenizer", min_transformers="4.51.0",
+    is_reasoning=True, tool_calling=True,
+    chat_template_kwargs={"enable_thinking": False},  # fast/clean tool-calling for the smoke test
+    module_paths=ModulePaths(decoder_layers="model.layers"),
+    caveats=("small smoke-test checkpoint; q_norm/k_norm before RoPE; emits <think> by default",),
+))
+_add(ModelSpec(
     key="qwen3-8b", family="qwen3", model_type="qwen3",
     hf_repo="Qwen/Qwen3-8B", auto_class="AutoModelForCausalLM",
     processor_class="AutoTokenizer", min_transformers="4.51.0",
