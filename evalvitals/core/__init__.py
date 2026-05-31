@@ -35,6 +35,7 @@ from evalvitals.core.spec import (
     ModulePaths,
     VisionSpec,
 )
+from evalvitals.core.tool import ChatTurn, Tool, ToolCall
 from evalvitals.core.registry import (
     Registry,
     register_analyzer,
@@ -64,6 +65,9 @@ __all__ = [
     "VisionSpec",
     "ModulePaths",
     "AttnSemantics",
+    "Tool",
+    "ToolCall",
+    "ChatTurn",
     "Result",
     "registry",
     "Registry",

@@ -110,6 +110,17 @@ class Model(ABC):
         ``spec`` when they cannot sub-select.
         """
 
+    def chat(self, messages: list, tools: "list | None" = None) -> "ChatTurn":
+        """One tool-aware turn for agent mode (the ``Agent`` loop calls this).
+
+        Returns a :class:`~evalvitals.core.tool.ChatTurn` (assistant text + any
+        native tool_calls).  Only tool-capable handles override this; the default
+        signals that this model cannot drive an agent loop.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement chat(); it is not TOOL_CALLS-capable."
+        )
+
     # ------------------------------------------------------------------
     # Capability checks
     # ------------------------------------------------------------------

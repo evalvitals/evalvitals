@@ -68,3 +68,18 @@ def test_call_vision_api_adapter_builds_messages():
 def test_unknown_backend_raises():
     with pytest.raises(KeyError):
         compose("qwen3-8b", "nope")
+
+
+def test_local_tool_calls_is_conditional_on_spec():
+    # qwen3-8b declares tool_calling=True -> local handle gains TOOL_CALLS;
+    # gemma-3-1b-it does not -> handle lacks it. (Build is lazy: no weights loaded.)
+    tool_model = compose("qwen3-8b", "hf_local")
+    assert Capability.TOOL_CALLS in tool_model.capabilities
+    plain_model = compose("gemma-3-1b-it", "hf_local")
+    assert Capability.TOOL_CALLS not in plain_model.capabilities
+
+
+def test_local_negotiation_uses_actual_handle_caps():
+    # Requesting TOOL_CALLS from a non-tool local model fails (precise per-model negotiation).
+    with pytest.raises(CapabilityError):
+        compose("gemma-3-1b-it", "hf_local", want={Capability.TOOL_CALLS})

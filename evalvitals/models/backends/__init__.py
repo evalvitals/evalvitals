@@ -8,6 +8,7 @@ torch-free (heavy deps are lazy inside ``build``/``load``), so the registry and
 from evalvitals.models.backends.api import (
     APIBackend,
     APIModel,
+    call_vision_api_chat_fn,
     call_vision_api_generate_fn,
 )
 from evalvitals.models.backends.base import Backend, RuntimeConfig
@@ -30,5 +31,6 @@ __all__ = [
     "HFLocalModel",
     "VLLMOfflineBackend",
     "call_vision_api_generate_fn",
+    "call_vision_api_chat_fn",
     "BACKENDS",
 ]

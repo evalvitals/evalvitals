@@ -10,10 +10,13 @@ from evalvitals.config import ModelConfig
 from evalvitals.core.model import Model
 from evalvitals.core.registry import registry
 
-# Backend layer (torch-free at import; heavy deps are lazy inside build/load).
-from evalvitals.models.backends import BACKENDS, RuntimeConfig
+# Backend layer + agent loop (torch-free at import; heavy deps are lazy in build/load).
+from evalvitals.core.tool import ChatTurn, Tool, ToolCall
+from evalvitals.models.agent import Agent, ToolExecutor
+from evalvitals.models.backends import BACKENDS, RuntimeConfig, call_vision_api_chat_fn
 from evalvitals.models.base import BaseAgent
 from evalvitals.models.compose import compose
+from evalvitals.models.toolcodec import OpenAIToolCodec, QwenToolCodec, codec_for
 
 # Legacy concrete white-box model (imports torch at module load) — optional on
 # the light, pure-API install.  Its @register_model runs only when torch is present.
@@ -22,7 +25,11 @@ try:
 except ImportError:  # pragma: no cover - light install
     _whitebox = None
 
-__all__ = ["Model", "BaseAgent", "load_model", "compose", "RuntimeConfig", "BACKENDS"]
+__all__ = [
+    "Model", "BaseAgent", "load_model", "compose", "RuntimeConfig", "BACKENDS",
+    "Agent", "ToolExecutor", "Tool", "ToolCall", "ChatTurn",
+    "OpenAIToolCodec", "QwenToolCodec", "codec_for", "call_vision_api_chat_fn",
+]
 
 
 def load_model(cfg: ModelConfig) -> Model:
