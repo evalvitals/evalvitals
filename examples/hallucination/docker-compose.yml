@@ -1,0 +1,8 @@
+services:
+  hallucination:
+    build:
+      context: ../..
+      dockerfile: examples/hallucination/Dockerfile
+    image: evalvitals-hallucination
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}

@@ -1,0 +1,8 @@
+services:
+  eval_agent:
+    build:
+      context: ../..
+      dockerfile: examples/eval_agent/Dockerfile
+    image: evalvitals-eval-agent
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}

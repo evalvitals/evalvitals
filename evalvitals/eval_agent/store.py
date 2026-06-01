@@ -58,8 +58,29 @@ class InMemoryStore(Store):
     def add_hypothesis(self, hypothesis: "Hypothesis") -> None:
         self.hypotheses.append(hypothesis)
 
-    def query(self, **filters: Any) -> list[Any]:
-        raise NotImplementedError("InMemoryStore.query is planned for Stage 2.")
+    def query(self, kind: str | None = None, **filters: Any) -> list[Any]:
+        """Retrieve stored items. ``kind`` in {cases, results, hypotheses}; filters:
+        ``label`` / ``tags`` (cases), ``status`` (hypotheses), ``analyzer`` (results)."""
+        out: list[Any] = []
+        if kind in (None, "cases"):
+            for c in self.cases:
+                if filters.get("label") is not None and getattr(c, "label", None) != filters["label"]:
+                    continue
+                tags = filters.get("tags")
+                if tags is not None and not set(tags).issubset(getattr(c, "tags", set())):
+                    continue
+                out.append(c)
+        if kind in (None, "results"):
+            for r in self.results:
+                if filters.get("analyzer") is not None and getattr(r, "analyzer", None) != filters["analyzer"]:
+                    continue
+                out.append(r)
+        if kind in (None, "hypotheses"):
+            for h in self.hypotheses:
+                if filters.get("status") is not None and getattr(h, "status", None) != filters["status"]:
+                    continue
+                out.append(h)
+        return out
 
     def summarize(self) -> dict[str, Any]:
         return {

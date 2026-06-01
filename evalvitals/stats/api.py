@@ -1,17 +1,137 @@
-"""Standalone statistical testing API (importable independently of models).
+"""stats/api.py — the single entry point. It NEVER returns a bare p-value.
 
-Planned for Stage 2. Consumes :class:`~evalvitals.core.result.Result` objects
-(e.g. from two prompting strategies) and returns significance verdicts.
+``compare`` returns a :class:`StatResult` with an effect size + CI, an e-value, a
+corrected reject decision, and an underpowered flag — so a caller can't ship
+"p<0.05" with a CI hugging zero.  Defaults: paired binary -> McNemar + a paired
+e-value (anytime-valid), clustered bootstrap CI (cluster at task).
+
+Underlying methods and their papers:
+  McNemar test     — McNemar (1947) https://doi.org/10.1007/BF02295996
+  Clustered CI     — Efron (1979), Cameron et al. (2008) https://doi.org/10.1162/rest.90.3.414
+  E-value          — Grünwald et al. (2022) https://arxiv.org/abs/1906.07801
+  e-BH (FDR)       — Wang & Ramdas (2022) https://arxiv.org/abs/2009.02824
+  Friedman+Nemenyi — Demšar (2006) https://jmlr.org/papers/v7/demsarar06a.html
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Optional, Sequence
 
-if TYPE_CHECKING:
-    from evalvitals.core.result import Result
+from evalvitals.stats.bootstrap import clustered_bootstrap_diff
+from evalvitals.stats.evalue import evalue_bernoulli
+from evalvitals.stats.friedman import friedman_test, nemenyi_cd, nemenyi_pairs
+from evalvitals.stats.mcnemar import mcnemar
 
 
-def ab_test(results_a: "list[Result]", results_b: "list[Result]", **kwargs):
-    """A/B test two sets of results. Planned for Stage 2."""
-    raise NotImplementedError("ab_test is planned for Stage 2.")
+@dataclass
+class StatResult:
+    """A corrected, effect-sized verdict — the only thing stats hands back."""
+
+    effect: float                       # mean(B) - mean(A)
+    ci: tuple[float, float]
+    reject: bool                        # corrected decision (e-value / CI), NOT a raw p
+    method: str
+    alpha: float
+    e_value: Optional[float] = None
+    underpowered: bool = False
+    details: dict = field(default_factory=dict)
+
+    def summary(self) -> str:
+        arrow = "B>A" if self.effect > 0 else ("A>B" if self.effect < 0 else "A=B")
+        verdict = "REJECT H0" if self.reject else "inconclusive"
+        warn = "  ⚠ underpowered" if self.underpowered else ""
+        e = f", e={self.e_value:.2f}" if self.e_value is not None else ""
+        return (f"[{self.method}] effect={self.effect:+.4f} ({arrow}) "
+                f"CI={self.ci[0]:+.4f}..{self.ci[1]:+.4f}{e} -> {verdict}{warn}")
+
+
+def compare(
+    success_a: Sequence,
+    success_b: Sequence,
+    *,
+    paired: bool = True,
+    alpha: float = 0.05,
+    min_effect: float = 0.0,
+    cluster_by: Optional[Sequence] = None,
+    correction: str = "evalue",   # "evalue" (anytime-valid) | "p" (McNemar exact p)
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> StatResult:
+    """Compare two per-example success vectors. Returns a :class:`StatResult`."""
+    boot = clustered_bootstrap_diff(success_a, success_b, clusters=cluster_by,
+                                    n_boot=n_boot, seed=seed, paired=paired)
+    effect = boot["effect"]
+    ci = (boot["ci_low"], boot["ci_high"])
+    ci_includes_zero = ci[0] <= 0 <= ci[1]
+
+    e_value = None
+    if paired:
+        mc = mcnemar(success_a, success_b)
+        e_value = evalue_bernoulli(mc["b"], mc["n_discordant"], p0=0.5)
+        if correction == "p":
+            reject = mc["p_value"] < alpha
+            method = "mcnemar-exact-p (paired binary)"
+        else:
+            reject = e_value >= 1.0 / alpha            # anytime-valid
+            method = "mcnemar + e-value (paired binary)"
+        details = {"p_value": mc["p_value"], "b": mc["b"], "c": mc["c"],
+                   "n_discordant": mc["n_discordant"]}
+    else:
+        reject = not ci_includes_zero                  # unpaired: CI excludes 0
+        method = "clustered bootstrap (unpaired)"
+        details = {}
+
+    # underpowered: not significant AND the CI is too wide to rule out a min_effect-sized effect
+    width = ci[1] - ci[0]
+    underpowered = (not reject) and (min_effect > 0) and (width > min_effect)
+
+    return StatResult(effect=effect, ci=ci, reject=reject, method=method, alpha=alpha,
+                      e_value=e_value, underpowered=underpowered, details=details)
+
+
+def ab_test(success_a: Sequence, success_b: Sequence, **kwargs) -> StatResult:
+    """Back-compat alias: pass per-example success vectors (bools/0-1)."""
+    return compare(success_a, success_b, **kwargs)
+
+
+@dataclass
+class MultiCompareResult:
+    """Omnibus (Friedman) + post-hoc (Nemenyi) verdict for >2 strategies."""
+
+    reject_global: bool                 # did Friedman find ANY difference?
+    avg_ranks: dict                     # name -> mean rank (lower = better)
+    significant_pairs: list             # Nemenyi pairs that differ (only if reject_global)
+    critical_difference: float
+    friedman_stat: float
+    p_value: float
+    df: int
+    n: int
+    alpha: float
+
+    def summary(self) -> str:
+        order = sorted(self.avg_ranks, key=lambda k: self.avg_ranks[k])
+        ranking = " < ".join(f"{k}({self.avg_ranks[k]:.2f})" for k in order)
+        verdict = "differ" if self.reject_global else "no global difference"
+        return (f"[Friedman χ²={self.friedman_stat:.3f} df={self.df} -> {verdict}] "
+                f"ranks: {ranking} | CD={self.critical_difference:.3f} | "
+                f"{len(self.significant_pairs)} sig pair(s)")
+
+
+def compare_multiple(success_by_strategy: dict, *, alpha: float = 0.05) -> MultiCompareResult:
+    """Compare 3+ strategies across shared examples (Friedman + Nemenyi).
+
+    ``success_by_strategy``: ``{name: [per-example metric]}`` (equal-length, paired).
+    For exactly 2 strategies use :func:`compare` (McNemar) instead.
+    """
+    if len(success_by_strategy) < 3:
+        raise ValueError("compare_multiple is for 3+ strategies; use compare() for 2.")
+    fr = friedman_test(success_by_strategy)
+    avg = dict(zip(fr["names"], fr["avg_ranks"]))
+    cd = nemenyi_cd(fr["k"], fr["n"], alpha)
+    reject = fr["p_value"] < alpha
+    pairs = nemenyi_pairs(avg, cd) if reject else []  # post-hoc only after a global rejection
+    return MultiCompareResult(
+        reject_global=reject, avg_ranks=avg, significant_pairs=pairs, critical_difference=cd,
+        friedman_stat=fr["statistic"], p_value=fr["p_value"], df=fr["df"], n=fr["n"], alpha=alpha,
+    )

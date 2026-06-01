@@ -45,6 +45,15 @@ class FakeModel(Model):
         torch.manual_seed(1)
         return torch.rand(self._vocab, self._hidden_dim)
 
+    def logprobs(self, inputs, **kwargs):
+        from evalvitals.core.model import TokenLogprob
+
+        return [
+            TokenLogprob(token=f"w{i}", logprob=-0.1 * (i + 1),
+                         top={f"w{i}": -0.1 * (i + 1), "alt": -2.5})
+            for i in range(4)
+        ]
+
     def forward(self, inputs, capture: set[Capability], spec=None) -> Trace:
         torch.manual_seed(0)
         provided: set[Capability] = set()

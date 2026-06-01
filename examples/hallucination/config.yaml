@@ -1,0 +1,15 @@
+# Hallucination analysis — POPE + CHAIR
+# Requires an OpenAI-compatible API key (OPENAI_API_KEY env var).
+# Uses GPT-4o-mini by default; swap model_name for any vision-capable endpoint.
+
+model_name: gpt-4o-mini
+
+# POPE probe: one image + yes/no questions about objects it contains/doesn't contain.
+# Build a real probe set from the POPE dataset (https://github.com/AoiDragon/POPE)
+# by populating pope_cases with (image, question, pope_label) triples.
+pope_n_yes: 3   # synthetic "yes" cases for this demo
+pope_n_no: 3    # synthetic "no" cases
+
+# CHAIR: object vocabulary drawn from COCO (80 categories).
+# In production, load images + gt_objects from COCO annotations.
+chair_n_cases: 3

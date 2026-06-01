@@ -40,10 +40,14 @@ def test_api_model_generate_via_injected_fn():
     assert m.capabilities == frozenset({Capability.GENERATE, Capability.TOOL_CALLS})
 
 
-def test_logprobs_capability_toggled_by_client_kwargs():
-    rt = RuntimeConfig(generate_fn=lambda *a, **k: "x", client_kwargs={"logprobs": True})
-    m = compose("qwen3-8b", "api", rt)
-    assert Capability.LOGPROBS in m.capabilities
+def test_logprobs_capability_requires_logprobs_fn():
+    # client_kwargs alone does NOT grant LOGPROBS — we only claim it if we can
+    # actually retrieve them (a logprobs_fn is wired).
+    m1 = compose("qwen3-8b", "api",
+                 RuntimeConfig(generate_fn=lambda *a, **k: "x", client_kwargs={"logprobs": True}))
+    assert Capability.LOGPROBS not in m1.capabilities
+    m2 = compose("qwen3-8b", "api", RuntimeConfig(logprobs_fn=lambda *a, **k: []))
+    assert Capability.LOGPROBS in m2.capabilities
 
 
 def test_api_model_forward_refuses_internals():

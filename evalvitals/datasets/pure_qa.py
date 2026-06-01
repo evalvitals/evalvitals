@@ -1,21 +1,54 @@
-"""Pure QA dataset loaders (VL QA and Language QA).
+"""Pure QA loader (language + VL QA) → CaseBatch.
 
-Planned for Stage 2. Loaders return a
-:class:`~evalvitals.core.case.CaseBatch` of :class:`FailureCase` — the unit
-analyzers consume and the agent accumulates.
+Source-agnostic: pass in-memory records, a JSONL path, or use the built-in
+sample.  ``image`` is optional (set it for VL QA).  ``expected`` carries the gold
+answer; pair it with :func:`evalvitals.datasets.base.contains_answer` to turn a
+model output into a success bool for A/B comparisons.
 """
 
 from __future__ import annotations
 
 from evalvitals.core.case import CaseBatch
+from evalvitals.datasets.base import Dataset, cases_from_records, read_jsonl
+
+_SAMPLE = [
+    {"question": "What is the capital of France?", "answer": "Paris", "difficulty": "easy"},
+    {"question": "What is 17 multiplied by 3?", "answer": "51", "difficulty": "easy"},
+    {"question": "Who wrote Romeo and Juliet?", "answer": "Shakespeare", "difficulty": "easy"},
+    {"question": "What is the chemical symbol for gold?", "answer": "Au", "difficulty": "medium"},
+]
 
 
-class PureQADataset:
-    """Language and VL question-answering benchmark loader."""
+class PureQADataset(Dataset):
+    """Language / VL question-answering loader."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        raise NotImplementedError("PureQADataset is planned for Stage 2.")
+    def __init__(
+        self,
+        records: list[dict] | None = None,
+        path: str | None = None,
+        *,
+        prompt_key: str = "question",
+        answer_key: str = "answer",
+        image_key: str = "image",
+    ) -> None:
+        self._records = records
+        self._path = path
+        self._keys = dict(prompt_key=prompt_key, answer_key=answer_key, image_key=image_key)
+
+    @classmethod
+    def from_records(cls, records: list[dict], **keys) -> "PureQADataset":
+        return cls(records=records, **keys)
+
+    @classmethod
+    def from_jsonl(cls, path: str, **keys) -> "PureQADataset":
+        return cls(path=path, **keys)
+
+    @classmethod
+    def sample(cls) -> "PureQADataset":
+        return cls(records=_SAMPLE)
 
     def load(self) -> CaseBatch:
-        """Return the benchmark as a :class:`CaseBatch`."""
-        raise NotImplementedError("PureQADataset is planned for Stage 2.")
+        records = self._records if self._records is not None else (
+            read_jsonl(self._path) if self._path else _SAMPLE
+        )
+        return cases_from_records(records, tags={"pure_qa"}, **self._keys)
