@@ -46,6 +46,19 @@ class CaptureSpec:
 
 
 @dataclass
+class TokenLogprob:
+    """Logprob of one output token (+ optional top-k alternatives).
+
+    The black-box uncertainty primitive: retrievable from an API that returns
+    ``logprobs`` (OpenAI) — no model internals needed.
+    """
+
+    token: str
+    logprob: float
+    top: dict[str, float] = field(default_factory=dict)  # token -> logprob (top-k alternatives)
+
+
+@dataclass
 class Trace:
     """Captured internals from a single forward pass.
 
@@ -135,6 +148,16 @@ class Model(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement chat(); it is not TOOL_CALLS-capable."
+        )
+
+    def logprobs(self, inputs: Any, **kwargs) -> "list[TokenLogprob]":
+        """Generate and return per-output-token logprobs (the LOGPROBS capability).
+
+        Black-box-feasible (OpenAI-style ``logprobs``).  Only LOGPROBS-capable
+        handles override this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement logprobs(); it is not LOGPROBS-capable."
         )
 
 

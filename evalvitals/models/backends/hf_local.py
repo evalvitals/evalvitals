@@ -21,7 +21,7 @@ from typing import Any
 
 from evalvitals.core.capability import Capability, CapabilityError
 from evalvitals.core.case import Inputs
-from evalvitals.core.model import Model, Trace
+from evalvitals.core.model import Model, TokenLogprob, Trace
 from evalvitals.core.spec import AttnSemantics
 from evalvitals.core.tool import ChatTurn
 from evalvitals.models.backends.base import Backend, RuntimeConfig
@@ -139,6 +139,31 @@ class HFLocalModel(Model):
             out = model.generate(**enc, max_new_tokens=max_new, **kwargs)
         new = out[0][enc["input_ids"].shape[1]:]
         return tok.decode(new, skip_special_tokens=True)
+
+    def logprobs(self, inputs: Any, max_new_tokens: int = 64, top_k: int = 5, **kwargs) -> list[TokenLogprob]:
+        """Per-output-token logprobs via greedy generate with output_scores."""
+        import torch
+
+        if self.spec.is_vlm:
+            raise NotImplementedError(f"{self.spec.key}: VLM logprobs is Stage 2 (text-only for now).")
+        model, processor = self._loaded
+        tok = getattr(processor, "tokenizer", processor)
+        enc = self._encode(self._as_prompt(inputs))
+        n_in = enc["input_ids"].shape[1]
+        with torch.no_grad():
+            out = model.generate(
+                **enc, max_new_tokens=max_new_tokens, do_sample=False,
+                output_scores=True, return_dict_in_generate=True,
+            )
+        gen_ids = out.sequences[0][n_in:].tolist()
+        result: list[TokenLogprob] = []
+        for i, score in enumerate(out.scores):
+            lp = torch.log_softmax(score[0].float(), dim=-1)
+            tid = gen_ids[i]
+            topk = torch.topk(lp, min(top_k, lp.shape[-1]))
+            top = {tok.decode([int(j)]): float(v) for v, j in zip(topk.values, topk.indices)}
+            result.append(TokenLogprob(token=tok.decode([tid]), logprob=float(lp[tid]), top=top))
+        return result
 
     def chat(self, messages: list, tools=None) -> ChatTurn:
         """Tool-aware turn via the model's chat template.

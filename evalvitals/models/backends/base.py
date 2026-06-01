@@ -33,6 +33,7 @@ class RuntimeConfig:
     client_kwargs: dict[str, Any] = field(default_factory=dict)   # api client opts (e.g. logprobs=True)
     generate_fn: Optional[Callable[..., str]] = None              # api: simple text generate
     chat_fn: Optional[Callable[..., Any]] = None                  # api: tool-aware chat (returns ChatTurn)
+    logprobs_fn: Optional[Callable[..., Any]] = None              # api: returns list[TokenLogprob]
 
 
 class Backend(ABC):

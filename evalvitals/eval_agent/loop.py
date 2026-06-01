@@ -53,14 +53,26 @@ class SelfEvolveLoop:
         self.store = store or InMemoryStore()
         self.runner = runner or ExperimentRunner()
 
-    def step(self) -> None:
-        """Run one full cycle of the loop (Stage 2)."""
-        raise NotImplementedError(
-            "SelfEvolveLoop.step is planned for Stage 2. "
-            "The cycle is documented in this module's docstring; the wiring "
-            "points (generator, store, runner) are already in place."
-        )
+    def step(self) -> list:
+        """One cycle: propose hypotheses (from the store's summary) and record them.
 
-    def run(self, max_cycles: int = 10) -> None:
-        """Run the loop until convergence or *max_cycles* (Stage 2)."""
-        raise NotImplementedError("SelfEvolveLoop.run is planned for Stage 2.")
+        Returns the hypotheses proposed this cycle (empty => nothing new to try).
+        The test/attribute/mutate intelligence (case synthesis, LLM judging) plugs
+        in here in Stage 2; the propose→record→repeat skeleton is functional now.
+        """
+        if self.generator is None:
+            raise ValueError("SelfEvolveLoop needs a generator (e.g. ManualHypothesisGenerator).")
+        proposed = self.generator.propose(self.store.summarize())
+        for h in proposed:
+            self.store.add_hypothesis(h)
+        return list(proposed)
+
+    def run(self, max_cycles: int = 10) -> list:
+        """Run until the generator stops proposing (converged) or *max_cycles*."""
+        history: list = []
+        for _ in range(max_cycles):
+            proposed = self.step()
+            history.append(proposed)
+            if not proposed:  # dry — nothing new
+                break
+        return history

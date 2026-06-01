@@ -19,9 +19,22 @@ from typing import Any, Callable
 
 from evalvitals.core.capability import Capability, CapabilityError
 from evalvitals.core.case import Inputs
-from evalvitals.core.model import Model, Trace
+from evalvitals.core.model import Model, TokenLogprob, Trace
 from evalvitals.core.tool import ChatTurn
 from evalvitals.models.backends.base import Backend, RuntimeConfig
+
+
+def parse_openai_logprobs(content_logprobs) -> list[TokenLogprob]:
+    """Parse OpenAI ``choices[0].logprobs.content`` into ``list[TokenLogprob]``.
+
+    Use inside a ``logprobs_fn`` after calling an OpenAI-compatible endpoint with
+    ``logprobs=True, top_logprobs=k``.
+    """
+    out: list[TokenLogprob] = []
+    for item in content_logprobs or []:
+        top = {t["token"]: float(t["logprob"]) for t in item.get("top_logprobs", [])}
+        out.append(TokenLogprob(token=item.get("token", ""), logprob=float(item["logprob"]), top=top))
+    return out
 
 _WHITEBOX = {
     Capability.ATTENTION,
@@ -85,8 +98,9 @@ class APIModel(Model):
         self.runtime = runtime
         self._generate_fn = runtime.generate_fn
         self._chat_fn = runtime.chat_fn
+        self._logprobs_fn = runtime.logprobs_fn
         caps = {Capability.GENERATE, Capability.TOOL_CALLS}
-        if runtime.client_kwargs.get("logprobs"):
+        if runtime.logprobs_fn is not None:  # only claim LOGPROBS if we can actually retrieve them
             caps.add(Capability.LOGPROBS)
         self.capabilities = frozenset(caps)
         self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
@@ -113,6 +127,12 @@ class APIModel(Model):
             )
         prompt = messages[-1].get("content", "") if messages else ""
         return ChatTurn(text=self._generate_fn(prompt, model=model_name), raw_tool_calls=None)
+
+    def logprobs(self, inputs: Any, **kwargs) -> list[TokenLogprob]:
+        if self._logprobs_fn is None:
+            raise CapabilityError(analyzer="logprobs", model=repr(self), missing={Capability.LOGPROBS})
+        prompt = inputs.prompt if isinstance(inputs, Inputs) else str(inputs)
+        return self._logprobs_fn(prompt, model=self.spec.hf_repo or self.spec.key, **kwargs)
 
     def forward(self, inputs: Any, capture: set[Capability], spec=None) -> Trace:
         missing = set(capture) & _WHITEBOX

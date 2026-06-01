@@ -144,6 +144,31 @@ provides the channel, but it's granted only when the model's chat template
 renders tools (`spec.tool_calling`, verified against the template at load). So
 `compose(non_tool_model, "hf_local", want={TOOL_CALLS})` fails up front.
 
+## Statistics & the pre-registered loop
+
+`stats.compare` is the single entry point and **never returns a bare p** — it
+gives an effect size + clustered-bootstrap CI, an anytime-valid e-value, a
+corrected reject decision, and an underpowered flag:
+
+```python
+from evalvitals.stats import compare
+r = compare(success_a, success_b, paired=True, alpha=0.05, min_effect=0.02, cluster_by=task_ids)
+print(r.summary())   # [mcnemar + e-value] effect=+0.18 (B>A) CI=+0.07..+0.29, e=41.2 -> REJECT H0
+```
+
+The closed loop is **selective-inference-safe**: mine on `explore`, pre-register a
+falsifiable contract, test once on `validate`, lock `confirm`:
+
+```python
+from evalvitals.eval_agent import EvalOrchestrator, PreregisteredHypothesis
+hyp = PreregisteredHypothesis(predicate="cluttered scenes", statement="prompt B helps",
+                              min_effect=0.03, split="validate")
+report = EvalOrchestrator().run(cases, hyp, strategy_a, strategy_b)   # registers hash BEFORE unblinding
+```
+
+LOGPROBS are black-box-retrievable (OpenAI-style): wire `RuntimeConfig(logprobs_fn=...)`
+and run `LogprobEntropyAnalyzer` (perplexity + predictive entropy) on an API model.
+
 ## Install
 
 ```bash
@@ -188,12 +213,16 @@ evalvitals/
 │   └── agent/         loop_detect✓ ignored_obs✓ first_error_judge✓ counterfactual   # Trajectory
 │                      #  ✓ = implemented + unit-tested; others declare contract, raise (Stage 2)
 ├── datasets/                   loaders → CaseBatch (Stage 2)
-├── stats/                      consume Results (Stage 2)
-└── eval_agent/                 self-evolving loop (interfaces + stubs)
-    ├── tools.py                the agent's action space
-    ├── hypothesis.py           Hypothesis + generator
-    ├── store.py                persistent memory (Store)
-    └── loop.py                 SelfEvolveLoop controller
+├── stats/                      compare() single entry — never a bare p  ← NEW
+│   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  subset_sampling.py✓
+│   └── api.py✓                 compare() → StatResult(effect, CI, e-value, reject, underpowered)
+└── eval_agent/                 closed loop with selective-inference discipline  ← NEW
+    ├── preregister.py✓         DataSplit (explore/validate/confirm) + PreregisteredHypothesis + log
+    ├── ab_runner.py✓           two strategies → stats.compare
+    ├── orchestrator.py✓        define → split → pre-register → test → report
+    ├── report.py✓ store.py✓    DiagnosticReport ; InMemoryStore(+query)
+    ├── hypothesis.py           Hypothesis + ManualHypothesisGenerator✓ (LLM proposer = Stage 2)
+    └── loop.py✓                SelfEvolveLoop (propose→record→until-dry; case-synthesis = Stage 2)
 ```
 
 ## The self-evolving loop (interfaces in place, logic in Stage 2)
@@ -211,7 +240,7 @@ so the package's public API *is* the agent's action space.
 ## Running tests
 
 ```bash
-pytest        # 117 tests, no GPU required (models are mocked)
+pytest        # 147 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 ## Docker

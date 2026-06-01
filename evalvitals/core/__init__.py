@@ -27,7 +27,7 @@ from evalvitals.core.case import (
     as_casebatch,
 )
 from evalvitals.core.experiment import Experiment, ExperimentRunner
-from evalvitals.core.model import CaptureSpec, Model, Trace
+from evalvitals.core.model import CaptureSpec, Model, TokenLogprob, Trace
 from evalvitals.core.pipeline import Pipeline
 from evalvitals.core.registry import (
     Registry,
@@ -50,6 +50,7 @@ __all__ = [
     "CapabilityError",
     "Model",
     "Trace",
+    "TokenLogprob",
     "CaptureSpec",
     "Analyzer",
     "FailureCase",
