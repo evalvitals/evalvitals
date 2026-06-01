@@ -1,24 +1,87 @@
-"""POPE — Polling-based Object Probing Evaluation (Li et al.) (Stage 2).
+"""POPE — Polling-based Object Probing Evaluation (Li et al.).
 
-Ask the VLM yes/no questions about object presence and score accuracy/F1 (random /
-popular / adversarial splits). Black-box (``GENERATE``); needs a POPE-format probe set.
+Black-box (``GENERATE``): pose yes/no object-presence questions about an image and
+score the model's answers against gold labels.  Each case carries the gold label
+in ``metadata["pope_label"]`` ("yes"/"no") — build a probe set with the datasets
+layer.  Reports accuracy / precision / recall / F1 (positive class = "yes").
 """
 
 from __future__ import annotations
 
+import re
+from typing import TYPE_CHECKING, Optional
+
 from evalvitals.core.analyzer import Analyzer
 from evalvitals.core.capability import Capability
 from evalvitals.core.registry import register_analyzer
+from evalvitals.core.result import Result
+
+if TYPE_CHECKING:
+    from evalvitals.core.case import CaseBatch
+    from evalvitals.core.model import Model
+
+
+def parse_yes_no(text: str) -> Optional[str]:
+    """Map a free-form answer to 'yes' / 'no' / None (word-boundary, not substring).
+
+    Matching whole words avoids the classic trap where 'not'/'none'/'nothing'
+    contain the substring 'no'.
+    """
+    words = re.findall(r"[a-z]+", str(text).lower())
+    for w in words[:6]:  # decision is almost always in the opening words
+        if w == "yes":
+            return "yes"
+        if w == "no":
+            return "no"
+    if "yes" in words:
+        return "yes"
+    if "no" in words:
+        return "no"
+    return None
 
 
 @register_analyzer("pope")
 class POPEAnalyzer(Analyzer):
+    """Score yes/no object-presence probes against gold labels."""
+
     name = "pope"
     requires = frozenset({Capability.GENERATE})
     applies_to_modalities = frozenset({"image"})
 
-    def _run(self, model, cases):
-        raise NotImplementedError(
-            "Stage 2: pose yes/no object-presence probes, parse the answer, score "
-            "accuracy/precision/recall/F1 over the POPE splits."
+    def __init__(self, label_key: str = "pope_label") -> None:
+        super().__init__(label_key=label_key)
+
+    def _run(self, model: "Model", cases: "CaseBatch") -> Result:
+        tp = fp = fn = tn = unparsed = 0
+        per_case = []
+        for case in cases:
+            gold = str(case.metadata.get(self.label_key, "")).strip().lower()
+            pred = parse_yes_no(model.generate(case.inputs))
+            per_case.append({"id": case.id, "gold": gold, "pred": pred})
+            if pred is None:
+                unparsed += 1
+                continue
+            if gold == "yes" and pred == "yes":
+                tp += 1
+            elif gold == "no" and pred == "yes":
+                fp += 1
+            elif gold == "yes" and pred == "no":
+                fn += 1
+            elif gold == "no" and pred == "no":
+                tn += 1
+        n = tp + fp + fn + tn
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        return Result(
+            analyzer=self.name, model=repr(model), cases=cases,
+            artifacts={"per_case": per_case},
+            findings={
+                "n": n, "unparsed": unparsed,
+                "accuracy": round((tp + tn) / n, 4) if n else None,
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+                "yes_rate": round((tp + fp) / n, 4) if n else None,  # >0.5 ⇒ over-affirmation (hallucination)
+            },
         )

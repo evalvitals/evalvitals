@@ -58,3 +58,24 @@ class HypothesisGenerator:
     def mutate(self, hypothesis: Hypothesis, feedback: Any = None) -> list[Hypothesis]:
         """Derive refined/adjacent hypotheses from one that was tested."""
         raise NotImplementedError("HypothesisGenerator.mutate is planned for Stage 2.")
+
+
+class ManualHypothesisGenerator(HypothesisGenerator):
+    """A non-LLM generator: drains a fixed queue, or calls an injected ``proposer``.
+
+    Lets the loop run + be unit-tested without an LLM; swap in an LLM-backed
+    generator later without touching the loop.
+    """
+
+    def __init__(self, hypotheses: list[Hypothesis] | None = None, proposer: Any = None) -> None:
+        self._queue: list[Hypothesis] = list(hypotheses or [])
+        self._proposer = proposer
+
+    def propose(self, context: Any = None) -> list[Hypothesis]:
+        if self._proposer is not None:
+            return list(self._proposer(context))
+        out, self._queue = self._queue, []
+        return out
+
+    def mutate(self, hypothesis: Hypothesis, feedback: Any = None) -> list[Hypothesis]:
+        return []

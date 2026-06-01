@@ -27,7 +27,7 @@ from evalvitals.core.case import (
     as_casebatch,
 )
 from evalvitals.core.experiment import Experiment, ExperimentRunner
-from evalvitals.core.model import CaptureSpec, Model, Trace
+from evalvitals.core.model import CaptureSpec, Model, TokenLogprob, Trace
 from evalvitals.core.pipeline import Pipeline
 from evalvitals.core.registry import (
     Registry,
@@ -42,6 +42,7 @@ from evalvitals.core.spec import (
     ModulePaths,
     VisionSpec,
 )
+from evalvitals.core.tokentype import TokenTypeMap, build_token_type_map
 from evalvitals.core.tool import ChatTurn, Tool, ToolCall
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     "CapabilityError",
     "Model",
     "Trace",
+    "TokenLogprob",
     "CaptureSpec",
     "Analyzer",
     "FailureCase",
@@ -68,6 +70,8 @@ __all__ = [
     "Tool",
     "ToolCall",
     "ChatTurn",
+    "TokenTypeMap",
+    "build_token_type_map",
     "Result",
     "registry",
     "Registry",

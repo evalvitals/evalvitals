@@ -101,6 +101,18 @@ _add(ModelSpec(
 # VLMs (vision tower + TokenTypeMap)
 # ----------------------------------------------------------------------
 _add(ModelSpec(
+    key="qwen3-vl-4b-instruct", family="qwen3_vl", model_type="qwen3_vl",
+    hf_repo="Qwen/Qwen3-VL-4B-Instruct", auto_class="AutoModelForImageTextToText",
+    processor_class="AutoProcessor", min_transformers="4.57.0", tool_calling=True,
+    chat_template_kwargs={},
+    module_paths=ModulePaths(
+        decoder_layers="model.language_model.layers", vision_tower="model.visual",
+        vision_blocks="model.visual.blocks"),
+    vision=VisionSpec(image_token_id_attr="image_token_id",
+                      merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+    caveats=("small smoke-test VLM checkpoint; single .model layout; DeepStack",),
+))
+_add(ModelSpec(
     key="qwen2.5-vl-7b-instruct", family="qwen2_5_vl", model_type="qwen2_5_vl",
     hf_repo="Qwen/Qwen2.5-VL-7B-Instruct", auto_class="AutoModelForImageTextToText",
     processor_class="AutoProcessor", min_transformers="4.49.0", tool_calling=True,

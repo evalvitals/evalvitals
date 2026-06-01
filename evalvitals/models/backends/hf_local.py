@@ -21,7 +21,7 @@ from typing import Any
 
 from evalvitals.core.capability import Capability, CapabilityError
 from evalvitals.core.case import Inputs
-from evalvitals.core.model import Model, Trace
+from evalvitals.core.model import Model, TokenLogprob, Trace
 from evalvitals.core.spec import AttnSemantics
 from evalvitals.core.tool import ChatTurn
 from evalvitals.models.backends.base import Backend, RuntimeConfig
@@ -256,6 +256,31 @@ class HFLocalModel(Model):
         new = out[0][enc["input_ids"].shape[1]:]
         return tok.decode(new, skip_special_tokens=True)
 
+    def logprobs(self, inputs: Any, max_new_tokens: int = 64, top_k: int = 5, **kwargs) -> list[TokenLogprob]:
+        """Per-output-token logprobs via greedy generate with output_scores."""
+        import torch
+
+        if self.spec.is_vlm:
+            raise NotImplementedError(f"{self.spec.key}: VLM logprobs is Stage 2 (text-only for now).")
+        model, processor = self._loaded
+        tok = getattr(processor, "tokenizer", processor)
+        enc = self._encode(self._as_prompt(inputs))
+        n_in = enc["input_ids"].shape[1]
+        with torch.no_grad():
+            out = model.generate(
+                **enc, max_new_tokens=max_new_tokens, do_sample=False,
+                output_scores=True, return_dict_in_generate=True,
+            )
+        gen_ids = out.sequences[0][n_in:].tolist()
+        result: list[TokenLogprob] = []
+        for i, score in enumerate(out.scores):
+            lp = torch.log_softmax(score[0].float(), dim=-1)
+            tid = gen_ids[i]
+            topk = torch.topk(lp, min(top_k, lp.shape[-1]))
+            top = {tok.decode([int(j)]): float(v) for v, j in zip(topk.values, topk.indices)}
+            result.append(TokenLogprob(token=tok.decode([tid]), logprob=float(lp[tid]), top=top))
+        return result
+
     def chat(self, messages: list, tools=None) -> ChatTurn:
         """Tool-aware turn via the model's chat template.
 
@@ -279,19 +304,56 @@ class HFLocalModel(Model):
         gen = tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True)
         return ChatTurn(text=gen, raw_tool_calls=None)
 
+    def _encode_vlm(self, inputs, model, processor):
+        """Encode an (image, text) input for a VLM and build its TokenTypeMap.
+
+        Builds the TokenTypeMap from the processor output BEFORE moving to device,
+        using the live config (image_token_id, vision_config.spatial_merge_size) +
+        the spec's VisionSpec — so token ids / merge sizes are never hard-coded.
+        """
+        from evalvitals.core.tokentype import build_token_type_map
+
+        tok = getattr(processor, "tokenizer", processor)
+        prompt = self._as_prompt(inputs)
+        image = getattr(inputs, "image", None) if isinstance(inputs, Inputs) else None
+        content = ([{"type": "image"}] if image is not None else []) + [{"type": "text", "text": prompt}]
+        text = processor.apply_chat_template(
+            [{"role": "user", "content": content}],
+            add_generation_prompt=True, tokenize=False, **self.spec.chat_template_kwargs,
+        )
+        proc_kwargs = {"text": [text], "return_tensors": "pt"}
+        if image is not None:
+            proc_kwargs["images"] = [image]
+        enc = processor(**proc_kwargs)
+        ttm = build_token_type_map(enc["input_ids"], enc, model.config, self.spec.vision)
+        enc = enc.to(next(model.parameters()).device)
+        ids = enc["input_ids"][0].tolist()
+        tokens = [tok.decode([i]) for i in ids]
+        return enc, ids, tokens, ttm
+
     def forward(self, inputs: Any, capture: set[Capability], spec=None) -> Trace:
         import torch
 
-        if self.spec.is_vlm:
-            return self._vlm_forward(inputs, capture, spec)
         model, processor = self._loaded
-        tok = getattr(processor, "tokenizer", processor)
-        prompt = self._as_prompt(inputs)
-        enc = self._encode(prompt)
-        token_ids = enc["input_ids"][0].tolist()
-        tokens = [tok.decode([t]) for t in token_ids]
+        if self.spec.is_vlm:
+            enc, token_ids, tokens, ttm = self._encode_vlm(inputs, model, processor)
+        else:
+            tok = getattr(processor, "tokenizer", processor)
+            enc = self._encode(self._as_prompt(inputs))
+            token_ids = enc["input_ids"][0].tolist()
+            tokens = [tok.decode([t]) for t in token_ids]
+            ttm = None
+
+        extras: dict = {"attn_semantics": self.spec.attn_semantics.value}
+        if self.spec.is_vlm and self.spec.vision is not None:
+            image = getattr(inputs, "image", None) if isinstance(inputs, Inputs) else None
+            if image is not None:
+                _populate_vision_extras(
+                    extras, torch.tensor(token_ids), enc, model.config, self.spec.vision
+                )
 
         flags = {flag: True for cap, flag in _CAPTURE_FLAGS.items() if cap in capture}
+        enc.pop("token_type_ids", None)  # some VLM processors emit this; forward() rejects it
         with torch.no_grad():
             outputs = model(**enc, **flags)
 
@@ -328,77 +390,7 @@ class HFLocalModel(Model):
             attentions=attentions,
             hidden_states=hidden_states,
             logits=logits,
-            extras={"attn_semantics": self.spec.attn_semantics.value},
-        )
-
-    def _vlm_forward(self, inputs: Any, capture: set[Capability], spec=None) -> Trace:
-        """Forward pass for vision-language models.
-
-        Populates ``trace.extras["image_token_mask"]`` (bool tensor over the
-        sequence) and ``trace.extras["image_spatial_shape"]`` (H, W patch grid
-        after merge) so downstream analyzers can locate image-patch positions.
-        """
-        import torch
-
-        model, processor = self._loaded
-        tok = getattr(processor, "tokenizer", processor)
-
-        if isinstance(inputs, Inputs):
-            prompt, image = inputs.prompt, inputs.image
-        else:
-            prompt, image = str(inputs), None
-
-        text, raw_images = _format_vlm_input(processor, tok, prompt, image)
-
-        device = next(model.parameters()).device
-        if raw_images:
-            proc_in = processor(text=[text], images=raw_images, return_tensors="pt")
-        else:
-            proc_in = processor(text=[text], return_tensors="pt")
-        proc_in = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in proc_in.items()}
-
-        flags = {flag: True for cap, flag in _CAPTURE_FLAGS.items() if cap in capture}
-        with torch.no_grad():
-            outputs = model(**proc_in, **flags)
-
-        input_ids = proc_in["input_ids"][0].cpu()
-        token_ids = input_ids.tolist()
-        tokens = [tok.decode([t]) for t in token_ids]
-
-        extras: dict = {"attn_semantics": self.spec.attn_semantics.value}
-        if image is not None and self.spec.vision is not None:
-            _populate_vision_extras(extras, input_ids, proc_in, model.config, self.spec.vision)
-
-        layers = spec.layers if spec is not None else None
-        to_cpu = spec.to_cpu if spec is not None else True
-
-        def _maybe_subset(seq):
-            return [seq[i] for i in layers] if layers is not None else list(seq)
-
-        def _move(t):
-            return t.cpu() if to_cpu else t
-
-        provided: set[Capability] = set()
-        attentions = hidden_states = logits = None
-        if Capability.ATTENTION in capture:
-            if getattr(outputs, "attentions", None) is None:
-                raise RuntimeError(
-                    f"{self!r}: ATTENTION was requested but the model returned no attentions. "
-                    "Load it with attn_implementation='eager' (sdpa/flash silently return None)."
-                )
-            attentions = [_move(a.squeeze(0)) for a in _maybe_subset(outputs.attentions)]
-            provided.add(Capability.ATTENTION)
-        if Capability.HIDDEN_STATES in capture and getattr(outputs, "hidden_states", None) is not None:
-            hidden_states = [_move(h.squeeze(0)) for h in _maybe_subset(outputs.hidden_states)]
-            provided.add(Capability.HIDDEN_STATES)
-        if Capability.LOGITS in capture:
-            logits = _move(outputs.logits.squeeze(0))
-            provided.add(Capability.LOGITS)
-
-        return Trace(
-            tokens=tokens, token_ids=token_ids,
-            provided=provided, attentions=attentions,
-            hidden_states=hidden_states, logits=logits,
+            token_type_map=ttm,
             extras=extras,
         )
 

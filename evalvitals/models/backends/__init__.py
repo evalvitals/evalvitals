@@ -10,6 +10,7 @@ from evalvitals.models.backends.api import (
     APIModel,
     call_vision_api_chat_fn,
     call_vision_api_generate_fn,
+    parse_openai_logprobs,
 )
 from evalvitals.models.backends.base import Backend, RuntimeConfig
 from evalvitals.models.backends.hf_local import HFLocalBackend, HFLocalModel
@@ -32,5 +33,6 @@ __all__ = [
     "VLLMOfflineBackend",
     "call_vision_api_generate_fn",
     "call_vision_api_chat_fn",
+    "parse_openai_logprobs",
     "BACKENDS",
 ]
