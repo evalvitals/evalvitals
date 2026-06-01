@@ -1,0 +1,13 @@
+# MM-SHAP + VL-SHAP Shapley attribution example
+# Requires OPENAI_API_KEY for the logprobs-capable API model.
+
+model_name: gpt-4o-mini
+
+# MM-SHAP: text-token + image modality Shapley decomposition
+mm_shap_n_samples: 32     # Monte-Carlo Shapley samples (64+ for production)
+mm_shap_top_k: 5          # top contributing text tokens to report
+
+# VL-SHAP: spatial image-region Shapley attribution
+vl_shap_n_regions: 9      # 3x3 grid (16+ for production)
+vl_shap_n_samples: 32
+vl_shap_top_k: 3

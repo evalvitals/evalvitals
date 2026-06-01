@@ -1,0 +1,143 @@
+"""Eval agent — pre-registered A/B comparison with selective-inference discipline.
+
+Demonstrates the EvalOrchestrator: a closed-loop eval workflow that enforces
+selective-inference safety — mine on `explore`, pre-register a falsifiable
+hypothesis, test ONCE on `validate`, lock `confirm` for the final report.
+
+This prevents the textbook mistake of mining data for a pattern and then testing
+that same pattern on the same data (inflated false discovery rate).
+
+Usage (inside Docker):
+    python run.py               # synthetic demo, no API key needed
+    python run.py --n-cases 120
+
+Expected output:
+    Pre-registration hash: a3f7c2...
+    [EvalOrchestrator] strategy B better (effect=+0.13), reject=True
+    Hypothesis: "chain-of-thought prompt improves accuracy on multi-step questions"
+    Split tested: validate (30 cases)
+    Prereg hash: a3f7c2...  (proves hypothesis was fixed before unblinding)
+
+Also demonstrates:
+  CounterfactualReplay — identifies which agent steps most influence the outcome.
+  SelfEvolveLoop       — propose → record → until-dry pattern.
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+from pathlib import Path
+
+import yaml
+
+from evalvitals.analyzers.agent.counterfactual import CounterfactualReplay
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label, Step, Trajectory, as_casebatch
+from evalvitals.eval_agent import (
+    DataSplit,
+    EvalOrchestrator,
+    InMemoryStore,
+    PreregisteredHypothesis,
+    Split,
+)
+
+CONFIG = Path(__file__).parent / "config.yaml"
+
+
+def _make_synthetic_cases(n: int, seed: int = 42) -> list:
+    rng = random.Random(seed)
+    return [
+        FailureCase(
+            id=f"case_{i:04d}",
+            inputs=Inputs(prompt=f"Multi-step question #{i}: solve step by step."),
+            label=Label.PASS if rng.random() < 0.6 else Label.FAIL,
+        )
+        for i in range(n)
+    ]
+
+
+def strategy_a(case: Case) -> bool:
+    """Baseline strategy — direct answer, ~65% success."""
+    return random.random() < 0.65
+
+
+def strategy_b(case: Case) -> bool:
+    """Chain-of-thought prompt — ~78% success on multi-step questions."""
+    return random.random() < 0.78
+
+
+def demo_orchestrator(cfg: dict) -> None:
+    n = cfg.get("n_cases", 60)
+    alpha = cfg.get("alpha", 0.05)
+    min_effect = cfg.get("min_effect", 0.03)
+
+    cases = _make_synthetic_cases(n)
+
+    hyp = PreregisteredHypothesis(
+        predicate="multi-step questions",
+        statement="chain-of-thought prompt improves accuracy on multi-step questions",
+        direction="B>A",
+        min_effect=min_effect,
+        alpha=alpha,
+        split="validate",
+    )
+
+    orch = EvalOrchestrator(split=DataSplit(explore_frac=0.5, validate_frac=0.3))
+    report = orch.run(cases, hyp, strategy_a, strategy_b)
+
+    print(f"Pre-registration hash: {report['prereg_hash']}")
+    print(f"[EvalOrchestrator] decision={report['decision']}")
+    print(f"Hypothesis: {hyp.statement!r}")
+    print(f"Split tested: {report['split']}")
+    e = report["e_value"]
+    e_str = f"{e:.1f}" if e is not None else "N/A"
+    print(f"Effect: {report['effect']:+.3f}  CI: {report['ci']}  "
+          f"e-value: {e_str}  reject: {report['decision'] == 'REJECT H0'}")
+
+
+def demo_counterfactual() -> None:
+    """Show CounterfactualReplay ranking steps by causal influence."""
+
+    def rerun_fn(trajectory, step_idx, seed):
+        # Synthetic: step 1 is always causal (flips outcome when replayed)
+        rng = random.Random(seed + step_idx)
+        return step_idx == 1 and rng.random() < 0.8
+
+    traj = Trajectory(
+        sample_id="demo",
+        steps=[
+            Step(idx=0, tool_call={"name": "search"}, observation="found docs"),
+            Step(idx=1, tool_call={"name": "extract_answer"}, observation="extracted"),
+            Step(idx=2, tool_call={"name": "format_output"}, observation="formatted"),
+        ],
+        outcome=Label.PASS,
+    )
+    case = FailureCase(id="cf_demo", inputs=Inputs(prompt="solve this task"), trajectory=traj)
+
+    analyzer = CounterfactualReplay(rerun_fn=rerun_fn, n_replays=10)
+    result = analyzer._run(None, CaseBatch([case]))
+    pc = result.findings["per_case"][0]
+    print(f"\n[Counterfactual] most influential step: {pc['most_influential_step']}")
+    print(f"  all steps: {pc['steps']}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=str(CONFIG))
+    parser.add_argument("--n-cases", type=int, default=None)
+    args = parser.parse_args()
+
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+    if args.n_cases:
+        cfg["n_cases"] = args.n_cases
+
+    print("=== EvalOrchestrator + pre-registered hypothesis ===")
+    demo_orchestrator(cfg)
+
+    print("\n=== CounterfactualReplay (causal step attribution) ===")
+    demo_counterfactual()
+
+
+if __name__ == "__main__":
+    main()

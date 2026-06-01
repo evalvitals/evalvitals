@@ -1,0 +1,7 @@
+# Statistical comparison example — no model or API key required.
+# Simulates A/B and multi-strategy (3-way) eval results.
+
+n_examples: 200     # number of paired eval outcomes per strategy
+seed: 42
+alpha: 0.05         # significance level
+min_effect: 0.03    # minimum practical effect size (flag "underpowered" below this)
