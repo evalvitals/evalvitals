@@ -204,15 +204,15 @@ evalvitals/
 │   │                           #   each declares required_capabilities + applies_to_modalities
 │   ├── perturbation/  rise✓ vl_shap mm_shap            # GENERATE / LOGPROBS
 │   ├── uncertainty/   entropy✓ self_consistency✓ verbalized_conf✓   # LOGITS / GENERATE (black-box-feasible)
-│   ├── hallucination/ pope chair(metric✓) opera vcd    # GENERATE / ATTENTION (VLM)
+│   ├── hallucination/ pope✓ chair✓ opera vcd          # GENERATE (BB) / ATTENTION (VLM)
 │   ├── attention/     summary✓ rollout✓ sink✓ relative_attn   # ATTENTION
 │   ├── attribution/   gradcam generic_attn             # GRADIENTS (white-box)
 │   ├── lens/          logit_lens✓ tuned_lens           # HIDDEN_STATES
 │   ├── patching/      causal_trace                     # HIDDEN_STATES read+write (nnsight)
 │   ├── geometry/      cka✓ linear_probe                # HIDDEN_STATES (CLIP/SigLIP-scoped)
-│   └── agent/         loop_detect✓ ignored_obs✓ first_error_judge✓ counterfactual   # Trajectory
+│   └── agent/         loop_detect✓ ignored_obs✓ first_error_judge✓ counterfactual✓   # Trajectory
 │                      #  ✓ = implemented + unit-tested; others declare contract, raise (Stage 2)
-├── datasets/                   loaders → CaseBatch (Stage 2)
+├── datasets/                   PureQA✓ / WebSearchQA✓ / GUIOS✓ → CaseBatch (records/jsonl/sample) + verifiers✓
 ├── stats/                      compare() single entry — never a bare p  ← NEW
 │   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  subset_sampling.py✓
 │   └── api.py✓                 compare() → StatResult(effect, CI, e-value, reject, underpowered)
@@ -240,7 +240,7 @@ so the package's public API *is* the agent's action space.
 ## Running tests
 
 ```bash
-pytest        # 147 tests (+11 GPU-gated), no GPU required (models are mocked)
+pytest        # 156 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 ## Docker

@@ -1,31 +1,73 @@
-"""Counterfactual replay — causal step attribution (Stage 2).
+"""Counterfactual replay — causal step attribution for agent trajectories.
 
-Fork a trajectory at a suspect step, correct the args/observation, re-run the
-Agent loop, and check whether the outcome flips — turning correlational judging
-into intervention.  Reuses ``Agent`` + the executor.
+For each decision step, re-run the trajectory forked at that step and see whether
+the outcome flips: a high flip-rate ⇒ the step is causally influential.  The actual
+re-run is INJECTED as ``rerun_fn(trajectory, step_idx, seed) -> bool`` (it wraps a
+live Agent + verifier), keeping this analyzer decoupled and testable.
 
-Caveat (build in before claiming causality): with temperature > 0 use n-replay +
-a paired test, else "this step was causal" conflates with model noise; prefer
-temperature=0 replay.
+Caveat (built into the design): with temperature > 0, run ``n_replays`` per step
+and read the flip-RATE — a single replay conflates "this step was causal" with
+model noise.  Prefer temperature=0 replay or a larger ``n_replays``.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Callable
+
 from evalvitals.core.analyzer import Analyzer
 from evalvitals.core.capability import Capability
+from evalvitals.core.case import Label
 from evalvitals.core.registry import register_analyzer
+from evalvitals.core.result import Result
+
+if TYPE_CHECKING:
+    from evalvitals.core.case import CaseBatch
+    from evalvitals.core.model import Model
 
 
 @register_analyzer("counterfactual")
 class CounterfactualReplay(Analyzer):
-    """Causal step attribution by forking + replaying a trajectory."""
+    """Rank a trajectory's tool-call steps by how often re-running flips the outcome."""
 
     name = "counterfactual"
     requires = frozenset({Capability.TOOL_CALLS})
     applies_to_modalities = frozenset({"text"})
 
-    def _run(self, model, cases):
-        raise NotImplementedError(
-            "Stage 2: fork the trajectory at a suspect step and re-run the Agent loop; "
-            "use temperature=0 (or n-replay + paired test) to separate causality from noise."
+    def __init__(self, rerun_fn: Callable, n_replays: int = 3) -> None:
+        super().__init__(n_replays=n_replays)
+        self.rerun_fn = rerun_fn
+
+    def _run(self, model: "Model", cases: "CaseBatch") -> Result:
+        per_case = []
+        for case in cases:
+            traj = case.trajectory
+            if traj is None:
+                continue
+            original_success = traj.outcome == Label.PASS
+            candidates = [s for s in traj.steps if s.tool_call]
+            step_scores = []
+            for s in candidates:
+                flips = sum(
+                    1 for seed in range(self.n_replays)
+                    if bool(self.rerun_fn(traj, s.idx, seed)) != original_success
+                )
+                step_scores.append({
+                    "step": s.idx,
+                    "action": s.tool_call.get("name"),
+                    "flip_rate": round(flips / self.n_replays, 4) if self.n_replays else 0.0,
+                })
+            step_scores.sort(key=lambda d: -d["flip_rate"])
+            per_case.append({
+                "sample_id": traj.sample_id,
+                "original_success": original_success,
+                "most_influential_step": step_scores[0] if step_scores else None,
+                "steps": step_scores,
+            })
+        return Result(
+            analyzer=self.name, model=repr(model), cases=cases,
+            findings={
+                "n_trajectories": len(per_case),
+                "per_case": per_case,
+                "_caveat": "flip-rate ≈ causal influence; use temperature=0 or larger n_replays to separate from noise.",
+            },
         )
