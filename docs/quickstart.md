@@ -2,6 +2,30 @@
 
 This page shows the common ways to run EvalVitals.
 
+## Bring Your Own Model
+
+If you already have a loaded Hugging Face causal LM, wrap it — no registry key
+needed. The wrapped model is the same object `evalvitals.load(...)` returns, so
+every capability-compatible analyzer works on it.
+
+```python
+import evalvitals
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from evalvitals.analyzers.lens.logit_lens import LogitLensAnalyzer
+
+model = AutoModelForCausalLM.from_pretrained("my-org/my-llama")
+tokenizer = AutoTokenizer.from_pretrained("my-org/my-llama")
+
+wrapped = evalvitals.wrap(model, tokenizer)
+result = LogitLensAnalyzer().run(wrapped, "The capital of France is")
+print(result.summary())
+```
+
+Capabilities (attention, hidden states, logits, …) are inferred from the live
+model. Attention capture needs eager attention; `wrap` switches the model to it
+when it can, otherwise load with `attn_implementation="eager"`. White-box capture
+currently supports text decoder-only models (VLM capture is Stage 2).
+
 ## One-Liner Model Load
 
 ```python

@@ -36,6 +36,7 @@ __all__ = [
     "BaseAgent",
     "load",
     "load_model",
+    "wrap",
     "compose",
     "RuntimeConfig",
     "BACKENDS",
@@ -116,3 +117,45 @@ def load_model(cfg: ModelConfig) -> Model:
         device=cfg.device,
         dtype=cfg.dtype,
     )
+
+
+def wrap(
+    model: Any,
+    tokenizer: Any = None,
+    *,
+    want: "list[str] | set[Capability] | tuple" = (),
+    **runtime: Any,
+) -> Model:
+    """Wrap an ALREADY-LOADED HF causal LM + tokenizer into an analyzable model.
+
+    The captum-style public on-ramp: the user brings their own model, no registry
+    key needed.  The result is the same :class:`~evalvitals.models.backends.hf_local.HFLocalModel`
+    that ``evalvitals.load("qwen...")`` produces, so every capability-compatible
+    analyzer works on it::
+
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        m = AutoModelForCausalLM.from_pretrained("my-org/my-llama")
+        tok = AutoTokenizer.from_pretrained("my-org/my-llama")
+
+        wrapped = evalvitals.wrap(m, tok)
+        LogitLensAnalyzer().run(wrapped, "The capital of France is")
+
+    Capabilities are inferred from the live model; attention capture needs eager
+    attention, which ``wrap`` enables when it can (see ``HFLocalModel.from_loaded``).
+
+    Args:
+        model:     an instantiated ``transformers`` decoder-only model.
+        tokenizer: its tokenizer or processor (positional, recommended).
+        want:      capabilities to assert up front (names or ``Capability``); raises
+                   :class:`~evalvitals.core.capability.CapabilityError` if unavailable.
+        **runtime: forwarded to :class:`RuntimeConfig` (``max_new_tokens``, ``device``…).
+
+    Raises:
+        NotImplementedError: if *model* looks like a VLM (Stage 2; text-only for now).
+    """
+    from evalvitals.models.backends.hf_local import HFLocalModel
+    from evalvitals.models.compose import negotiate
+
+    handle = HFLocalModel.from_loaded(model, tokenizer, runtime=RuntimeConfig(**runtime))
+    caps = {w if isinstance(w, Capability) else Capability(w) for w in want}
+    return negotiate(handle, caps, model_id=handle.spec.key, where="wrap")

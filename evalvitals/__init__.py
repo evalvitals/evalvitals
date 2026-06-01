@@ -7,7 +7,18 @@ models by capability.
 
 Equivalent ways to run an analysis:
 
-1. Friendly + canonical — build a model, run an analyzer on it::
+0. Bring your own model — wrap an already-loaded HF model + tokenizer::
+
+    import evalvitals
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from evalvitals.analyzers.lens.logit_lens import LogitLensAnalyzer
+
+    m = AutoModelForCausalLM.from_pretrained("my-org/my-llama")
+    tok = AutoTokenizer.from_pretrained("my-org/my-llama")
+    model = evalvitals.wrap(m, tok)                         # captum-style on-ramp
+    result = LogitLensAnalyzer().run(model, "The capital of France is")
+
+1. Curated checkpoints — build a model from the registry by key::
 
     import evalvitals
     from evalvitals.analyzers.attention.summary import AttentionAnalyzer
@@ -46,7 +57,7 @@ from evalvitals.core import (
     registry,
 )
 from evalvitals.core.tool import Tool, ToolCall
-from evalvitals.models import Agent, RuntimeConfig, compose, load, load_model
+from evalvitals.models import Agent, RuntimeConfig, compose, load, load_model, wrap
 from evalvitals.specs import get_spec, list_specs
 
 __version__ = "0.1.0"
@@ -54,6 +65,7 @@ __all__ = [
     "load",
     "load_config",
     "load_model",
+    "wrap",
     "compose",
     "RuntimeConfig",
     "Agent",

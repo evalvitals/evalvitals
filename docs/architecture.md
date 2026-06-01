@@ -20,13 +20,30 @@ evalvitals/
 
 ## Core Contracts
 
+### Two paths to a `Model`
+
+```text
+# Public on-ramp — user brings their own already-loaded HF causal LM
+evalvitals.wrap(model, tokenizer)  ->  HFLocalModel
+
+# Curated path — load a registered checkpoint by key
+evalvitals.load("qwen2.5-7b-instruct")  ->  HFLocalModel
+```
+
+Both paths return the same `HFLocalModel`: capabilities are inferred from the
+live model in the `wrap()` case, and read off the spec in the `load()` case.
+`wrap()` also applies attention fix-ups automatically (eager mode is required to
+capture attention weights; sdpa/flash return `None`).
+
 ### `ModelSpec`
 
 `ModelSpec` describes what a model is, not how it is run. It stores identity and
 architecture facts such as model family, Hugging Face repo, decoder-layer paths,
 vision-token handling, MoE flags, reasoning flags, and attention semantics.
 
-Specs live in `evalvitals.specs` and are intentionally torch-free.
+Specs live in `evalvitals.specs` and are intentionally torch-free.  When
+`wrap()` is used, a minimal spec is inferred at runtime from `model.config` via
+`evalvitals.models.inference.infer_spec` — no registry entry is required.
 
 ### `Backend`
 
@@ -122,16 +139,25 @@ The design keeps common failure modes contained:
 The intended stable public entry points are:
 
 ```python
-evalvitals.load(...)
-evalvitals.run(...)
-evalvitals.load_config(...)
+# Model construction — two paths, same result object
+evalvitals.wrap(model, tokenizer, *, want=(), **runtime)  # bring your own model
+evalvitals.load(key, *, backend, want, checkpoint, **runtime)  # curated checkpoints
+
+# Config-driven run
+evalvitals.run(config, data)
+evalvitals.load_config(path)
+
+# Registry / discovery
 evalvitals.list_specs()
-evalvitals.get_spec(...)
+evalvitals.get_spec(key)
 evalvitals.registry
+
+# Core types
 evalvitals.Capability
 evalvitals.FailureCase
 evalvitals.Result
 ```
 
-Lower-level implementation details should remain under their package namespaces
-unless they are meant to become long-term extension APIs.
+Lower-level implementation details (`compose`, `HFLocalModel`, `infer_spec`,
+`Backend`, `ModelSpec`) should remain under their package namespaces unless they
+are meant to become long-term extension APIs.
