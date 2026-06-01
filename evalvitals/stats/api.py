@@ -4,6 +4,13 @@
 corrected reject decision, and an underpowered flag — so a caller can't ship
 "p<0.05" with a CI hugging zero.  Defaults: paired binary -> McNemar + a paired
 e-value (anytime-valid), clustered bootstrap CI (cluster at task).
+
+Underlying methods and their papers:
+  McNemar test     — McNemar (1947) https://doi.org/10.1007/BF02295996
+  Clustered CI     — Efron (1979), Cameron et al. (2008) https://doi.org/10.1162/rest.90.3.414
+  E-value          — Grünwald et al. (2022) https://arxiv.org/abs/1906.07801
+  e-BH (FDR)       — Wang & Ramdas (2022) https://arxiv.org/abs/2009.02824
+  Friedman+Nemenyi — Demšar (2006) https://jmlr.org/papers/v7/demsarar06a.html
 """
 
 from __future__ import annotations

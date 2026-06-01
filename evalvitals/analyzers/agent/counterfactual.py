@@ -8,6 +8,14 @@ live Agent + verifier), keeping this analyzer decoupled and testable.
 Caveat (built into the design): with temperature > 0, run ``n_replays`` per step
 and read the flip-RATE — a single replay conflates "this step was causal" with
 model noise.  Prefer temperature=0 replay or a larger ``n_replays``.
+
+Causal framework:
+  "Causality: Models, Reasoning and Inference"
+  Pearl (2000/2009), Cambridge University Press — do-calculus, interventions
+
+Applied to neural NLP (causal mediation / interchange intervention):
+  "Causal Mediation Analysis for Interpreting Neural NLP: The Case of Gender Bias"
+  Vig et al., 2020 — https://arxiv.org/abs/2004.12265
 """
 
 from __future__ import annotations

@@ -3,6 +3,18 @@
 Unlike :class:`TokenEntropyAnalyzer` (which needs the full LOGITS tensor from a
 white-box forward), this works from ``model.logprobs()`` — i.e. OpenAI-style
 ``logprobs`` — so it runs on an API model.  ``requires=LOGPROBS``.
+
+Perplexity is the exponential of mean negative log-likelihood — lower is better.
+Token-level predictive entropy (mean over top-k distribution) measures local
+uncertainty; high entropy on early tokens signals broad uncertainty.
+
+Predictive entropy for uncertainty estimation:
+  "Dropout as a Bayesian Approximation: Representing Model Uncertainty in
+  Deep Learning" — Gal & Ghahramani, ICML 2016 — https://arxiv.org/abs/1506.02142
+
+LLM self-knowledge via logprobs:
+  "Language Models (Mostly) Know What They Know"
+  Kadavath et al., 2022 — https://arxiv.org/abs/2207.05221
 """
 
 from __future__ import annotations

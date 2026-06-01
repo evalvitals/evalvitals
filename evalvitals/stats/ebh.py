@@ -1,9 +1,12 @@
-"""e-BH — FDR control over a set of e-values (Wang & Ramdas, 2022).
+"""e-BH — FDR control over a set of e-values.
 
 Controls FDR under ARBITRARY dependence between the e-values (which the closed
 loop has: overlapping prompts, shared tasks) — no independence assumption needed,
 unlike BH on p-values.  Procedure: sort e-values descending; reject the largest
 k for which ``e_(k) >= m / (alpha * k)``.
+
+Paper: "False Discovery Rate Control with E-values"
+       Wang & Ramdas (2022), JRSSB — https://arxiv.org/abs/2009.02824
 """
 
 from __future__ import annotations

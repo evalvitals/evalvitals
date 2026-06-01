@@ -7,6 +7,17 @@ region's Shapley value → a spatial attribution map over the image.
 The region scorer is injectable (``region_score_fn(kept_regions: set) -> float``)
 for decoupled testing; the default builds a grid-masked image (PIL) and scores it
 via ``model.logprobs`` (mean logprob).  ``requires=LOGPROBS``; VLM-only.
+
+Shapley values for ML:
+  "A Unified Approach to Interpreting Model Predictions"
+  Lundberg & Lee, NeurIPS 2017 — https://arxiv.org/abs/1705.07874
+  Code: https://github.com/shap/shap
+
+Region-level visual attribution for VLMs (MM-SHAP framework):
+  "MM-SHAP: A Performance-agnostic Metric for Measuring Multimodal Contributions
+  in Vision and Language Models"
+  Parcalabescu & Frank, ACL 2022 — https://arxiv.org/abs/2212.08158
+  Code: https://github.com/coastalcph/mm-shap
 """
 
 from __future__ import annotations

@@ -3,6 +3,10 @@
 Conditions on the discordant pairs (where A and B disagree), so it's far more
 powerful than a two-proportion test when A/B are run on the *same* items.
 Exact binomial p (no scipy); chi-square-with-continuity returned for reference.
+
+Paper: "Note on the sampling error of the difference between correlated
+       proportions or percentages" — McNemar (1947), Psychometrika 12(2):153-157
+       https://doi.org/10.1007/BF02295996
 """
 
 from __future__ import annotations

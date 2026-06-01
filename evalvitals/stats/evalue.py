@@ -6,6 +6,14 @@ with a uniform prior) e-value for a Bernoulli mean vs ``p0`` — a valid e-value
 under H0, E[e] <= 1, so rejecting when ``e >= 1/alpha`` controls type-I error at
 any stopping time.  For a paired A/B test, feed the discordant pairs that favour
 B as ``successes`` out of ``n_discordant`` with ``p0=0.5`` (the McNemar null).
+
+E-values and safe testing:
+  "Safe Testing" — Grünwald, de Heide & Koolen (2022)
+  J. Royal Statistical Society B — https://arxiv.org/abs/1906.07801
+
+Mixture / Bayes-factor e-value for the Bernoulli mean:
+  "Estimating means of bounded random variables by betting"
+  Waudby-Smith & Ramdas (2023), JRSSB — https://arxiv.org/abs/2010.09686
 """
 
 from __future__ import annotations

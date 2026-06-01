@@ -1,4 +1,4 @@
-"""MM-SHAP — modality-contribution metric (Parcalabescu & Frank).
+"""MM-SHAP — modality-contribution metric.
 
 Black-box (``LOGPROBS``): Shapley over the input's text tokens + the image (as a
 player), scored by the model's output logprob, then aggregated by modality:
@@ -11,6 +11,11 @@ player), scored by the model's output logprob, then aggregated by modality:
 The score is injectable (``score_fn(Inputs) -> float``); the default reduces
 ``model.logprobs(masked_input)`` to a mean logprob (a generation-confidence proxy
 — pass a target-likelihood ``score_fn`` for a more faithful score).
+
+Paper: "MM-SHAP: A Performance-agnostic Metric for Measuring Multimodal
+       Contributions in Vision and Language Models"
+       Parcalabescu & Frank, ACL 2022 — https://arxiv.org/abs/2212.08158
+Code:  https://github.com/coastalcph/mm-shap
 """
 
 from __future__ import annotations

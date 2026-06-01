@@ -1,9 +1,13 @@
-"""POPE — Polling-based Object Probing Evaluation (Li et al.).
+"""POPE — Polling-based Object Probing Evaluation.
 
 Black-box (``GENERATE``): pose yes/no object-presence questions about an image and
 score the model's answers against gold labels.  Each case carries the gold label
 in ``metadata["pope_label"]`` ("yes"/"no") — build a probe set with the datasets
 layer.  Reports accuracy / precision / recall / F1 (positive class = "yes").
+
+Paper: "Evaluating Object Hallucination in Large Vision-Language Models"
+       Li et al., EMNLP 2023 — https://arxiv.org/abs/2305.10355
+Code:  https://github.com/AoiDragon/POPE
 """
 
 from __future__ import annotations

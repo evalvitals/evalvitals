@@ -1,10 +1,13 @@
-"""CHAIR — Caption Hallucination Assessment (Rohrbach et al.).
+"""CHAIR — Caption Hallucination Assessment with Image Relevance.
 
 Black-box (``GENERATE``): generate a caption, extract mentioned objects from a
 fixed object vocabulary, and compare to the image's gold objects
 (``metadata["gt_objects"]``).  Reports CHAIR_i (mean fraction of mentioned objects
 that are hallucinated) and CHAIR_s (fraction of captions with ≥1 hallucination).
 ``chair_score`` is the reusable per-instance metric.
+
+Paper: "Object Hallucination in Image Captioning"
+       Rohrbach et al., EMNLP 2018 — https://arxiv.org/abs/1809.02156
 """
 
 from __future__ import annotations

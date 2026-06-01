@@ -3,6 +3,16 @@
 Resamples CLUSTERS (default: each example its own cluster; pass task ids to cluster
 multiple samples per task) with replacement.  Reporting effect size + CI, not just
 a p-value, is the point: a significant test with a CI hugging 0 is noise.
+
+Bootstrap method:
+  "Bootstrap Methods: Another Look at the Jackknife"
+  Efron (1979), The Annals of Statistics 7(1):1-26
+  https://doi.org/10.1214/aos/1176344552
+
+Cluster-robust bootstrap for correlated errors:
+  "Bootstrap-Based Improvements for Inference with Clustered Errors"
+  Cameron, Gelbach & Miller (2008), Review of Economics and Statistics 90(3):414-427
+  https://doi.org/10.1162/rest.90.3.414
 """
 
 from __future__ import annotations

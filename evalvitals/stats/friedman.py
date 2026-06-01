@@ -1,9 +1,15 @@
-"""Friedman omnibus test + Nemenyi post-hoc — comparing >2 strategies (Demšar 2006).
+"""Friedman omnibus test + Nemenyi post-hoc — comparing >2 strategies.
 
 The right protocol for ranking 3+ prompting strategies across a shared benchmark:
 Friedman tests whether the strategies differ at all (on within-example ranks),
 then Nemenyi's critical difference (CD) says which pairs differ.  No scipy — the
 chi-square survival function is computed via the regularized incomplete gamma.
+
+Paper: "Statistical Comparisons of Classifiers over Multiple Data Sets"
+       Demšar (2006), JMLR 7(1):1-30
+       https://jmlr.org/papers/v7/demsarar06a.html
+
+Nemenyi critical differences table from the same paper.
 """
 
 from __future__ import annotations
