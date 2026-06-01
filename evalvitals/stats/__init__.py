@@ -5,22 +5,29 @@ are exported too: McNemar (paired binary), clustered bootstrap CI, e-values
 (anytime-valid), e-BH (FDR under dependence), stratified subset sampling + τ.
 """
 
-from evalvitals.stats.api import StatResult, ab_test, compare
+from evalvitals.stats.api import MultiCompareResult, StatResult, ab_test, compare, compare_multiple
 from evalvitals.stats.bootstrap import clustered_bootstrap_diff
 from evalvitals.stats.ebh import ebh
 from evalvitals.stats.evalue import e_value_test, evalue_bernoulli
+from evalvitals.stats.friedman import chi2_sf, friedman_test, nemenyi_cd, nemenyi_pairs
 from evalvitals.stats.mcnemar import mcnemar
 from evalvitals.stats.subset_sampling import kendall_tau, sample_subset, stratified_subset
 
 __all__ = [
     "compare",
     "StatResult",
+    "compare_multiple",
+    "MultiCompareResult",
     "ab_test",
     "mcnemar",
     "clustered_bootstrap_diff",
     "evalue_bernoulli",
     "e_value_test",
     "ebh",
+    "friedman_test",
+    "nemenyi_cd",
+    "nemenyi_pairs",
+    "chi2_sf",
     "stratified_subset",
     "kendall_tau",
     "sample_subset",

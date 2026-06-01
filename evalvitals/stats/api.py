@@ -13,6 +13,7 @@ from typing import Optional, Sequence
 
 from evalvitals.stats.bootstrap import clustered_bootstrap_diff
 from evalvitals.stats.evalue import evalue_bernoulli
+from evalvitals.stats.friedman import friedman_test, nemenyi_cd, nemenyi_pairs
 from evalvitals.stats.mcnemar import mcnemar
 
 
@@ -85,3 +86,45 @@ def compare(
 def ab_test(success_a: Sequence, success_b: Sequence, **kwargs) -> StatResult:
     """Back-compat alias: pass per-example success vectors (bools/0-1)."""
     return compare(success_a, success_b, **kwargs)
+
+
+@dataclass
+class MultiCompareResult:
+    """Omnibus (Friedman) + post-hoc (Nemenyi) verdict for >2 strategies."""
+
+    reject_global: bool                 # did Friedman find ANY difference?
+    avg_ranks: dict                     # name -> mean rank (lower = better)
+    significant_pairs: list             # Nemenyi pairs that differ (only if reject_global)
+    critical_difference: float
+    friedman_stat: float
+    p_value: float
+    df: int
+    n: int
+    alpha: float
+
+    def summary(self) -> str:
+        order = sorted(self.avg_ranks, key=lambda k: self.avg_ranks[k])
+        ranking = " < ".join(f"{k}({self.avg_ranks[k]:.2f})" for k in order)
+        verdict = "differ" if self.reject_global else "no global difference"
+        return (f"[Friedman χ²={self.friedman_stat:.3f} df={self.df} -> {verdict}] "
+                f"ranks: {ranking} | CD={self.critical_difference:.3f} | "
+                f"{len(self.significant_pairs)} sig pair(s)")
+
+
+def compare_multiple(success_by_strategy: dict, *, alpha: float = 0.05) -> MultiCompareResult:
+    """Compare 3+ strategies across shared examples (Friedman + Nemenyi).
+
+    ``success_by_strategy``: ``{name: [per-example metric]}`` (equal-length, paired).
+    For exactly 2 strategies use :func:`compare` (McNemar) instead.
+    """
+    if len(success_by_strategy) < 3:
+        raise ValueError("compare_multiple is for 3+ strategies; use compare() for 2.")
+    fr = friedman_test(success_by_strategy)
+    avg = dict(zip(fr["names"], fr["avg_ranks"]))
+    cd = nemenyi_cd(fr["k"], fr["n"], alpha)
+    reject = fr["p_value"] < alpha
+    pairs = nemenyi_pairs(avg, cd) if reject else []  # post-hoc only after a global rejection
+    return MultiCompareResult(
+        reject_global=reject, avg_ranks=avg, significant_pairs=pairs, critical_difference=cd,
+        friedman_stat=fr["statistic"], p_value=fr["p_value"], df=fr["df"], n=fr["n"], alpha=alpha,
+    )

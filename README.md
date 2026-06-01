@@ -202,7 +202,7 @@ evalvitals/
 │   └── whitebox/qwen.py        QwenLLM (legacy concrete model; still supported)
 ├── analyzers/                  # functional taxonomy by CAPABILITY (not black/white-box)  ← NEW
 │   │                           #   each declares required_capabilities + applies_to_modalities
-│   ├── perturbation/  rise✓ vl_shap mm_shap            # GENERATE / LOGPROBS
+│   ├── perturbation/  rise✓ vl_shap✓ mm_shap✓          # GENERATE / LOGPROBS (Shapley-over-masking)
 │   ├── uncertainty/   entropy✓ self_consistency✓ verbalized_conf✓   # LOGITS / GENERATE (black-box-feasible)
 │   ├── hallucination/ pope✓ chair✓ opera vcd          # GENERATE (BB) / ATTENTION (VLM)
 │   ├── attention/     summary✓ rollout✓ sink✓ relative_attn   # ATTENTION
@@ -214,8 +214,8 @@ evalvitals/
 │                      #  ✓ = implemented + unit-tested; others declare contract, raise (Stage 2)
 ├── datasets/                   PureQA✓ / WebSearchQA✓ / GUIOS✓ → CaseBatch (records/jsonl/sample) + verifiers✓
 ├── stats/                      compare() single entry — never a bare p  ← NEW
-│   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  subset_sampling.py✓
-│   └── api.py✓                 compare() → StatResult(effect, CI, e-value, reject, underpowered)
+│   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  friedman.py✓ (Friedman+Nemenyi, >2 strategies)  subset_sampling.py✓
+│   └── api.py✓                 compare() (pairwise) + compare_multiple() (3+ strategies) → StatResult / MultiCompareResult
 └── eval_agent/                 closed loop with selective-inference discipline  ← NEW
     ├── preregister.py✓         DataSplit (explore/validate/confirm) + PreregisteredHypothesis + log
     ├── ab_runner.py✓           two strategies → stats.compare
@@ -240,7 +240,7 @@ so the package's public API *is* the agent's action space.
 ## Running tests
 
 ```bash
-pytest        # 156 tests (+11 GPU-gated), no GPU required (models are mocked)
+pytest        # 165 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 ## Docker
