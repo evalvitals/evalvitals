@@ -42,6 +42,7 @@ from evalvitals.core.spec import (
     ModulePaths,
     VisionSpec,
 )
+from evalvitals.core.tokentype import TokenTypeMap, build_token_type_map
 from evalvitals.core.tool import ChatTurn, Tool, ToolCall
 
 __all__ = [
@@ -68,6 +69,8 @@ __all__ = [
     "Tool",
     "ToolCall",
     "ChatTurn",
+    "TokenTypeMap",
+    "build_token_type_map",
     "Result",
     "registry",
     "Registry",

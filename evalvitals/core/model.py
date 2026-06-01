@@ -24,6 +24,7 @@ from evalvitals.core.capability import Capability
 if TYPE_CHECKING:
     import torch
 
+    from evalvitals.core.tokentype import TokenTypeMap
     from evalvitals.core.tool import ChatTurn
 
 
@@ -58,6 +59,7 @@ class Trace:
     attentions: "list[torch.Tensor] | None" = None      # per layer: (heads, seq, seq)
     hidden_states: "list[torch.Tensor] | None" = None    # per layer: (seq, dim)
     logits: "torch.Tensor | None" = None                 # (seq, vocab)
+    token_type_map: "TokenTypeMap | None" = None         # VLM: image-token positions + patch grid
     extras: dict[str, Any] = field(default_factory=dict)
 
     @property

@@ -163,22 +163,48 @@ class HFLocalModel(Model):
         gen = tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True)
         return ChatTurn(text=gen, raw_tool_calls=None)
 
+    def _encode_vlm(self, inputs, model, processor):
+        """Encode an (image, text) input for a VLM and build its TokenTypeMap.
+
+        Builds the TokenTypeMap from the processor output BEFORE moving to device,
+        using the live config (image_token_id, vision_config.spatial_merge_size) +
+        the spec's VisionSpec — so token ids / merge sizes are never hard-coded.
+        """
+        from evalvitals.core.tokentype import build_token_type_map
+
+        tok = getattr(processor, "tokenizer", processor)
+        prompt = self._as_prompt(inputs)
+        image = getattr(inputs, "image", None) if isinstance(inputs, Inputs) else None
+        content = ([{"type": "image"}] if image is not None else []) + [{"type": "text", "text": prompt}]
+        text = processor.apply_chat_template(
+            [{"role": "user", "content": content}],
+            add_generation_prompt=True, tokenize=False, **self.spec.chat_template_kwargs,
+        )
+        proc_kwargs = {"text": [text], "return_tensors": "pt"}
+        if image is not None:
+            proc_kwargs["images"] = [image]
+        enc = processor(**proc_kwargs)
+        ttm = build_token_type_map(enc["input_ids"], enc, model.config, self.spec.vision)
+        enc = enc.to(next(model.parameters()).device)
+        ids = enc["input_ids"][0].tolist()
+        tokens = [tok.decode([i]) for i in ids]
+        return enc, ids, tokens, ttm
+
     def forward(self, inputs: Any, capture: set[Capability], spec=None) -> Trace:
         import torch
 
-        if self.spec.is_vlm:
-            raise NotImplementedError(
-                f"{self.spec.key}: VLM forward-capture (image tokens + TokenTypeMap) is Stage 2. "
-                "Text generation works; white-box image-token capture is not wired yet."
-            )
         model, processor = self._loaded
-        tok = getattr(processor, "tokenizer", processor)
-        prompt = self._as_prompt(inputs)
-        enc = self._encode(prompt)
-        token_ids = enc["input_ids"][0].tolist()
-        tokens = [tok.decode([t]) for t in token_ids]
+        if self.spec.is_vlm:
+            enc, token_ids, tokens, ttm = self._encode_vlm(inputs, model, processor)
+        else:
+            tok = getattr(processor, "tokenizer", processor)
+            enc = self._encode(self._as_prompt(inputs))
+            token_ids = enc["input_ids"][0].tolist()
+            tokens = [tok.decode([t]) for t in token_ids]
+            ttm = None
 
         flags = {flag: True for cap, flag in _CAPTURE_FLAGS.items() if cap in capture}
+        enc.pop("token_type_ids", None)  # some VLM processors emit this; forward() rejects it
         with torch.no_grad():
             outputs = model(**enc, **flags)
 
@@ -210,6 +236,7 @@ class HFLocalModel(Model):
             attentions=attentions,
             hidden_states=hidden_states,
             logits=logits,
+            token_type_map=ttm,
             extras={"attn_semantics": self.spec.attn_semantics.value},
         )
 
