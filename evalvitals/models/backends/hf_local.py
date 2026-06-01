@@ -33,6 +33,74 @@ _CAPTURE_FLAGS = {
 }
 
 
+def _read_nested_attr(obj: Any, attr_path: "str | None", *, default: Any) -> Any:
+    """Walk a dotted attribute path on *obj*, returning *default* if any step is missing."""
+    if not attr_path:
+        return default
+    for part in attr_path.split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return default
+    return obj
+
+
+def _populate_vision_extras(
+    extras: dict,
+    input_ids: Any,  # CPU torch.Tensor
+    proc_in: dict,
+    model_config: Any,
+    vision: Any,  # VisionSpec — avoid circular import; duck-typed
+) -> None:
+    """Fill *extras* with image-token mask and spatial layout for analyzers.
+
+    Called from ``HFLocalModel._vlm_forward`` after the processor runs.
+    Writes:
+      ``image_token_mask``    — bool tensor (seq_len,) marking image-pad positions.
+      ``image_spatial_shape`` — (H, W) patch grid after spatial merge, for reshaping.
+      ``image_grid_thw``      — raw (T, H, W) tensor if grid_source=="grid_thw".
+    """
+    image_token_id = getattr(model_config, vision.image_token_id_attr, None)
+    if image_token_id is not None:
+        extras["image_token_mask"] = (input_ids == image_token_id)
+
+    merge = int(_read_nested_attr(model_config, vision.merge_size_attr, default=1) or 1)
+
+    if vision.grid_source == "grid_thw":
+        grid_t = proc_in.get("image_grid_thw")
+        if grid_t is not None:
+            grid = grid_t.cpu() if hasattr(grid_t, "cpu") else grid_t
+            extras["image_grid_thw"] = grid
+            _, h, w = int(grid[0, 0]), int(grid[0, 1]), int(grid[0, 2])
+            extras["image_spatial_shape"] = (h // merge, w // merge)
+    elif vision.grid_source == "grid_hw":
+        grid_t = proc_in.get("image_grid_hw")
+        if grid_t is not None:
+            grid = grid_t.cpu() if hasattr(grid_t, "cpu") else grid_t
+            extras["image_grid_hw"] = grid
+            h, w = int(grid[0, 0]), int(grid[0, 1])
+            extras["image_spatial_shape"] = (h // merge, w // merge)
+
+
+def _format_vlm_input(processor: Any, tok: Any, prompt: str, image: Any) -> "tuple[str, list]":
+    """Build the formatted text string and image list for the VLM processor.
+
+    Uses the processor's ``apply_chat_template`` (or tokenizer's) when available
+    so that image placeholder tokens are inserted at the correct position.
+    Returns ``(text, [image])`` or ``(prompt, [])`` when no image is given.
+    """
+    apply_fn = getattr(processor, "apply_chat_template", None) or getattr(tok, "apply_chat_template", None)
+    if apply_fn is None:
+        return prompt, ([image] if image is not None else [])
+
+    content: list = []
+    if image is not None:
+        content.append({"type": "image", "image": image})
+    content.append({"type": "text", "text": prompt})
+    messages = [{"role": "user", "content": content}]
+    text = apply_fn(messages, tokenize=False, add_generation_prompt=True)
+    return text, ([image] if image is not None else [])
+
+
 class HFLocalModel(Model):
     """A locally-loaded HF model, constructed from a :class:`ModelSpec`."""
 
@@ -215,10 +283,7 @@ class HFLocalModel(Model):
         import torch
 
         if self.spec.is_vlm:
-            raise NotImplementedError(
-                f"{self.spec.key}: VLM forward-capture (image tokens + TokenTypeMap) is Stage 2. "
-                "Text generation works; white-box image-token capture is not wired yet."
-            )
+            return self._vlm_forward(inputs, capture, spec)
         model, processor = self._loaded
         tok = getattr(processor, "tokenizer", processor)
         prompt = self._as_prompt(inputs)
@@ -264,6 +329,77 @@ class HFLocalModel(Model):
             hidden_states=hidden_states,
             logits=logits,
             extras={"attn_semantics": self.spec.attn_semantics.value},
+        )
+
+    def _vlm_forward(self, inputs: Any, capture: set[Capability], spec=None) -> Trace:
+        """Forward pass for vision-language models.
+
+        Populates ``trace.extras["image_token_mask"]`` (bool tensor over the
+        sequence) and ``trace.extras["image_spatial_shape"]`` (H, W patch grid
+        after merge) so downstream analyzers can locate image-patch positions.
+        """
+        import torch
+
+        model, processor = self._loaded
+        tok = getattr(processor, "tokenizer", processor)
+
+        if isinstance(inputs, Inputs):
+            prompt, image = inputs.prompt, inputs.image
+        else:
+            prompt, image = str(inputs), None
+
+        text, raw_images = _format_vlm_input(processor, tok, prompt, image)
+
+        device = next(model.parameters()).device
+        if raw_images:
+            proc_in = processor(text=[text], images=raw_images, return_tensors="pt")
+        else:
+            proc_in = processor(text=[text], return_tensors="pt")
+        proc_in = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in proc_in.items()}
+
+        flags = {flag: True for cap, flag in _CAPTURE_FLAGS.items() if cap in capture}
+        with torch.no_grad():
+            outputs = model(**proc_in, **flags)
+
+        input_ids = proc_in["input_ids"][0].cpu()
+        token_ids = input_ids.tolist()
+        tokens = [tok.decode([t]) for t in token_ids]
+
+        extras: dict = {"attn_semantics": self.spec.attn_semantics.value}
+        if image is not None and self.spec.vision is not None:
+            _populate_vision_extras(extras, input_ids, proc_in, model.config, self.spec.vision)
+
+        layers = spec.layers if spec is not None else None
+        to_cpu = spec.to_cpu if spec is not None else True
+
+        def _maybe_subset(seq):
+            return [seq[i] for i in layers] if layers is not None else list(seq)
+
+        def _move(t):
+            return t.cpu() if to_cpu else t
+
+        provided: set[Capability] = set()
+        attentions = hidden_states = logits = None
+        if Capability.ATTENTION in capture:
+            if getattr(outputs, "attentions", None) is None:
+                raise RuntimeError(
+                    f"{self!r}: ATTENTION was requested but the model returned no attentions. "
+                    "Load it with attn_implementation='eager' (sdpa/flash silently return None)."
+                )
+            attentions = [_move(a.squeeze(0)) for a in _maybe_subset(outputs.attentions)]
+            provided.add(Capability.ATTENTION)
+        if Capability.HIDDEN_STATES in capture and getattr(outputs, "hidden_states", None) is not None:
+            hidden_states = [_move(h.squeeze(0)) for h in _maybe_subset(outputs.hidden_states)]
+            provided.add(Capability.HIDDEN_STATES)
+        if Capability.LOGITS in capture:
+            logits = _move(outputs.logits.squeeze(0))
+            provided.add(Capability.LOGITS)
+
+        return Trace(
+            tokens=tokens, token_ids=token_ids,
+            provided=provided, attentions=attentions,
+            hidden_states=hidden_states, logits=logits,
+            extras=extras,
         )
 
     def __repr__(self) -> str:

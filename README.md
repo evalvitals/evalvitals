@@ -24,6 +24,8 @@ changes.
 
 ## Quickstart
 
+**Text attention (LLM):**
+
 ```python
 import evalvitals
 from evalvitals.analyzers.attention.summary import AttentionAnalyzer
@@ -36,6 +38,27 @@ result = AttentionAnalyzer(layer=-1, top_k=5).run(
 
 print(result.summary())
 print(result.findings)
+```
+
+**Relative attention (VLM) — "MLLMs Know Where to Look" ([arXiv 2502.17422](https://arxiv.org/abs/2502.17422), [code](https://github.com/saccharomycetes/mllms_know)):**
+
+```python
+from PIL import Image
+from evalvitals import compose, Capability
+from evalvitals.analyzers.attention import RelativeAttentionAnalyzer
+from evalvitals.core.case import Inputs
+
+# Load Qwen2.5-VL with white-box attention capture
+model = compose("qwen2.5-vl-7b-instruct", "hf_local", want={Capability.ATTENTION})
+
+# Run relative attention: ratio of task-specific vs generic image attention
+result = RelativeAttentionAnalyzer(layer=22, top_k=5).run(
+    model,
+    Inputs(prompt="What color is the car?", image=Image.open("scene.jpg")),
+)
+
+print(result.summary())   # agent-readable findings
+result.plot()             # (H, W) heatmap — requires evalvitals[viz]
 ```
 
 Config-driven runs use the same contracts:
@@ -180,7 +203,7 @@ evalvitals/
 │   ├── perturbation/  rise✓ vl_shap mm_shap            # GENERATE / LOGPROBS
 │   ├── uncertainty/   entropy✓ self_consistency✓ verbalized_conf✓   # LOGITS / GENERATE (black-box-feasible)
 │   ├── hallucination/ pope chair(metric✓) opera vcd    # GENERATE / ATTENTION (VLM)
-│   ├── attention/     summary✓ rollout✓ sink✓ relative_attn   # ATTENTION
+│   ├── attention/     summary✓ rollout✓ sink✓ relative_attn✓  # ATTENTION
 │   ├── attribution/   gradcam generic_attn             # GRADIENTS (white-box)
 │   ├── lens/          logit_lens✓ tuned_lens           # HIDDEN_STATES
 │   ├── patching/      causal_trace                     # HIDDEN_STATES read+write (nnsight)

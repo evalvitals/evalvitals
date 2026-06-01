@@ -7,10 +7,11 @@ it with hyper-parameters, then ``run`` it on any model that provides the
 raw per-layer/per-head tensors for plotting and numeric work.
 
 References:
-- What's in the Image? (vision attention deep-dive)
-- VL-Cache (modality-aware KV-cache)
-- When Attention Sink Emerges in Language Models
-- MLLMs Know Where to Look (relative attention)
+- "What's in the Image?" — vision attention deep-dive
+- "VL-Cache" — modality-aware KV-cache
+- "When Attention Sink Emerges in Language Models" — https://arxiv.org/abs/2309.17453
+- "MLLMs Know Where to Look" (relative attention) — https://arxiv.org/abs/2502.17422
+  · code: https://github.com/saccharomycetes/mllms_know
 """
 
 from __future__ import annotations

@@ -77,15 +77,18 @@ logits are available for any text decoder-only model. Attention capture requires
 eager attention — `wrap` enables it automatically when the model supports it; if
 not, reload with `attn_implementation="eager"`.
 
-`wrap()` currently supports text decoder-only (causal LM) models. VLM internals
-capture is Stage 2. If your model has an unusual architecture not supported by
-automatic inference, add a `ModelSpec` (see below) and use `evalvitals.load`.
+`wrap()` currently supports text decoder-only (causal LM) models. For VLMs, use
+the curated spec path (`evalvitals.load` or `compose`) — VLM forward capture with
+image-token mask and spatial layout is handled automatically for models in the spec
+registry. If your model has an unusual architecture not supported by automatic
+inference, add a `ModelSpec` (see below) and use `evalvitals.load`.
 
 ## Add a Model Spec
 
 Add model identity to `evalvitals/specs.py`:
 
 ```python
+# Text-only LLM
 _add(ModelSpec(
     key="new-model-key",
     family="new_family",
@@ -95,6 +98,29 @@ _add(ModelSpec(
     processor_class="AutoTokenizer",
     min_transformers="4.50.0",
     module_paths=ModulePaths(decoder_layers="model.layers"),
+))
+
+# VLM — add a VisionSpec so the backend can locate image tokens and the patch grid.
+# image_token_id_attr: name of the config attribute holding the image-pad token id.
+# merge_size_attr:     dotted path to the spatial merge size (None if not applicable).
+# grid_source:         "grid_thw" (Qwen-VL style) | "grid_hw" | "fixed".
+_add(ModelSpec(
+    key="my-vlm-7b",
+    family="my_vlm",
+    model_type="my_vlm",
+    hf_repo="org/my-vlm-7b",
+    auto_class="AutoModelForImageTextToText",
+    processor_class="AutoProcessor",
+    min_transformers="4.50.0",
+    module_paths=ModulePaths(
+        decoder_layers="model.language_model.layers",
+        vision_tower="model.visual",
+    ),
+    vision=VisionSpec(
+        image_token_id_attr="image_token_id",
+        merge_size_attr="vision_config.spatial_merge_size",
+        grid_source="grid_thw",
+    ),
 ))
 ```
 

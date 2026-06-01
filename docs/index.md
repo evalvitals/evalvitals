@@ -62,6 +62,9 @@ The intended workflow is:
 ## Current Status
 
 EvalVitals is currently an alpha package. The core contracts, spec/backend
-composition, capability matching, public `wrap()` on-ramp, attention analysis,
-token-entropy analysis, and test scaffolding are in place. Several modules exist
-as planned Stage 2/3 surfaces and intentionally raise `NotImplementedError`.
+composition, capability matching, public `wrap()` on-ramp, attention analysis
+(including VLM relative attention — [arXiv 2502.17422](https://arxiv.org/abs/2502.17422)),
+token-entropy analysis, and test scaffolding are in place. VLM forward capture
+(image-token mask + spatial layout) is implemented for all models in the spec
+registry. Several modules exist as planned Stage 2/3 surfaces and intentionally
+raise `NotImplementedError`.
