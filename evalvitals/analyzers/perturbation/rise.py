@@ -8,6 +8,10 @@ verifier signal — task-specific, so the caller provides it).
 Cost note: this is the dominant compute (n_masks forward passes per sample). For
 API models, run it through the existing async caller with an on-disk cache keyed
 by the mask hash so a crashed sweep resumes.
+
+References:
+- RISE: Randomized Input Sampling for Explanation of Black-box Models
+  Petsiuk, Das & Saenko, BMVC 2018 — arXiv:1806.07421
 """
 
 from __future__ import annotations

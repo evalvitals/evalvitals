@@ -6,6 +6,12 @@ next-token predictive distribution (entropy + top-k) — a cheap signal for
 runs on any model that provides it (and, unlike attention, does not need eager).
 
 ``torch`` is imported inside ``_run`` so this module imports torch-free.
+
+References:
+- Uncertainty Estimation in Autoregressive Structured Prediction (predictive entropy)
+  Malinin & Gales, ICLR 2021 — arXiv:2002.07650
+- Semantic Uncertainty: ... for Natural Language Generation
+  Kuhn, Gal & Farquhar, ICLR 2023 — arXiv:2302.09664
 """
 
 from __future__ import annotations

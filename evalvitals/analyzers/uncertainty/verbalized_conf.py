@@ -2,6 +2,12 @@
 
 Black-box (``GENERATE`` only): ask the model to state a 0–100 confidence and parse
 it.  A cheap, well-studied (often miscalibrated) uncertainty signal.
+
+References:
+- Teaching Models to Express Their Uncertainty in Words
+  Lin, Hilton & Evans, TMLR 2022 — arXiv:2205.14334
+- Just Ask for Calibration: ... Verbalized Confidence (RLHF LMs)
+  Tian et al., EMNLP 2023 — arXiv:2305.14975
 """
 
 from __future__ import annotations
