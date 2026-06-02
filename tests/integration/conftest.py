@@ -7,7 +7,6 @@ integration test files to avoid redundant weight loads (~2s from cache each).
 from __future__ import annotations
 
 import pytest
-import torch
 
 from evalvitals.core.capability import Capability
 from evalvitals.models import load
