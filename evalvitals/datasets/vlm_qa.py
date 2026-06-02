@@ -16,7 +16,7 @@ Spatial457:
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Iterable
 
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Provenance, Source
 from evalvitals.datasets.base import Dataset, read_jsonl
