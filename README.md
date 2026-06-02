@@ -222,7 +222,7 @@ evalvitals/
 │   ├── toolcodec.py            ToolCallCodec: OpenAI (native) / Qwen (Hermes text)  ← NEW
 │   ├── _discover.py            runtime decoder-layer discovery (anti-hardcoding)  ← NEW
 │   ├── backends/{api,hf_local,vllm_offline}.py   ModelSpec × Backend runtimes  ← NEW
-│   └── whitebox/qwen.py        QwenLLM (legacy concrete model; still supported)
+│   └── whitebox/{qwen,qwen_vl}.py  per-version factories (qwen3_8b(), qwen3_vl_8b_instruct(), …) → compose(spec,'hf_local')  ← NEW
 ├── analyzers/                  # functional taxonomy by CAPABILITY (not black/white-box)  ← NEW
 │   │                           #   each declares required_capabilities + applies_to_modalities
 │   ├── perturbation/  rise✓ vl_shap✓ mm_shap✓          # GENERATE / LOGPROBS (Shapley-over-masking)
@@ -271,7 +271,7 @@ We follow a tiered testing strategy modeled after standard practices in scientif
 
 **Run fast unit tests only (CPU, offline-friendly):**
 ```bash
-pytest        # 165 tests (+11 GPU-gated), no GPU required (models are mocked)
+pytest        # 171 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 **Run GPU integration tests (requires CUDA GPU and model checkpoint cache):**

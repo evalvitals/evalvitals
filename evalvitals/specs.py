@@ -153,6 +153,79 @@ _add(ModelSpec(
         "pop token_type_ids before generate; interleaved-MRoPE 3D position_ids",
     ),
 ))
+
+# ---- additional Qwen sizes/variants (same per-family fields; paths discovered at load) ----
+for _key, _repo in [
+    ("qwen2.5-14b-instruct", "Qwen/Qwen2.5-14B-Instruct"),
+    ("qwen2.5-32b-instruct", "Qwen/Qwen2.5-32B-Instruct"),
+    ("qwen2.5-72b-instruct", "Qwen/Qwen2.5-72B-Instruct"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen2", model_type="qwen2", hf_repo=_repo,
+        auto_class="AutoModelForCausalLM", processor_class="AutoTokenizer",
+        min_transformers="4.43.0", tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.layers"),
+    ))
+for _key, _repo in [
+    ("qwen3-14b", "Qwen/Qwen3-14B"),
+    ("qwen3-32b", "Qwen/Qwen3-32B"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen3", model_type="qwen3", hf_repo=_repo,
+        auto_class="AutoModelForCausalLM", processor_class="AutoTokenizer",
+        min_transformers="4.51.0", is_reasoning=True, tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.layers"),
+        caveats=("q_norm/k_norm before RoPE",),
+    ))
+_add(ModelSpec(
+    key="qwen3-235b-a22b", family="qwen3_moe", model_type="qwen3_moe",
+    hf_repo="Qwen/Qwen3-235B-A22B", auto_class="AutoModelForCausalLM",
+    processor_class="AutoTokenizer", min_transformers="4.51.0", is_moe=True,
+    is_reasoning=True, tool_calling=True,
+    module_paths=ModulePaths(decoder_layers="model.layers", router="mlp.gate", experts="mlp.experts"),
+    caveats=("128 experts top-8; multi-GPU/FP8; v5 fused-experts — detect at runtime",),
+))
+# Qwen2.5-VL dense sizes
+for _key, _repo in [
+    ("qwen2.5-vl-3b-instruct", "Qwen/Qwen2.5-VL-3B-Instruct"),
+    ("qwen2.5-vl-32b-instruct", "Qwen/Qwen2.5-VL-32B-Instruct"),
+    ("qwen2.5-vl-72b-instruct", "Qwen/Qwen2.5-VL-72B-Instruct"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen2_5_vl", model_type="qwen2_5_vl", hf_repo=_repo,
+        auto_class="AutoModelForImageTextToText", processor_class="AutoProcessor",
+        min_transformers="4.49.0", tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.language_model.layers",
+                                 vision_tower="model.visual", vision_blocks="model.visual.blocks"),
+        vision=VisionSpec(image_token_id_attr="image_token_id",
+                          merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+    ))
+# Qwen3-VL dense + MoE sizes
+_add(ModelSpec(
+    key="qwen3-vl-2b-instruct", family="qwen3_vl", model_type="qwen3_vl",
+    hf_repo="Qwen/Qwen3-VL-2B-Instruct", auto_class="AutoModelForImageTextToText",
+    processor_class="AutoProcessor", min_transformers="4.57.0", tool_calling=True,
+    module_paths=ModulePaths(decoder_layers="model.language_model.layers",
+                             vision_tower="model.visual", vision_blocks="model.visual.blocks"),
+    vision=VisionSpec(image_token_id_attr="image_token_id",
+                      merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+    caveats=("smallest Qwen3-VL; single .model; DeepStack",),
+))
+for _key, _repo in [
+    ("qwen3-vl-30b-a3b-instruct", "Qwen/Qwen3-VL-30B-A3B-Instruct"),
+    ("qwen3-vl-235b-a22b-instruct", "Qwen/Qwen3-VL-235B-A22B-Instruct"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen3_vl_moe", model_type="qwen3_vl_moe", hf_repo=_repo,
+        auto_class="AutoModelForImageTextToText", processor_class="AutoProcessor",
+        min_transformers="4.57.0", is_moe=True, tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.language_model.layers",
+                                 vision_tower="model.visual", router="mlp.gate", experts="mlp.experts"),
+        vision=VisionSpec(image_token_id_attr="image_token_id",
+                          merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+        caveats=("MoE VLM (multi-GPU/FP8); DeepStack; expert count read from config, not baked",),
+    ))
+
 _add(ModelSpec(
     key="glm-4.5v", family="glm4v_moe", model_type="glm4v_moe",
     hf_repo="zai-org/GLM-4.5V", auto_class="AutoModelForImageTextToText",
