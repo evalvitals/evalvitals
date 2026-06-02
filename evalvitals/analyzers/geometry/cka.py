@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 def linear_cka(X, Y) -> float:
     """Linear CKA between two activation matrices ``(n, d1)`` and ``(n, d2)``."""
-    import torch
 
     X = X.float() - X.float().mean(0, keepdim=True)
     Y = Y.float() - Y.float().mean(0, keepdim=True)

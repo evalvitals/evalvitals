@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import evalvitals.analyzers  # noqa: F401  (populate registries)
-import evalvitals.models     # noqa: F401
+import evalvitals.models  # noqa: F401
 from evalvitals.core import Result, registry
 from tests.conftest import FakeModel
 
