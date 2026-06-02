@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 
 import evalvitals  # noqa: F401 — side-effect: registers all analyzers
-
 from evalvitals.analyzers.agent.counterfactual import CounterfactualReplay
 from evalvitals.analyzers.agent.first_error_judge import FirstErrorJudge
 from evalvitals.analyzers.agent.ignored_obs import IgnoredObservationDetector
@@ -49,7 +48,6 @@ from evalvitals.core.registry import registry
 from evalvitals.core.result import Result
 from evalvitals.datasets import cases_from_records
 from tests.conftest import FakeModel
-
 
 # ── shared fixtures ────────────────────────────────────────────────────────────
 
