@@ -87,3 +87,12 @@ def test_local_negotiation_uses_actual_handle_caps():
     # Requesting TOOL_CALLS from a non-tool local model fails (precise per-model negotiation).
     with pytest.raises(CapabilityError):
         compose("gemma-3-1b-it", "hf_local", want={Capability.TOOL_CALLS})
+
+
+def test_omni_modalities_propagate_to_handle():
+    # An omni spec carries audio/video; the handle's modality set reflects it
+    # regardless of backend (capabilities still come from the backend).
+    m = compose("qwen3-omni-30b-a3b-instruct", "api",
+                RuntimeConfig(generate_fn=lambda *a, **k: "x"))
+    assert m.modalities == frozenset({"text", "image", "audio", "video"})
+    assert m.capabilities == frozenset({Capability.GENERATE, Capability.TOOL_CALLS})

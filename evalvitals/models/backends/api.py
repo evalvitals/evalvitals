@@ -103,7 +103,7 @@ class APIModel(Model):
         if runtime.logprobs_fn is not None:  # only claim LOGPROBS if we can actually retrieve them
             caps.add(Capability.LOGPROBS)
         self.capabilities = frozenset(caps)
-        self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
+        self.modalities = frozenset(spec.modalities)  # text / image / audio / video, from the spec
 
     def generate(self, inputs: Any, **kwargs) -> str:
         if self._generate_fn is None:

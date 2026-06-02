@@ -15,7 +15,7 @@ This module is torch-free.
 
 from __future__ import annotations
 
-from evalvitals.core.spec import AttnSemantics, ModelSpec, ModulePaths, VisionSpec
+from evalvitals.core.spec import AttnSemantics, AudioSpec, ModelSpec, ModulePaths, VisionSpec
 
 REGISTRY: dict[str, ModelSpec] = {}
 
@@ -225,6 +225,58 @@ for _key, _repo in [
                           merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
         caveats=("MoE VLM (multi-GPU/FP8); DeepStack; expert count read from config, not baked",),
     ))
+
+# ----------------------------------------------------------------------
+# Omni models (text + image + audio + video) — Qwen3-Omni reference.
+# Not a new class fork: an omni spec just carries vision + audio (+ video), so
+# ``modalities`` becomes {text, image, audio, video} and analyzers match on it.
+# The thinker is the multimodal LM that emits text — what failure analysis hooks;
+# the talker (speech synthesis) is out of scope. White-box token maps over the
+# audio/vision towers are Stage-2 (nested ``thinker_config`` paths verified at load).
+# https://github.com/QwenLM/Qwen3-Omni
+# ----------------------------------------------------------------------
+_OMNI_PATHS = ModulePaths(
+    decoder_layers="thinker.model.layers",      # discovery resolves the real ModuleList
+    vision_tower="thinker.visual", vision_blocks="thinker.visual.blocks",
+    router="mlp.gate", experts="mlp.experts",   # thinker text layers are Qwen3-MoE
+)
+_OMNI_VISION = VisionSpec(
+    image_token_id_attr="image_token_id",
+    merge_size_attr="thinker_config.vision_config.spatial_merge_size", grid_source="grid_thw",
+)
+_OMNI_AUDIO = AudioSpec(audio_token_id_attr="audio_token_id", audio_tower="thinker.audio_tower")
+_OMNI_CAVEATS = (
+    "Transformers >= 5.2.0 (Qwen3OmniMoeForConditionalGeneration / Qwen3OmniMoeProcessor)",
+    "multimodal preprocessing via qwen_omni_utils.process_mm_info; pass use_audio_in_video "
+    "consistently to processor AND generate",
+    "config nests under thinker_config (vision_config/audio_config) — image/audio token "
+    "ids read from the live config at load, never baked; white-box token maps are Stage-2",
+    "30B-A3B MoE thinker; talker (speech out) not modelled — analysis targets the thinker text stream",
+)
+_add(ModelSpec(
+    key="qwen3-omni-30b-a3b-instruct", family="qwen3_omni_moe", model_type="qwen3_omni_moe",
+    hf_repo="Qwen/Qwen3-Omni-30B-A3B-Instruct",
+    auto_class="Qwen3OmniMoeForConditionalGeneration", processor_class="Qwen3OmniMoeProcessor",
+    min_transformers="5.2.0", is_moe=True, tool_calling=True,
+    module_paths=_OMNI_PATHS, vision=_OMNI_VISION, audio=_OMNI_AUDIO, video=True,
+    caveats=_OMNI_CAVEATS,
+))
+_add(ModelSpec(
+    key="qwen3-omni-30b-a3b-thinking", family="qwen3_omni_moe", model_type="qwen3_omni_moe",
+    hf_repo="Qwen/Qwen3-Omni-30B-A3B-Thinking",
+    auto_class="Qwen3OmniMoeForConditionalGeneration", processor_class="Qwen3OmniMoeProcessor",
+    min_transformers="5.2.0", is_moe=True, is_reasoning=True, tool_calling=True,
+    module_paths=_OMNI_PATHS, vision=_OMNI_VISION, audio=_OMNI_AUDIO, video=True,
+    caveats=_OMNI_CAVEATS + ("emits <think>...</think> before the answer",),
+))
+_add(ModelSpec(
+    key="qwen3-omni-30b-a3b-captioner", family="qwen3_omni_moe", model_type="qwen3_omni_moe",
+    hf_repo="Qwen/Qwen3-Omni-30B-A3B-Captioner",
+    auto_class="Qwen3OmniMoeForConditionalGeneration", processor_class="Qwen3OmniMoeProcessor",
+    min_transformers="5.2.0", is_moe=True,
+    module_paths=_OMNI_PATHS, audio=_OMNI_AUDIO,  # audio-in / text-out only
+    caveats=_OMNI_CAVEATS + ("audio-only input -> text caption; no image/video heads in use",),
+))
 
 _add(ModelSpec(
     key="glm-4.5v", family="glm4v_moe", model_type="glm4v_moe",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from evalvitals.core.spec import AttnSemantics, ModelSpec, VisionSpec
+from evalvitals.core.spec import AttnSemantics, AudioSpec, ModelSpec, VisionSpec
 from evalvitals.specs import REGISTRY, get_spec, list_specs
 
 
@@ -12,6 +12,8 @@ def test_llm_spec_has_no_vision():
     spec = get_spec("qwen3-8b")
     assert spec.vision is None
     assert spec.is_vlm is False
+    assert spec.is_omni is False
+    assert spec.modalities == frozenset({"text"})
     assert spec.api_only is False
 
 
@@ -19,8 +21,33 @@ def test_vlm_spec_has_vision():
     spec = get_spec("qwen3-vl-8b-instruct")
     assert isinstance(spec.vision, VisionSpec)
     assert spec.is_vlm is True
+    assert spec.is_omni is False
+    assert spec.modalities == frozenset({"text", "image"})
     # token id is read from config by attribute NAME, never baked as a value
     assert spec.vision.image_token_id_attr == "image_token_id"
+
+
+def test_omni_instruct_spec_has_all_modalities():
+    spec = get_spec("qwen3-omni-30b-a3b-instruct")
+    assert spec.is_omni is True
+    assert spec.is_vlm is True  # carries a vision tower too
+    assert isinstance(spec.vision, VisionSpec) and isinstance(spec.audio, AudioSpec)
+    assert spec.video is True
+    assert spec.modalities == frozenset({"text", "image", "audio", "video"})
+    assert spec.is_moe is True
+
+
+def test_omni_captioner_is_audio_only():
+    # audio-in / text-out: no vision tower, not a VLM, still an omni model.
+    spec = get_spec("qwen3-omni-30b-a3b-captioner")
+    assert spec.is_omni is True and spec.is_vlm is False
+    assert spec.modalities == frozenset({"text", "audio"})
+
+
+def test_omni_thinking_spec_reasons():
+    spec = get_spec("qwen3-omni-30b-a3b-thinking")
+    assert spec.is_omni is True and spec.is_reasoning is True
+    assert spec.modalities == frozenset({"text", "image", "audio", "video"})
 
 
 def test_api_only_spec():

@@ -1,7 +1,7 @@
 # EvalVitals
 
 EvalVitals is an sklearn-like toolkit for failure-case analysis in the era of
-LLMs, VLMs, and agentic systems.
+LLMs, VLMs, omni (text+image+audio+video) models, and agentic systems.
 
 The package is organized around a small set of uniform contracts so researchers,
 engineers, and automated agents can discover, compose, and run evaluations
@@ -9,7 +9,7 @@ programmatically:
 
 | Contract | Role |
 |---|---|
-| `ModelSpec` | Model identity: family, Hugging Face repo, architecture traits, VLM/MoE/MLA caveats. |
+| `ModelSpec` | Model identity: family, Hugging Face repo, architecture traits, VLM/Omni/MoE/MLA caveats; its `modalities` (text/image/audio/video) follow from the components present. |
 | `Backend` | Runtime: local Hugging Face internals, black-box API calls, or offline batch engines. |
 | `Model` | A runnable object with `generate()` and `forward(capture=...) -> Trace`. |
 | `Analyzer` | An sklearn-style estimator: `Analyzer(**params).run(model, data) -> Result`. |
@@ -136,6 +136,23 @@ decoder-layer `ModuleList` at load time (`models/_discover.py`) instead of trust
 a hardcoded path — robust across transformers releases and the doubled-`.model.`
 / no-`.model` / fused-experts traps.
 
+**Modality is a set, not a class fork.** A spec declares modalities by the
+components it carries — `vision` adds `"image"`, `audio` adds `"audio"`, `video`
+adds `"video"` — so an *omni* model (Qwen3-Omni reference) is just a spec with
+more than one. Analyzers match on `model.modalities`, and `Inputs` carries
+`image` / `audio` / `video` slots beside the prompt:
+
+```python
+omni = compose("qwen3-omni-30b-a3b-instruct", "api", rt)
+omni.modalities    # frozenset({'text', 'image', 'audio', 'video'})
+spec.is_omni       # True;  the audio-only Captioner -> {'text', 'audio'}
+```
+
+The thinker (text-emitting multimodal LM) is what failure analysis hooks; the
+talker (speech out) is out of scope. Full multimodal generate and white-box
+token maps over the audio/vision towers are Stage-2 (needs `transformers>=5.2.0`
++ `qwen_omni_utils`).
+
 ## Agent — one tool-calling loop, any backend
 
 `Agent(wraps=handle)` is **backend-agnostic**: it needs only `GENERATE` +
@@ -215,14 +232,14 @@ evalvitals/
 │   ├── registry.py             model/analyzer registries + capability matching
 │   ├── pipeline.py             Pipeline (compose analyzers)
 │   └── experiment.py           Experiment + ExperimentRunner (content-hash cache)
-├── specs.py                    ModelSpec REGISTRY: Qwen3(-VL)/DeepSeek/GLM/Kimi/Llama/Gemma/Step  ← NEW
+├── specs.py                    ModelSpec REGISTRY: Qwen3(-VL/-Omni)/DeepSeek/GLM/Kimi/Llama/Gemma/Step  ← NEW
 ├── models/
 │   ├── compose.py              compose(spec, backend, want) + capability negotiation  ← NEW
 │   ├── agent.py                Agent(wraps=handle) + ToolExecutor → Trajectory  ← NEW
 │   ├── toolcodec.py            ToolCallCodec: OpenAI (native) / Qwen (Hermes text)  ← NEW
 │   ├── _discover.py            runtime decoder-layer discovery (anti-hardcoding)  ← NEW
 │   ├── backends/{api,hf_local,vllm_offline}.py   ModelSpec × Backend runtimes  ← NEW
-│   └── whitebox/{qwen,qwen_vl}.py  per-version factories (qwen3_8b(), qwen3_vl_8b_instruct(), …) → compose(spec,'hf_local')  ← NEW
+│   └── whitebox/{qwen,qwen_vl,qwen_omni}.py  per-version factories (qwen3_8b(), qwen3_vl_8b_instruct(), qwen3_omni_30b_a3b_instruct(), …) → compose(spec,'hf_local')  ← NEW
 ├── analyzers/                  # functional taxonomy by CAPABILITY (not black/white-box)  ← NEW
 │   │                           #   each declares required_capabilities + applies_to_modalities
 │   ├── perturbation/  rise✓ vl_shap✓ mm_shap✓          # GENERATE / LOGPROBS (Shapley-over-masking)
@@ -271,7 +288,7 @@ We follow a tiered testing strategy modeled after standard practices in scientif
 
 **Run fast unit tests only (CPU, offline-friendly):**
 ```bash
-pytest        # 176 tests (+11 GPU-gated), no GPU required (models are mocked)
+pytest        # 182 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 **Run GPU integration tests (requires CUDA GPU and model checkpoint cache):**
