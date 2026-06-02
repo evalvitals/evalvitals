@@ -15,7 +15,7 @@ This module is torch-free.
 
 from __future__ import annotations
 
-from evalvitals.core.spec import AttnSemantics, ModelSpec, ModulePaths, VisionSpec
+from evalvitals.core.spec import AttnSemantics, AudioSpec, ModelSpec, ModulePaths, VisionSpec
 
 REGISTRY: dict[str, ModelSpec] = {}
 
@@ -153,6 +153,131 @@ _add(ModelSpec(
         "pop token_type_ids before generate; interleaved-MRoPE 3D position_ids",
     ),
 ))
+
+# ---- additional Qwen sizes/variants (same per-family fields; paths discovered at load) ----
+for _key, _repo in [
+    ("qwen2.5-14b-instruct", "Qwen/Qwen2.5-14B-Instruct"),
+    ("qwen2.5-32b-instruct", "Qwen/Qwen2.5-32B-Instruct"),
+    ("qwen2.5-72b-instruct", "Qwen/Qwen2.5-72B-Instruct"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen2", model_type="qwen2", hf_repo=_repo,
+        auto_class="AutoModelForCausalLM", processor_class="AutoTokenizer",
+        min_transformers="4.43.0", tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.layers"),
+    ))
+for _key, _repo in [
+    ("qwen3-14b", "Qwen/Qwen3-14B"),
+    ("qwen3-32b", "Qwen/Qwen3-32B"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen3", model_type="qwen3", hf_repo=_repo,
+        auto_class="AutoModelForCausalLM", processor_class="AutoTokenizer",
+        min_transformers="4.51.0", is_reasoning=True, tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.layers"),
+        caveats=("q_norm/k_norm before RoPE",),
+    ))
+_add(ModelSpec(
+    key="qwen3-235b-a22b", family="qwen3_moe", model_type="qwen3_moe",
+    hf_repo="Qwen/Qwen3-235B-A22B", auto_class="AutoModelForCausalLM",
+    processor_class="AutoTokenizer", min_transformers="4.51.0", is_moe=True,
+    is_reasoning=True, tool_calling=True,
+    module_paths=ModulePaths(decoder_layers="model.layers", router="mlp.gate", experts="mlp.experts"),
+    caveats=("128 experts top-8; multi-GPU/FP8; v5 fused-experts — detect at runtime",),
+))
+# Qwen2.5-VL dense sizes
+for _key, _repo in [
+    ("qwen2.5-vl-3b-instruct", "Qwen/Qwen2.5-VL-3B-Instruct"),
+    ("qwen2.5-vl-32b-instruct", "Qwen/Qwen2.5-VL-32B-Instruct"),
+    ("qwen2.5-vl-72b-instruct", "Qwen/Qwen2.5-VL-72B-Instruct"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen2_5_vl", model_type="qwen2_5_vl", hf_repo=_repo,
+        auto_class="AutoModelForImageTextToText", processor_class="AutoProcessor",
+        min_transformers="4.49.0", tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.language_model.layers",
+                                 vision_tower="model.visual", vision_blocks="model.visual.blocks"),
+        vision=VisionSpec(image_token_id_attr="image_token_id",
+                          merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+    ))
+# Qwen3-VL dense + MoE sizes
+_add(ModelSpec(
+    key="qwen3-vl-2b-instruct", family="qwen3_vl", model_type="qwen3_vl",
+    hf_repo="Qwen/Qwen3-VL-2B-Instruct", auto_class="AutoModelForImageTextToText",
+    processor_class="AutoProcessor", min_transformers="4.57.0", tool_calling=True,
+    module_paths=ModulePaths(decoder_layers="model.language_model.layers",
+                             vision_tower="model.visual", vision_blocks="model.visual.blocks"),
+    vision=VisionSpec(image_token_id_attr="image_token_id",
+                      merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+    caveats=("smallest Qwen3-VL; single .model; DeepStack",),
+))
+for _key, _repo in [
+    ("qwen3-vl-30b-a3b-instruct", "Qwen/Qwen3-VL-30B-A3B-Instruct"),
+    ("qwen3-vl-235b-a22b-instruct", "Qwen/Qwen3-VL-235B-A22B-Instruct"),
+]:
+    _add(ModelSpec(
+        key=_key, family="qwen3_vl_moe", model_type="qwen3_vl_moe", hf_repo=_repo,
+        auto_class="AutoModelForImageTextToText", processor_class="AutoProcessor",
+        min_transformers="4.57.0", is_moe=True, tool_calling=True,
+        module_paths=ModulePaths(decoder_layers="model.language_model.layers",
+                                 vision_tower="model.visual", router="mlp.gate", experts="mlp.experts"),
+        vision=VisionSpec(image_token_id_attr="image_token_id",
+                          merge_size_attr="vision_config.spatial_merge_size", grid_source="grid_thw"),
+        caveats=("MoE VLM (multi-GPU/FP8); DeepStack; expert count read from config, not baked",),
+    ))
+
+# ----------------------------------------------------------------------
+# Omni models (text + image + audio + video) — Qwen3-Omni reference.
+# Not a new class fork: an omni spec just carries vision + audio (+ video), so
+# ``modalities`` becomes {text, image, audio, video} and analyzers match on it.
+# The thinker is the multimodal LM that emits text — what failure analysis hooks;
+# the talker (speech synthesis) is out of scope. White-box token maps over the
+# audio/vision towers are Stage-2 (nested ``thinker_config`` paths verified at load).
+# https://github.com/QwenLM/Qwen3-Omni
+# ----------------------------------------------------------------------
+_OMNI_PATHS = ModulePaths(
+    decoder_layers="thinker.model.layers",      # discovery resolves the real ModuleList
+    vision_tower="thinker.visual", vision_blocks="thinker.visual.blocks",
+    router="mlp.gate", experts="mlp.experts",   # thinker text layers are Qwen3-MoE
+)
+_OMNI_VISION = VisionSpec(
+    image_token_id_attr="image_token_id",
+    merge_size_attr="thinker_config.vision_config.spatial_merge_size", grid_source="grid_thw",
+)
+_OMNI_AUDIO = AudioSpec(audio_token_id_attr="audio_token_id", audio_tower="thinker.audio_tower")
+_OMNI_CAVEATS = (
+    "Transformers >= 5.2.0 (Qwen3OmniMoeForConditionalGeneration / Qwen3OmniMoeProcessor)",
+    "multimodal preprocessing via qwen_omni_utils.process_mm_info; pass use_audio_in_video "
+    "consistently to processor AND generate",
+    "config nests under thinker_config (vision_config/audio_config) — image/audio token "
+    "ids read from the live config at load, never baked; white-box token maps are Stage-2",
+    "30B-A3B MoE thinker; talker (speech out) not modelled — analysis targets the thinker text stream",
+)
+_add(ModelSpec(
+    key="qwen3-omni-30b-a3b-instruct", family="qwen3_omni_moe", model_type="qwen3_omni_moe",
+    hf_repo="Qwen/Qwen3-Omni-30B-A3B-Instruct",
+    auto_class="Qwen3OmniMoeForConditionalGeneration", processor_class="Qwen3OmniMoeProcessor",
+    min_transformers="5.2.0", is_moe=True, tool_calling=True,
+    module_paths=_OMNI_PATHS, vision=_OMNI_VISION, audio=_OMNI_AUDIO, video=True,
+    caveats=_OMNI_CAVEATS,
+))
+_add(ModelSpec(
+    key="qwen3-omni-30b-a3b-thinking", family="qwen3_omni_moe", model_type="qwen3_omni_moe",
+    hf_repo="Qwen/Qwen3-Omni-30B-A3B-Thinking",
+    auto_class="Qwen3OmniMoeForConditionalGeneration", processor_class="Qwen3OmniMoeProcessor",
+    min_transformers="5.2.0", is_moe=True, is_reasoning=True, tool_calling=True,
+    module_paths=_OMNI_PATHS, vision=_OMNI_VISION, audio=_OMNI_AUDIO, video=True,
+    caveats=_OMNI_CAVEATS + ("emits <think>...</think> before the answer",),
+))
+_add(ModelSpec(
+    key="qwen3-omni-30b-a3b-captioner", family="qwen3_omni_moe", model_type="qwen3_omni_moe",
+    hf_repo="Qwen/Qwen3-Omni-30B-A3B-Captioner",
+    auto_class="Qwen3OmniMoeForConditionalGeneration", processor_class="Qwen3OmniMoeProcessor",
+    min_transformers="5.2.0", is_moe=True,
+    module_paths=_OMNI_PATHS, audio=_OMNI_AUDIO,  # audio-in / text-out only
+    caveats=_OMNI_CAVEATS + ("audio-only input -> text caption; no image/video heads in use",),
+))
+
 _add(ModelSpec(
     key="glm-4.5v", family="glm4v_moe", model_type="glm4v_moe",
     hf_repo="zai-org/GLM-4.5V", auto_class="AutoModelForImageTextToText",

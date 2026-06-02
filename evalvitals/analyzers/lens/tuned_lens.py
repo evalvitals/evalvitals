@@ -2,6 +2,10 @@
 
 More faithful than the raw logit lens, but requires PER-MODEL trained translators.
 Stage 2: train/load translators, then apply like the logit lens.
+
+References:
+- Eliciting Latent Predictions from Transformers with the Tuned Lens
+  Belrose et al., 2023 — arXiv:2303.08112
 """
 
 from __future__ import annotations

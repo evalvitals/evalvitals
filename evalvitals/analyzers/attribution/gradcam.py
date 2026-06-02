@@ -3,6 +3,11 @@
 Gradient-weighted activation maps over the ViT feature map → spatial saliency.
 ``requires=GRADIENTS`` (backward pass); VLM vision tower only. Needs a
 ``reshape_transform`` for ViT and the per-arch vision-tower target layer.
+
+References:
+- Grad-CAM: Visual Explanations from Deep Networks via Gradient-based Localization
+  Selvaraju et al., ICCV 2017 — arXiv:1610.02391
+- Code: https://github.com/jacobgil/pytorch-grad-cam
 """
 
 from __future__ import annotations

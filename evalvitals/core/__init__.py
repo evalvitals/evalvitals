@@ -38,6 +38,7 @@ from evalvitals.core.registry import (
 from evalvitals.core.result import Result
 from evalvitals.core.spec import (
     AttnSemantics,
+    AudioSpec,
     ModelSpec,
     ModulePaths,
     VisionSpec,
@@ -65,6 +66,7 @@ __all__ = [
     "as_casebatch",
     "ModelSpec",
     "VisionSpec",
+    "AudioSpec",
     "ModulePaths",
     "AttnSemantics",
     "Tool",

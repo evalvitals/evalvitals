@@ -3,6 +3,10 @@
 Flags repeated ``(tool, normalised args)`` actions in an agent trajectory — the
 MAST "step repetition" failure mode.  Cheap, deterministic, and the highest-ROI
 agent signal to compute first.
+
+References:
+- Failure-mode taxonomy — Why Do Multi-Agent LLM Systems Fail? (MAST)
+  Cemri et al., 2025 — arXiv:2503.13657  (step-repetition mode)
 """
 
 from __future__ import annotations

@@ -3,6 +3,10 @@
 Flags the pattern: a tool returns an error/empty signal, yet the next action
 repeats the *same* tool call unchanged (the agent didn't adapt to the
 observation).  MAST "ignored tool output" / failure-to-recover mode.
+
+References:
+- Failure-mode taxonomy — Why Do Multi-Agent LLM Systems Fail? (MAST)
+  Cemri et al., 2025 — arXiv:2503.13657  (ignored-tool-output / fail-to-recover modes)
 """
 
 from __future__ import annotations

@@ -6,6 +6,11 @@ position.  Operates on a ``Trace`` (``requires=ATTENTION``).
 
 Caveat: rollout is a heuristic over raw attention — see "Attention is not
 Explanation" (Jain & Wallace) before over-claiming causality.
+
+References:
+- Quantifying Attention Flow in Transformers (attention rollout)
+  Abnar & Zuidema, ACL 2020 — arXiv:2005.00928
+- Caveat — Attention is not Explanation, Jain & Wallace, NAACL 2019 — arXiv:1902.10186
 """
 
 from __future__ import annotations
