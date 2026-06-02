@@ -235,7 +235,7 @@ evalvitals/
 │   ├── geometry/      cka✓ linear_probe                # HIDDEN_STATES (CLIP/SigLIP-scoped)
 │   └── agent/         loop_detect✓ ignored_obs✓ first_error_judge✓ counterfactual✓   # Trajectory
 │                      #  ✓ = implemented + unit-tested; others declare contract, raise (Stage 2)
-├── datasets/                   PureQA✓ / WebSearchQA✓ / GUIOS✓ → CaseBatch (records/jsonl/sample) + verifiers✓
+├── datasets/                   LLMQA✓ / VLMQA✓ + Spatial457✓ (HF 6D-spatial VQA) / WebSearchQA✓ / GUIOS✓ → CaseBatch + verifiers✓
 ├── stats/                      compare() single entry — never a bare p  ← NEW
 │   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  friedman.py✓ (Friedman+Nemenyi, >2 strategies)  subset_sampling.py✓
 │   └── api.py✓                 compare() (pairwise) + compare_multiple() (3+ strategies) → StatResult / MultiCompareResult
@@ -271,7 +271,7 @@ We follow a tiered testing strategy modeled after standard practices in scientif
 
 **Run fast unit tests only (CPU, offline-friendly):**
 ```bash
-pytest        # 171 tests (+11 GPU-gated), no GPU required (models are mocked)
+pytest        # 176 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 **Run GPU integration tests (requires CUDA GPU and model checkpoint cache):**

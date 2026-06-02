@@ -1,54 +1,12 @@
-"""Pure QA loader (language + VL QA) → CaseBatch.
+"""Back-compat shim — ``pure_qa`` was split into ``llm_qa`` (text) and ``vlm_qa`` (image+text).
 
-Source-agnostic: pass in-memory records, a JSONL path, or use the built-in
-sample.  ``image`` is optional (set it for VL QA).  ``expected`` carries the gold
-answer; pair it with :func:`evalvitals.datasets.base.contains_answer` to turn a
-model output into a success bool for A/B comparisons.
+``PureQADataset`` remains importable here as an alias of
+:class:`~evalvitals.datasets.llm_qa.LLMQADataset`.  Prefer the explicit names:
+``LLMQADataset`` for text QA, ``VLMQADataset`` / ``Spatial457Dataset`` for image+text.
 """
 
 from __future__ import annotations
 
-from evalvitals.core.case import CaseBatch
-from evalvitals.datasets.base import Dataset, cases_from_records, read_jsonl
+from evalvitals.datasets.llm_qa import LLMQADataset, PureQADataset
 
-_SAMPLE = [
-    {"question": "What is the capital of France?", "answer": "Paris", "difficulty": "easy"},
-    {"question": "What is 17 multiplied by 3?", "answer": "51", "difficulty": "easy"},
-    {"question": "Who wrote Romeo and Juliet?", "answer": "Shakespeare", "difficulty": "easy"},
-    {"question": "What is the chemical symbol for gold?", "answer": "Au", "difficulty": "medium"},
-]
-
-
-class PureQADataset(Dataset):
-    """Language / VL question-answering loader."""
-
-    def __init__(
-        self,
-        records: list[dict] | None = None,
-        path: str | None = None,
-        *,
-        prompt_key: str = "question",
-        answer_key: str = "answer",
-        image_key: str = "image",
-    ) -> None:
-        self._records = records
-        self._path = path
-        self._keys = dict(prompt_key=prompt_key, answer_key=answer_key, image_key=image_key)
-
-    @classmethod
-    def from_records(cls, records: list[dict], **keys) -> "PureQADataset":
-        return cls(records=records, **keys)
-
-    @classmethod
-    def from_jsonl(cls, path: str, **keys) -> "PureQADataset":
-        return cls(path=path, **keys)
-
-    @classmethod
-    def sample(cls) -> "PureQADataset":
-        return cls(records=_SAMPLE)
-
-    def load(self) -> CaseBatch:
-        records = self._records if self._records is not None else (
-            read_jsonl(self._path) if self._path else _SAMPLE
-        )
-        return cases_from_records(records, tags={"pure_qa"}, **self._keys)
+__all__ = ["PureQADataset", "LLMQADataset"]
