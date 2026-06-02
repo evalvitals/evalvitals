@@ -3,6 +3,10 @@
 Reveals *when* (which layer) the model's prediction forms.  Needs ``HIDDEN_STATES``
 plus the model's unembedding matrix (``model.unembed_weight()``).  The cheapest,
 highest-value white-box signal — build it first.
+
+References:
+- interpreting GPT: the logit lens — nostalgebraist (2020), LessWrong
+  https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens
 """
 
 from __future__ import annotations

@@ -45,10 +45,18 @@ class Provenance:
 
 @dataclass
 class Inputs:
-    """Model inputs for a case.  Text now; image is VLM-ready for Stage 2."""
+    """Model inputs for a case.
+
+    ``prompt`` is always present; the multimodal slots are populated per the
+    model's modality set — ``image`` for VLMs, ``audio`` / ``video`` for omni
+    models (e.g. Qwen3-Omni).  Each slot holds a decoded object (PIL.Image /
+    waveform / frames) **or** a path/URL the backend resolves.
+    """
 
     prompt: str
-    image: Any = None  # PIL.Image | path | None — populated in Stage 2
+    image: Any = None   # PIL.Image | path/URL | None  (VLM)
+    audio: Any = None   # np.ndarray | path/URL | None  (omni)
+    video: Any = None   # frames | path/URL | None      (omni)
 
     def __str__(self) -> str:
         return self.prompt
@@ -192,7 +200,12 @@ class FailureCase:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "inputs": {"prompt": self.inputs.prompt, "image": self.inputs.image},
+            "inputs": {
+                "prompt": self.inputs.prompt,
+                "image": self.inputs.image,
+                "audio": self.inputs.audio,
+                "video": self.inputs.video,
+            },
             "expected": self.expected,
             "observed": self.observed,
             "label": self.label.value,

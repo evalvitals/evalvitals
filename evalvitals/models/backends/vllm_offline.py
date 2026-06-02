@@ -35,7 +35,7 @@ class VLLMOfflineModel(Model):
         if spec.tool_calling:  # conditional, like hf_local: needs a tool chat template
             caps.add(Capability.TOOL_CALLS)
         self.capabilities = frozenset(caps)
-        self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
+        self.modalities = frozenset(spec.modalities)  # text / image / audio / video, from the spec
 
     # -- lazy load -----------------------------------------------------
     def load(self) -> None:

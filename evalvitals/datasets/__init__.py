@@ -1,4 +1,9 @@
-"""Dataset loaders → CaseBatch, plus simple answer verifiers."""
+"""Dataset loaders → CaseBatch, plus simple answer verifiers.
+
+Text QA: ``LLMQADataset``.  Image+text QA: ``VLMQADataset`` and the
+``Spatial457Dataset`` benchmark.  ``PureQADataset`` is a back-compat alias of
+``LLMQADataset``.
+"""
 
 from evalvitals.datasets.base import (
     Dataset,
@@ -9,11 +14,15 @@ from evalvitals.datasets.base import (
     read_jsonl,
 )
 from evalvitals.datasets.gui_os import GUIOSDataset
-from evalvitals.datasets.pure_qa import PureQADataset
+from evalvitals.datasets.llm_qa import LLMQADataset, PureQADataset
+from evalvitals.datasets.vlm_qa import Spatial457Dataset, VLMQADataset
 from evalvitals.datasets.web_search_qa import WebSearchQADataset
 
 __all__ = [
     "Dataset",
+    "LLMQADataset",
+    "VLMQADataset",
+    "Spatial457Dataset",
     "PureQADataset",
     "WebSearchQADataset",
     "GUIOSDataset",

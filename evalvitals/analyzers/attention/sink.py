@@ -2,6 +2,12 @@
 
 Measures how much attention mass collapses onto the first token (the "sink"),
 per layer, averaged over heads and query positions.  Operates on a ``Trace``.
+
+References:
+- Efficient Streaming Language Models with Attention Sinks (StreamingLLM)
+  Xiao et al., ICLR 2024 — arXiv:2309.17453
+- When Attention Sink Emerges in Language Models: An Empirical View
+  Gu et al., ICLR 2025 — arXiv:2410.10781
 """
 
 from __future__ import annotations

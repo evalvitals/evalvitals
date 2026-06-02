@@ -122,7 +122,7 @@ class HFLocalModel(Model):
         if spec.tool_calling:
             caps.add(Capability.TOOL_CALLS)
         self.capabilities = frozenset(caps)
-        self.modalities = frozenset({"text", "image"}) if spec.is_vlm else frozenset({"text"})
+        self.modalities = frozenset(spec.modalities)  # text / image / audio / video, from the spec
 
     @classmethod
     def from_loaded(cls, model, tokenizer, spec=None, runtime: "RuntimeConfig | None" = None) -> "HFLocalModel":

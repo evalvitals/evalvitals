@@ -86,3 +86,14 @@ def test_failurecase_to_dict_roundtrip_shape():
     assert d["label"] == "fail"
     assert d["tags"] == ["x"]
     assert d["provenance"]["source"] == "agent"
+
+
+def test_inputs_carry_omni_modalities():
+    # omni inputs: image (VLM) + audio + video slots alongside the prompt.
+    inp = Inputs(prompt="describe", image="<img>", audio="<wav>", video="<frames>")
+    case = FailureCase(inputs=inp)
+    d = case.to_dict()
+    assert d["inputs"]["audio"] == "<wav>" and d["inputs"]["video"] == "<frames>"
+    assert d["inputs"]["image"] == "<img>"
+    # defaults stay None for a text-only case
+    assert Inputs(prompt="x").audio is None and Inputs(prompt="x").video is None

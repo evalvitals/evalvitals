@@ -45,6 +45,11 @@ interp = [
     "inseq>=0.6",
     "nnsight>=0.3",
 ]
+# Benchmark dataset loaders that pull from the HuggingFace Hub (e.g. Spatial457).
+data = [
+    "datasets>=2.0",
+    "pillow>=9.0",
+]
 viz = ["matplotlib>=3.7"]
 all = [
     "torch>=2.0.0",

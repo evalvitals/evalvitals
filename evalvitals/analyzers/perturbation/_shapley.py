@@ -5,6 +5,13 @@ value) by sampling random permutations.  ``value_fn(kept: set) -> float`` is the
 coalition value (e.g. the model's logprob/confidence with only ``kept`` players
 present).  Results are memoised by coalition so expensive model calls aren't
 repeated.  For an additive game the estimate equals each player's exact weight.
+
+References:
+- Shapley value: 'A Value for n-Person Games', Shapley (1953), Contributions to the Theory of Games II.
+- Sampling estimator: 'Polynomial calculation of the Shapley value based on sampling',
+  Castro, Gomez & Tejada (2009), Computers & Operations Research 36(5).
+- ML attribution: 'A Unified Approach to Interpreting Model Predictions' (SHAP),
+  Lundberg & Lee, NeurIPS 2017 — arXiv:1705.07874
 """
 
 from __future__ import annotations

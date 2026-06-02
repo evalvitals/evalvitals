@@ -8,6 +8,12 @@ Reliability caveats (bake into any reporting): LLM judges show position/length
 bias and self-preference; calibrate against a human-gold subset and report
 step-accuracy/F1.  As reported by Zhang et al. (Who&When), even strong judges
 reach only ~14% step-level accuracy — treat outputs as weak signal, not truth.
+
+References:
+- Which Agent Causes Task Failures and When? Automated Failure Attribution (Who&When)
+  Zhang et al., ICML 2025 — arXiv:2505.00212
+- Failure-mode vocabulary — MAST, Cemri et al., 2025 — arXiv:2503.13657
+- LLM-as-judge biases — Judging LLM-as-a-Judge, Zheng et al., NeurIPS 2023 — arXiv:2306.05685
 """
 
 from __future__ import annotations

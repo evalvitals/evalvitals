@@ -3,6 +3,11 @@
 The only CAUSAL white-box method here: read a clean run's activations and WRITE
 them into a corrupted run to localise where information is causally used.
 ``requires=HIDDEN_STATES`` (read+write hooks — via nnsight). Memory ∝ layers×positions.
+
+References:
+- Locating and Editing Factual Associations in GPT (ROME, causal tracing)
+  Meng et al., NeurIPS 2022 — arXiv:2202.05262
+- Attribution Patching (scalable approximation): Neel Nanda, 2023.
 """
 
 from __future__ import annotations

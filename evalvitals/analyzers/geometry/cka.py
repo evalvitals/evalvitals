@@ -7,6 +7,10 @@ Construct-validity caveat: CKA/cosine-geometry methods were validated on CLIP-st
 two-tower encoders. A decoder-only MLLM has no joint two-tower space, so cross-modal
 geometry numbers don't carry the meaning the papers claim — scope this to a frozen
 CLIP/SigLIP tower's activations, or read it only as within-stream layer similarity.
+
+References:
+- Similarity of Neural Network Representations Revisited (linear CKA)
+  Kornblith, Norouzi, Lee & Hinton, ICML 2019 — arXiv:1905.00414
 """
 
 from __future__ import annotations

@@ -3,6 +3,10 @@
 Contrast logits on the original vs a distorted image to suppress
 language-prior-driven hallucination. Needs decode-time logit control (in-process
 HF), VLM. Modeled here as an analyzer that reports the contrastive shift.
+
+References:
+- Mitigating Object Hallucinations in LVLMs through Visual Contrastive Decoding (VCD)
+  Leng et al., CVPR 2024 — arXiv:2311.16922
 """
 
 from __future__ import annotations

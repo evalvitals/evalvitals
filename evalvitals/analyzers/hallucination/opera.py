@@ -3,6 +3,10 @@
 Diagnoses object hallucination from the attention pattern (over-trust on a few
 summary tokens). ``requires=ATTENTION`` (+ decode-loop control for the mitigation).
 White-box, VLM.
+
+References:
+- OPERA: Alleviating Hallucination in MLLMs via Over-trust Penalty and Retrospection-Allocation
+  Huang et al., CVPR 2024 — arXiv:2311.17911
 """
 
 from __future__ import annotations

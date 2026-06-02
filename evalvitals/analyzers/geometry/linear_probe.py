@@ -3,6 +3,10 @@
 Train a linear classifier on each layer's hidden states (samples + labels) and
 report per-layer accuracy — where in the stack is the property linearly decodable.
 Needs a labelled probe set; correlational, not causal.
+
+References:
+- Understanding intermediate layers using linear classifier probes
+  Alain & Bengio, 2016 — arXiv:1610.01644
 """
 
 from __future__ import annotations

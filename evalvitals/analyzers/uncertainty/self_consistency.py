@@ -2,6 +2,10 @@
 
 A near-free black-box uncertainty signal (needs only ``GENERATE``): low agreement
 across samples flags brittle/uncertain answers.  Runs on API models too.
+
+References:
+- Self-Consistency Improves Chain of Thought Reasoning in Language Models
+  Wang et al., ICLR 2023 — arXiv:2203.11171
 """
 
 from __future__ import annotations

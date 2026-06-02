@@ -77,11 +77,33 @@ class VisionSpec:
 
 
 @dataclass(frozen=True)
+class AudioSpec:
+    """Omni-only knowledge for locating audio tokens (Stage-2 white-box capture).
+
+    Symmetric to :class:`VisionSpec`: every field is a HINT or a *config attribute
+    name*, never a baked value, because audio placeholder ids and tower paths drift
+    across checkpoints (Qwen3-Omni's ``thinker.audio_tower`` vs others).  Its mere
+    presence on a spec declares the ``"audio"`` modality; the white-box audio-token
+    map that mirrors :class:`~evalvitals.core.tokentype.TokenTypeMap` is Stage-2.
+    """
+
+    # name of the config attribute holding the per-frame audio placeholder token id:
+    audio_token_id_attr: str = "audio_token_id"
+    audio_tower: Optional[str] = None        # hooking HINT, e.g. "thinker.audio_tower"
+    # Qwen3-Omni: whether a video's own audio track is fed alongside its frames
+    # (kept consistent between preprocessing and generation by the processor).
+    use_audio_in_video: bool = True
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     """Per-model identity, reused across every backend.
 
-    Holds NO capabilities — those are the backend's.  Pure-LLM specs leave
-    ``vision`` as ``None`` (no TokenTypeMap).  Closed models set ``api_only``.
+    Holds NO capabilities — those are the backend's.  Modality is declared by the
+    *components present*, not a class fork: ``vision`` adds ``"image"``, ``audio``
+    adds ``"audio"``, ``video`` adds ``"video"`` (an omni model simply carries more
+    than one).  Pure-LLM specs leave them unset (no TokenTypeMap).  Closed models
+    set ``api_only``.
     """
 
     key: str                                  # registry key, e.g. "qwen3-vl-8b-instruct"
@@ -99,15 +121,35 @@ class ModelSpec:
     eager_required_for_attn: bool = True
     attn_semantics: AttnSemantics = AttnSemantics.STANDARD
     module_paths: Optional[ModulePaths] = None  # None -> rely fully on discovery
-    vision: Optional[VisionSpec] = None        # None -> pure LLM
+    vision: Optional[VisionSpec] = None        # not None -> "image" modality
+    audio: Optional[AudioSpec] = None          # not None -> "audio" modality (omni)
+    video: bool = False                         # True -> "video" modality (omni)
     api_only: bool = False                      # closed weights -> only the api backend
     caveats: tuple[str, ...] = ()               # honest, human-readable gotchas
 
     @property
     def is_vlm(self) -> bool:
+        """Carries a vision tower — drives the image-token forward path."""
         return self.vision is not None
 
+    @property
+    def is_omni(self) -> bool:
+        """Handles audio and/or video on top of text (and usually image)."""
+        return self.audio is not None or self.video
+
+    @property
+    def modalities(self) -> frozenset[str]:
+        """Modalities derived from the components present (analyzers match on this)."""
+        mods = {"text"}
+        if self.vision is not None:
+            mods.add("image")
+        if self.audio is not None:
+            mods.add("audio")
+        if self.video:
+            mods.add("video")
+        return frozenset(mods)
+
     def __str__(self) -> str:  # pragma: no cover - cosmetic
-        kind = "VLM" if self.is_vlm else "LLM"
+        kind = "Omni" if self.is_omni else ("VLM" if self.is_vlm else "LLM")
         tag = " api-only" if self.api_only else ""
         return f"ModelSpec({self.key!r}, {kind}, family={self.family}{tag})"
