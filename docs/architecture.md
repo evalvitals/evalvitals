@@ -147,7 +147,7 @@ M4 · SurgeryAgent     correlate per-case signals with PASS/FAIL → SUPPORTED/R
      ↑____________________________________________________________| (refocus or stop)
 ```
 
-The agent touches models only through `eval_agent/tools.py`
+The agent touches models only through `eval_agent/_tools.py`
 (`list_analyses`, `compatible_analyses`, `run_analysis`) and stores all
 evidence in a `Store`.  `AutoDiagnoseLoop` is the concrete controller that wires
 the four modules; `SelfEvolveLoop` is the original Stage-1 skeleton kept for
@@ -158,14 +158,40 @@ backward compatibility.
 | Module | Class | Contract |
 |---|---|---|
 | `probe.py` | `StrategyProbe` | `detect_kind(model) → ModelKind`; `select(model) → list[str]` |
-| *(M2 uses core)* | `ExperimentRunner` | `run(Experiment) → Result` (cached by fingerprint) |
-| `diagnosis.py` | `DiagnosisAgent` | `diagnose(results, model_name) → DiagnosisResult` |
+| `analysis.py` | `AnalysisModule` | `analyze(results, model_name) → AnalysisReport` |
+| `diagnosis.py` | `DiagnosisAgent` | `diagnose(report) → DiagnosisResult` |
 | `surgery.py` | `SurgeryAgent` | `operate(hypothesis, model, results, data) → InterventionResult` |
 | `loop.py` | `AutoDiagnoseLoop` | `run(data) → AutoDiagnoseReport` |
+| `run_logger.py` | `RunLogger` | per-cycle JSONL log + artifact sink (optional) |
 
-All modules are injectable: pass your own `probe`, `diagnosis_agent`,
-`surgery_agent`, `store`, and `runner` to `AutoDiagnoseLoop` to customise any
-step without touching the others.
+All modules are injectable: pass your own `probe_agent`, `analysis_module`,
+`diagnosis_agent`, `surgery_agent`, `store`, and `run_logger` to
+`AutoDiagnoseLoop` to customise any step without touching the others.
+
+### Logging and artifact persistence
+
+`RunLogger` captures every M1→M4 event as a JSON line in `run_log.jsonl` and
+saves heavy artifacts (attention tensors, CKA matrices, hidden-state arrays) to
+an `artifacts/` subdirectory keyed by cycle number.  It is entirely opt-in —
+the default `run_logger=None` leaves existing behaviour unchanged.
+
+```text
+runs/20260603_142305/
+├── run_log.jsonl                         ← one JSON line per event
+└── artifacts/
+    ├── c0_attention_attn_weights.npy     ← attention tensor, cycle 0
+    └── c1_cka_layer_similarities.npy     ← after data refocus, cycle 1
+```
+
+Each log line carries `event`, `cycle`, `ts` (ISO-8601), and stage-specific
+fields (findings, narrative, raw LLM output, intervention status …).
+This makes the full diagnosis trail inspectable offline with standard tools:
+
+```bash
+tail -f runs/*/run_log.jsonl                       # live stream
+jq 'select(.event=="diagnosis")' run_log.jsonl     # all Gemini outputs
+jq 'select(.event=="probe") | .findings' run_log.jsonl
+```
 
 ## Public Surface Guidance
 
@@ -191,7 +217,7 @@ evalvitals.FailureCase
 evalvitals.Result
 
 # Automated diagnosis
-from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, StrategyProbe, SurgeryAgent
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, RunLogger, StrategyProbe, SurgeryAgent
 ```
 
 Lower-level implementation details (`compose`, `HFLocalModel`, `infer_spec`,

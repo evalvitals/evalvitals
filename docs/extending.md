@@ -262,6 +262,83 @@ probe = StrategyProbe(priority_override={
 loop = AutoDiagnoseLoop(model=my_model, probe=probe, ...)
 ```
 
+## Log and persist a diagnosis run
+
+Pass a `RunLogger` to `AutoDiagnoseLoop` to write a structured JSONL event log
+and save heavy analyzer artifacts (attention tensors, CKA matrices, …) to disk
+after each M1→M4 cycle.  The logger is entirely opt-in — omitting it leaves
+existing behaviour unchanged.
+
+```python
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, RunLogger
+
+loop = AutoDiagnoseLoop(
+    model=model,
+    diagnosis_agent=DiagnosisAgent(),
+    run_logger=RunLogger("runs/exp_01"),   # explicit path
+    # run_logger=RunLogger()              # auto: runs/<YYYYMMDD_HHMMSS>/
+)
+report = loop.run(cases)
+```
+
+Output layout:
+
+```text
+runs/exp_01/
+├── run_log.jsonl                         ← one JSON line per M1/M2/M3/M4 event
+└── artifacts/
+    ├── c0_attention_attn_weights.npy     ← attention tensor, cycle 0
+    ├── c0_cka_layer_similarities.npy     ← CKA similarity matrix, cycle 0
+    └── c1_attention_attn_weights.npy     ← cycle 1 after data refocus
+```
+
+Each line in `run_log.jsonl` contains `event` (one of `probe`, `analysis`,
+`diagnosis`, `surgery`, `loop_end`), `cycle`, `ts` (ISO-8601), and
+stage-specific fields:
+
+| `event` | Key fields |
+|---|---|
+| `probe` | `analyzers`, `findings` (JSON), `artifact_paths` |
+| `analysis` | `severity`, `findings` (human-readable), `narrative` |
+| `diagnosis` | `hypotheses`, `raw_judge_output` (full LLM response) |
+| `surgery` | `hypothesis`, `status`, `fixed`, `evidence`, `n_refocused_cases` |
+| `loop_end` | `cycles`, `resolved`, `final_hypotheses` |
+
+Standard shell tools work directly on the log:
+
+```bash
+# Live-stream events as the loop runs
+tail -f runs/exp_01/run_log.jsonl
+
+# Extract all Gemini diagnosis outputs across cycles
+jq 'select(.event=="diagnosis") | .raw_judge_output' runs/exp_01/run_log.jsonl
+
+# See which analyzers ran and their findings per cycle
+jq 'select(.event=="probe") | {cycle, analyzers, findings}' runs/exp_01/run_log.jsonl
+
+# Load an attention tensor for manual inspection
+python -c "import numpy as np; a = np.load('runs/exp_01/artifacts/c0_attention_attn_weights.npy'); print(a.shape)"
+```
+
+`RunLogger` is also a context manager, which ensures the file is closed even if
+the loop raises:
+
+```python
+with RunLogger("runs/exp_01") as logger:
+    loop = AutoDiagnoseLoop(model=model, run_logger=logger)
+    loop.run(cases)
+```
+
+To add custom log entries (e.g. pre/post-run metadata), write directly to the
+logger:
+
+```python
+logger = RunLogger("runs/exp_01")
+logger._write({"event": "run_config", "model": repr(model), "n_cases": len(cases)})
+loop = AutoDiagnoseLoop(model=model, run_logger=logger)
+loop.run(cases)
+```
+
 ## Add Statistical Evaluation
 
 Statistical routines should consume `Result` objects or collections of results.
