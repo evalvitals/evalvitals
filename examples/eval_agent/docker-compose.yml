@@ -5,4 +5,4 @@ services:
       dockerfile: examples/eval_agent/Dockerfile
     image: evalvitals-eval-agent
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}

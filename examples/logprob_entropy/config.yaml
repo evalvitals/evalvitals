@@ -1,5 +1,7 @@
 # Logprob entropy analysis — black-box perplexity + uncertainty
-# Requires OPENAI_API_KEY.
+# Requires an API endpoint that exposes token logprobs (e.g. OpenAI with OPENAI_API_KEY).
+# NOTE: Gemini's OpenAI-compat endpoint does not support logprobs/top_logprobs;
+#       set OPENAI_API_KEY and use an OpenAI model instead.
 
 model_name: gpt-4o-mini
 max_new_tokens: 40

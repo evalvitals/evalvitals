@@ -8,19 +8,21 @@ This prevents the textbook mistake of mining data for a pattern and then testing
 that same pattern on the same data (inflated false discovery rate).
 
 Usage (inside Docker):
-    python run.py               # synthetic demo, no API key needed
+    python run.py               # synthetic demo + M1→M4 loop (requires GEMINI_API_KEY)
     python run.py --n-cases 120
 
 Expected output:
     Pre-registration hash: a3f7c2...
     [EvalOrchestrator] strategy B better (effect=+0.13), reject=True
-    Hypothesis: "chain-of-thought prompt improves accuracy on multi-step questions"
-    Split tested: validate (30 cases)
-    Prereg hash: a3f7c2...  (proves hypothesis was fixed before unblinding)
+    ...
+    [AutoDiagnoseLoop] cycles=1  resolved=False
+      severity : medium
+      narrative: The model shows moderate self-consistency ...
+      hypothesis  : The model exhibits inconsistent responses ...
 
 Also demonstrates:
   CounterfactualReplay — identifies which agent steps most influence the outcome.
-  SelfEvolveLoop       — propose → record → until-dry pattern.
+  AutoDiagnoseLoop     — M1 probe → M2 analysis → M3 Gemini diagnosis → M4 surgery.
 """
 
 from __future__ import annotations
@@ -121,6 +123,66 @@ def demo_counterfactual() -> None:
     print(f"  all steps: {pc['steps']}")
 
 
+def demo_auto_diagnose() -> None:
+    """Run the M1→M4 AutoDiagnoseLoop with Gemini as both subject model and judge.
+
+    M1 probes the model with self_consistency + verbalized_confidence.
+    M2 summarises the findings into a structured report.
+    M3 DiagnosisAgent (Gemini) reads the report and proposes hypotheses.
+    M4 SurgeryAgent attempts to verify each hypothesis.
+
+    Requires GEMINI_API_KEY in the environment.
+    """
+    import evalvitals  # noqa: F401 — side-effect: registers all analyzers
+
+    from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
+    from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
+    from evalvitals.eval_agent.probe_agent import ProbeAgent
+    from evalvitals.models.blackbox.gemini import GeminiModel
+
+    model = GeminiModel()
+
+    cases = CaseBatch([
+        FailureCase(
+            id="fc_0",
+            inputs=Inputs(prompt="What is 17 multiplied by 19?"),
+            label=Label.FAIL,
+        ),
+        FailureCase(
+            id="fc_1",
+            inputs=Inputs(prompt="Name the longest river in Africa."),
+            label=Label.FAIL,
+        ),
+        FailureCase(
+            id="fc_2",
+            inputs=Inputs(prompt="Is Paris the capital of Germany?"),
+            label=Label.FAIL,
+        ),
+    ])
+
+    # Run only GENERATE-compatible analyzers that work on plain text cases.
+    text_probe = StrategyProbe(priority_override={
+        kind: ["self_consistency", "verbalized_confidence"]
+        for kind in ModelKind
+    })
+
+    loop = AutoDiagnoseLoop(
+        model=model,
+        probe_agent=ProbeAgent(probe=text_probe, max_analyzers=2),
+        diagnosis_agent=DiagnosisAgent(),
+        max_cycles=2,
+    )
+    report = loop.run(cases)
+
+    print(f"\n[AutoDiagnoseLoop] cycles={report.cycles}  resolved={report.resolved}")
+    if report.final_analysis:
+        print(f"  severity : {report.final_analysis.severity}")
+        print(f"  narrative: {report.final_analysis.narrative[:300]}")
+    for h in report.final_hypotheses:
+        print(f"  hypothesis  : {h.statement}")
+        print(f"    mode      : {h.predicted_failure_mode}  status: {h.status}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(CONFIG))
@@ -137,6 +199,9 @@ def main() -> None:
 
     print("\n=== CounterfactualReplay (causal step attribution) ===")
     demo_counterfactual()
+
+    print("\n=== AutoDiagnoseLoop M1→M4 (requires GEMINI_API_KEY) ===")
+    demo_auto_diagnose()
 
 
 if __name__ == "__main__":

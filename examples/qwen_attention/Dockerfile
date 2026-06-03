@@ -1,10 +1,13 @@
-FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 
 WORKDIR /app
 
-# Install evalvitals with local (white-box) dependencies
+# Install evalvitals with local (white-box) dependencies.
+# torch is already in the base image — install only the non-torch extras
+# to avoid pip overwriting the CUDA wheel with a CPU one from PyPI.
 COPY . /evalvitals
-RUN pip install --no-cache-dir "/evalvitals[local]"
+RUN pip install --no-cache-dir "transformers>=4.51.0" accelerate sentencepiece tiktoken && \
+    pip install --no-cache-dir --no-deps "/evalvitals"
 
 WORKDIR /app/example
 COPY examples/qwen_attention/ .
