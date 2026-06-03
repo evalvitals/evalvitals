@@ -34,6 +34,7 @@ from evalvitals.eval_agent.preregister import (
 from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.probe_agent import ProbeAgent
 from evalvitals.eval_agent.report import DiagnosticReport
+from evalvitals.eval_agent.run_logger import RunLogger
 from evalvitals.eval_agent.store import InMemoryStore, Store
 from evalvitals.eval_agent.surgery import InterventionResult, SurgeryAgent
 
@@ -70,4 +71,5 @@ __all__ = [
     "PreregisteredHypothesis",
     "PreregistrationLog",
     "DiagnosticReport",
+    "RunLogger",
 ]

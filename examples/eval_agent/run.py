@@ -40,6 +40,7 @@ from evalvitals.eval_agent import (
     EvalOrchestrator,
     InMemoryStore,
     PreregisteredHypothesis,
+    RunLogger,
     Split,
 )
 
@@ -166,11 +167,15 @@ def demo_auto_diagnose() -> None:
         for kind in ModelKind
     })
 
+    logger = RunLogger()
+    print(f"  logging to: {logger.run_dir}")
+
     loop = AutoDiagnoseLoop(
         model=model,
         probe_agent=ProbeAgent(probe=text_probe, max_analyzers=2),
         diagnosis_agent=DiagnosisAgent(),
         max_cycles=2,
+        run_logger=logger,
     )
     report = loop.run(cases)
 

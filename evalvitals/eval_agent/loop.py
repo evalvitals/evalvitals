@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisGenerator
     from evalvitals.eval_agent.probe_agent import ProbeAgent
+    from evalvitals.eval_agent.run_logger import RunLogger
     from evalvitals.eval_agent.surgery import SurgeryAgent
 
 
@@ -116,6 +117,9 @@ class AutoDiagnoseLoop:
                           Defaults to ``SurgeryAgent()``.
         store:            Persistent memory.  Defaults to ``InMemoryStore()``.
         max_cycles:       Hard cap on M1→M4 iterations.
+        run_logger:       Optional :class:`~evalvitals.eval_agent.run_logger.RunLogger`
+                          that writes a JSONL event log and saves analyzer artifacts
+                          (tensors, arrays) to disk after each cycle.
     """
 
     def __init__(
@@ -127,6 +131,7 @@ class AutoDiagnoseLoop:
         surgery_agent: "SurgeryAgent | None" = None,
         store: Store | None = None,
         max_cycles: int = 5,
+        run_logger: "RunLogger | None" = None,
     ) -> None:
         from evalvitals.eval_agent.analysis import AnalysisModule
         from evalvitals.eval_agent.probe_agent import ProbeAgent
@@ -139,6 +144,7 @@ class AutoDiagnoseLoop:
         self.surgery_agent = surgery_agent or SurgeryAgent()
         self.store = store or InMemoryStore()
         self.max_cycles = max_cycles
+        self.run_logger = run_logger
 
     def run(self, data: "CaseBatch") -> AutoDiagnoseReport:
         """Drive the M1→M2→M3→M4 loop until resolved or *max_cycles* reached.
@@ -162,16 +168,22 @@ class AutoDiagnoseLoop:
             final_results = probe_results
             for r in probe_results.values():
                 self.store.add_result(r)
+            if self.run_logger:
+                self.run_logger.log_probe(cycle, probe_results)
 
             # ── M2: analyze — interpret raw results into a report ──────────
             analysis = self.analysis_module.analyze(probe_results, repr(self.model))
             final_analysis = analysis
+            if self.run_logger:
+                self.run_logger.log_analysis(cycle, analysis)
 
             if self.diagnosis_agent is None:
                 break  # analysis-only mode: stop after first M1+M2 pass
 
             # ── M3: diagnose — LLM proposes hypotheses from the report ─────
             diag = self.diagnosis_agent.diagnose(analysis)
+            if self.run_logger:
+                self.run_logger.log_diagnosis(cycle, diag)
             if not diag.hypotheses:
                 break
             for h in diag.hypotheses:
@@ -182,8 +194,10 @@ class AutoDiagnoseLoop:
             for h in diag.hypotheses:
                 iv = self.surgery_agent.operate(h, self.model, probe_results, data)
                 h.status = iv.status
+                if self.run_logger:
+                    self.run_logger.log_surgery(cycle, h, iv)
                 if iv.fixed:
-                    return AutoDiagnoseReport(
+                    report = AutoDiagnoseReport(
                         cycles=cycle + 1,
                         resolved=True,
                         final_hypotheses=all_hypotheses,
@@ -191,10 +205,13 @@ class AutoDiagnoseLoop:
                         final_analysis=final_analysis,
                         store=self.store,
                     )
+                    if self.run_logger:
+                        self.run_logger.log_loop_end(report)
+                    return report
                 if iv.new_data is not None and len(iv.new_data) > 0:
                     data = iv.new_data  # refocus on unexplained cases
 
-        return AutoDiagnoseReport(
+        report = AutoDiagnoseReport(
             cycles=self.max_cycles,
             resolved=False,
             final_hypotheses=all_hypotheses,
@@ -202,3 +219,6 @@ class AutoDiagnoseLoop:
             final_analysis=final_analysis,
             store=self.store,
         )
+        if self.run_logger:
+            self.run_logger.log_loop_end(report)
+        return report
