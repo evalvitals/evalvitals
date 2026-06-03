@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from evalvitals.core.capability import Capability
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label, Step, StepRole, Trajectory
 from evalvitals.core.registry import registry
