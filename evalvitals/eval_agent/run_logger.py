@@ -1,0 +1,219 @@
+"""RunLogger — structured per-cycle logging for AutoDiagnoseLoop.
+
+Writes a JSONL event log (one line per M1/M2/M3/M4 event) and saves heavy
+analyzer artifacts (attention tensors, hidden-state arrays) to a separate
+``artifacts/`` directory, keyed by cycle number so they stay navigable.
+
+Usage::
+
+    from evalvitals.eval_agent import AutoDiagnoseLoop, RunLogger
+
+    loop = AutoDiagnoseLoop(model=model, run_logger=RunLogger("runs/exp_01"))
+    report = loop.run(cases)
+    # runs/exp_01/run_log.jsonl          ← one JSON line per event, grep/jq friendly
+    # runs/exp_01/artifacts/c0_attention_attn_weights.npy  ← attention tensor
+    # runs/exp_01/artifacts/c0_cka_layer_similarities.npy  ← CKA matrix
+
+Stream events while running::
+
+    tail -f runs/exp_01/run_log.jsonl | python -m json.tool
+
+Filter by module::
+
+    jq 'select(.event=="diagnosis")' runs/exp_01/run_log.jsonl
+
+Auto-timestamped run dir (default when no path is given)::
+
+    loop = AutoDiagnoseLoop(model=model, run_logger=RunLogger())
+    print(loop.run_logger.run_dir)   # → runs/20260603_142305/
+"""
+
+from __future__ import annotations
+
+import json
+import warnings
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from evalvitals.core.result import Result
+    from evalvitals.eval_agent.analysis import AnalysisReport
+    from evalvitals.eval_agent.diagnosis import DiagnosisResult
+    from evalvitals.eval_agent.hypothesis import Hypothesis
+    from evalvitals.eval_agent.loop import AutoDiagnoseReport
+    from evalvitals.eval_agent.surgery import InterventionResult
+
+
+class RunLogger:
+    """Structured JSONL logger + artifact sink for one :class:`AutoDiagnoseLoop` run.
+
+    Each call to a ``log_*`` method appends one JSON object to ``run_log.jsonl``
+    (always including a ``ts`` ISO-8601 timestamp and a ``cycle`` index).
+    Heavy artifacts from M1 results are written to ``artifacts/`` as ``.npy``
+    (numpy / torch tensors) or ``.json`` (dicts / lists).
+
+    Args:
+        run_dir:  Directory to write into.  Created if it does not exist.
+                  Defaults to ``runs/<YYYYMMDD_HHMMSS>/`` relative to cwd.
+
+    The logger is safe to use as a context manager::
+
+        with RunLogger("runs/my_exp") as logger:
+            loop = AutoDiagnoseLoop(model=model, run_logger=logger)
+            loop.run(cases)
+    """
+
+    def __init__(self, run_dir: str | Path | None = None) -> None:
+        if run_dir is None:
+            run_dir = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_dir = Path(run_dir)
+        self.artifact_dir = self.run_dir / "artifacts"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.artifact_dir.mkdir(exist_ok=True)
+        self.log_path = self.run_dir / "run_log.jsonl"
+        self._fh = open(self.log_path, "a", encoding="utf-8")  # noqa: SIM115
+
+    # ------------------------------------------------------------------
+    # Event hooks — called by AutoDiagnoseLoop at each stage
+    # ------------------------------------------------------------------
+
+    def log_probe(self, cycle: int, results: dict[str, "Result"]) -> None:
+        """M1: log findings (JSON) and persist heavy artifacts to disk."""
+        artifact_paths = self._save_probe_artifacts(cycle, results)
+        self._write({
+            "event": "probe",
+            "cycle": cycle,
+            "analyzers": list(results),
+            "findings": {name: r.findings for name, r in results.items()},
+            "artifact_paths": artifact_paths,
+        })
+
+    def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
+        """M2: log severity, flagged anomalies, and the narrative sent to M3."""
+        self._write({
+            "event": "analysis",
+            "cycle": cycle,
+            "severity": report.severity,
+            "n_findings": len(report.findings),
+            "findings": [str(f) for f in report.findings],
+            "narrative": report.narrative,
+        })
+
+    def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:
+        """M3: log raw LLM output and every parsed hypothesis."""
+        self._write({
+            "event": "diagnosis",
+            "cycle": cycle,
+            "model_name": diag.model_name,
+            "n_hypotheses": len(diag.hypotheses),
+            "hypotheses": [
+                {
+                    "statement": h.statement,
+                    "failure_mode": h.predicted_failure_mode,
+                    "status": h.status.value if h.status else None,
+                }
+                for h in diag.hypotheses
+            ],
+            "raw_judge_output": diag.raw_judge_output,
+        })
+
+    def log_surgery(
+        self,
+        cycle: int,
+        hypothesis: "Hypothesis",
+        iv: "InterventionResult",
+    ) -> None:
+        """M4: log intervention outcome for one hypothesis."""
+        self._write({
+            "event": "surgery",
+            "cycle": cycle,
+            "hypothesis": hypothesis.statement,
+            "failure_mode": hypothesis.predicted_failure_mode,
+            "status": iv.status.value,
+            "fixed": iv.fixed,
+            "evidence": iv.evidence,
+            "n_refocused_cases": len(iv.new_data) if iv.new_data else None,
+        })
+
+    def log_loop_end(self, report: "AutoDiagnoseReport") -> None:
+        """Final summary entry — written and file closed when the loop exits."""
+        self._write({
+            "event": "loop_end",
+            "cycles": report.cycles,
+            "resolved": report.resolved,
+            "n_hypotheses": len(report.final_hypotheses),
+            "final_hypotheses": [
+                {
+                    "statement": h.statement,
+                    "failure_mode": h.predicted_failure_mode,
+                    "status": h.status.value if h.status else None,
+                }
+                for h in report.final_hypotheses
+            ],
+        })
+        self.close()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Flush and close the log file."""
+        if not self._fh.closed:
+            self._fh.close()
+
+    def __enter__(self) -> "RunLogger":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.close()
+
+    def __repr__(self) -> str:
+        return f"RunLogger(run_dir={str(self.run_dir)!r})"
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _write(self, entry: dict[str, Any]) -> None:
+        entry["ts"] = datetime.now().isoformat()
+        self._fh.write(json.dumps(entry, default=str) + "\n")
+        self._fh.flush()
+
+    def _save_probe_artifacts(
+        self,
+        cycle: int,
+        results: dict[str, "Result"],
+    ) -> dict[str, str]:
+        """Persist heavy artifacts from all M1 results; return {key: path} map."""
+        paths: dict[str, str] = {}
+        for analyzer_name, result in results.items():
+            for art_name, artifact in result.artifacts.items():
+                stem = f"c{cycle}_{analyzer_name}_{art_name}"
+                path = self._save_artifact(stem, artifact)
+                if path is not None:
+                    paths[f"{analyzer_name}/{art_name}"] = str(path)
+        return paths
+
+    def _save_artifact(self, stem: str, artifact: Any) -> Path | None:
+        """Write one artifact to ``artifacts/<stem>.<ext>``; return path or None."""
+        try:
+            import numpy as np
+
+            if hasattr(artifact, "detach"):  # torch.Tensor
+                arr = artifact.detach().cpu().numpy()
+                path = self.artifact_dir / f"{stem}.npy"
+                np.save(path, arr)
+                return path
+            if isinstance(artifact, np.ndarray):
+                path = self.artifact_dir / f"{stem}.npy"
+                np.save(path, artifact)
+                return path
+            if isinstance(artifact, (dict, list)):
+                path = self.artifact_dir / f"{stem}.json"
+                path.write_text(json.dumps(artifact, default=str), encoding="utf-8")
+                return path
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(f"RunLogger: could not save artifact {stem!r}: {exc}")
+        return None

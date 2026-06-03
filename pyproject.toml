@@ -31,7 +31,7 @@ dependencies = [
 # Local white-box models + internals capture (the heavy path).
 local = [
     "torch>=2.0.0",
-    "transformers>=4.51.0",
+    "transformers>=4.51.0,<5.0.0",
     "accelerate>=0.26.0",
 ]
 # API / black-box models. The OpenAI-compatible client is optional; you can also
@@ -54,7 +54,7 @@ viz = ["matplotlib>=3.7"]
 gemini = ["google-genai>=1.0"]
 all = [
     "torch>=2.0.0",
-    "transformers>=4.51.0",
+    "transformers>=4.51.0,<5.0.0",
     "accelerate>=0.26.0",
     "openai>=1.0",
     "captum>=0.7",
