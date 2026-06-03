@@ -51,6 +51,7 @@ data = [
     "pillow>=9.0",
 ]
 viz = ["matplotlib>=3.7"]
+gemini = ["google-generativeai>=0.8"]
 all = [
     "torch>=2.0.0",
     "transformers>=4.51.0",

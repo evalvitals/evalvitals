@@ -215,6 +215,69 @@ report = EvalOrchestrator().run(cases, hyp, strategy_a, strategy_b)   # register
 LOGPROBS are black-box-retrievable (OpenAI-style): wire `RuntimeConfig(logprobs_fn=...)`
 and run `LogprobEntropyAnalyzer` (perplexity + predictive entropy) on an API model.
 
+## AutoDiagnoseLoop — automated false-attribution pipeline
+
+`AutoDiagnoseLoop` runs a four-module cycle that selects analyzers, executes
+them, asks an LLM to propose hypotheses, and verifies each one through
+intervention — looping back if the problem is not yet resolved.
+
+```
+M1 StrategyProbe   → select analyzers for this model kind (VLM / agent / LLM)
+M2 Execution       → run via ExperimentRunner (content-hash cached)
+M3 DiagnosisAgent  → LLM judge reads findings, proposes HYPOTHESIS:/FAILURE_MODE: pairs
+M4 SurgeryAgent     → correlate per-case signals with PASS/FAIL labels; refocus data
+     ↑_______________________________________________________________|  (repeat)
+```
+
+```python
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
+
+# Any model with Capability.GENERATE as the judge (Claude, GPT-4o, local chat model, …)
+judge = compose("qwen3-8b", "api", RuntimeConfig(generate_fn=my_generate))
+
+loop = AutoDiagnoseLoop(
+    model=my_vlm,
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    max_cycles=3,
+    max_analyzers=4,
+)
+report = loop.run(failure_cases)
+
+print(report.resolved)           # True when an intervention eliminated the failures
+print(report.final_hypotheses)   # list[Hypothesis] with status SUPPORTED/REFUTED/INCONCLUSIVE
+print(report.final_results)      # {analyzer_name: Result} from the last cycle
+```
+
+**`StrategyProbe`** ranks analyzers by diagnostic value for the model kind it
+detects:
+
+| Kind detected | First analyzers selected |
+|---|---|
+| VLM (image modality) | `pope`, `chair`, `attention`, `attention_rollout`, `mm_shap` |
+| Agent (`TOOL_CALLS`) | `loop_detect`, `ignored_obs`, `first_error_judge`, `counterfactual` |
+| LLM (text-only) | `attention`, `logit_lens`, `token_entropy`, `logprob_entropy` |
+
+**`SurgeryAgent`** has three verification strategies (first match wins):
+
+1. **Injected `verify_fn`** — full caller control.
+2. **`analyzer_params`** — re-run named analyzers with modified settings; returns before/after findings.
+3. **Default label correlation** — extracts per-case signals (e.g. `has_loop`, `n_ignored`) from findings,
+   splits cases into signal vs. control groups, compares FAIL rates with a 10 % gap threshold.
+   When `SUPPORTED`, produces `new_data` (the non-signal cases) for the next M1 cycle.
+
+Analyzers that require mandatory constructor arguments (e.g. `CounterfactualReplay`) are
+passed via `analyzer_overrides`:
+
+```python
+from evalvitals.analyzers.agent.counterfactual import CounterfactualReplay
+
+loop = AutoDiagnoseLoop(
+    model=my_agent_model,
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    analyzer_overrides={"counterfactual": CounterfactualReplay(rerun_fn=my_rerun, n_replays=5)},
+)
+```
+
 ## Install
 
 ```bash
@@ -314,26 +377,25 @@ evalvitals/
 ├── stats/                      compare() single entry — never a bare p  ← NEW
 │   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  friedman.py✓ (Friedman+Nemenyi, >2 strategies)  subset_sampling.py✓
 │   └── api.py✓                 compare() (pairwise) + compare_multiple() (3+ strategies) → StatResult / MultiCompareResult
-└── eval_agent/                 closed loop with selective-inference discipline  ← NEW
+└── eval_agent/                 automated diagnosis + selective-inference loop  ← NEW
+    ├── probe.py✓               M1 StrategyProbe: VLM/AGENT/LLM detection + ranked analyzer selection
+    ├── diagnosis.py✓           M3 DiagnosisAgent: LLM judge → HYPOTHESIS:/FAILURE_MODE: pairs
+    ├── surgery.py✓              M4 SurgeryAgent: label correlation / param sweep / verify_fn
+    ├── loop.py✓                AutoDiagnoseLoop (M1→M4 closed loop) + SelfEvolveLoop (skeleton)
     ├── preregister.py✓         DataSplit (explore/validate/confirm) + PreregisteredHypothesis + log
     ├── ab_runner.py✓           two strategies → stats.compare
     ├── orchestrator.py✓        define → split → pre-register → test → report
     ├── report.py✓ store.py✓    DiagnosticReport ; InMemoryStore(+query)
-    ├── hypothesis.py           Hypothesis + ManualHypothesisGenerator✓ (LLM proposer = Stage 2)
-    └── loop.py✓                SelfEvolveLoop (propose→record→until-dry; case-synthesis = Stage 2)
+    ├── hypothesis.py✓          Hypothesis + ManualHypothesisGenerator
+    └── tools.py✓               agent action space: list_analyses / compatible_analyses / run_analysis
 ```
 
-## The self-evolving loop (interfaces in place, logic in Stage 2)
+## The automated diagnosis loop
 
-`eval_agent/` lays out the closed cycle the package is built to serve:
-
-```
-hypothesize → construct cases → experiment → run → attribute → evaluate → record → mutate
-     ↑________________________________________________________________________|
-```
-
-The agent acts only through `eval_agent/tools.py` (discovery + run + memory),
-so the package's public API *is* the agent's action space.
+`eval_agent/` provides both the concrete `AutoDiagnoseLoop` (M1→M4 implemented)
+and `SelfEvolveLoop` (original propose→record skeleton, kept for backward
+compatibility).  The agent acts only through `eval_agent/tools.py` (discovery +
+run + memory), so the package's public API *is* the agent's action space.
 
 ## Testing Principles & Running Tests
 
@@ -346,7 +408,7 @@ We follow a tiered testing strategy modeled after standard practices in scientif
 
 **Run fast unit tests only (CPU, offline-friendly):**
 ```bash
-pytest        # 182 tests (+11 GPU-gated), no GPU required (models are mocked)
+pytest        # 513 tests (+11 GPU-gated), no GPU required (models are mocked)
 ```
 
 **Run GPU integration tests (requires CUDA GPU and model checkpoint cache):**
@@ -366,3 +428,11 @@ cd examples/logprob_entropy && docker compose up
 cd examples/stats_compare   && docker compose up
 cd examples/eval_agent      && docker compose up
 ```
+Partial 1 - Close-loop
+Partial 2 - self-envolving 
+
+
+1. M1 agent probing tool (agent, VLM, LLM), launch each analyze in the container.
+2. M2 statistical testing (self-envolving agent to provide initial insight).
+3. M3 propose hypothesis.
+4. M4 perform intervention. (self-envolving)

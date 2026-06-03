@@ -1,23 +1,29 @@
-"""Self-evolving evaluation agent (interfaces + stubs for Stage 2).
+"""Self-evolving evaluation agent — automated failure discovery and diagnosis.
 
 Layout:
-  tools.py        the agent's action space over the package
+  probe_agent.py  M1 — ProbeAgent: select + execute analyzers (direct or Docker)
+  analysis.py     M2 — AnalysisModule: interpret results → AnalysisReport
+  diagnosis.py    M3 — DiagnosisAgent: Gemini reads report → hypotheses
+  surgery.py      M4 — SurgeryAgent: operate + verify; correlate or sweep
+  loop.py         AutoDiagnoseLoop (M1→M4) + SelfEvolveLoop (original skeleton)
+  probe.py        StrategyProbe (tool-selection component used by ProbeAgent)
   hypothesis.py   Hypothesis + HypothesisGenerator
   store.py        persistent memory (Store / InMemoryStore)
-  loop.py         SelfEvolveLoop — the closed-loop controller
-  orchestrator.py thin facade over the loop
+  orchestrator.py thin facade over the loop (pre-registered A/B)
   ab_runner.py    A/B execution across prompting strategies
   report.py       diagnostic conclusions
 """
 
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
+from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
+from evalvitals.eval_agent.diagnosis import DiagnosisAgent, DiagnosisResult
 from evalvitals.eval_agent.hypothesis import (
     Hypothesis,
     HypothesisGenerator,
     HypothesisStatus,
     ManualHypothesisGenerator,
 )
-from evalvitals.eval_agent.loop import SelfEvolveLoop
+from evalvitals.eval_agent.loop import AutoDiagnoseLoop, AutoDiagnoseReport, SelfEvolveLoop
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
     DataSplit,
@@ -25,11 +31,31 @@ from evalvitals.eval_agent.preregister import (
     PreregistrationLog,
     Split,
 )
+from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
+from evalvitals.eval_agent.probe_agent import ProbeAgent
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.store import InMemoryStore, Store
+from evalvitals.eval_agent.surgery import InterventionResult, SurgeryAgent
 
 __all__ = [
+    # M1
+    "ProbeAgent",
+    "StrategyProbe",
+    "ModelKind",
+    # M2
+    "AnalysisModule",
+    "AnalysisReport",
+    # M3
+    "DiagnosisAgent",
+    "DiagnosisResult",
+    # M4
+    "SurgeryAgent",
+    "InterventionResult",
+    # Loop
+    "AutoDiagnoseLoop",
+    "AutoDiagnoseReport",
     "SelfEvolveLoop",
+    # Shared
     "EvalOrchestrator",
     "Hypothesis",
     "HypothesisGenerator",

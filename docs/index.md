@@ -52,6 +52,16 @@ The intended workflow is:
 4. Store results as structured findings and artifacts.
 5. Use those results to refine cases, hypotheses, and experiments.
 
+Or hand the loop to `AutoDiagnoseLoop` and let it drive steps 2–5 automatically:
+
+```python
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
+
+loop   = AutoDiagnoseLoop(model=my_model, diagnosis_agent=DiagnosisAgent(judge=judge))
+report = loop.run(failure_cases)
+# → report.resolved, report.final_hypotheses, report.final_results
+```
+
 ## Documentation Map
 
 - [Quickstart](quickstart.md): runnable examples and common entry points.
@@ -62,9 +72,10 @@ The intended workflow is:
 ## Current Status
 
 EvalVitals is currently an alpha package. The core contracts, spec/backend
-composition, capability matching, public `wrap()` on-ramp, attention analysis
-(including VLM relative attention — [arXiv 2502.17422](https://arxiv.org/abs/2502.17422)),
-token-entropy analysis, and test scaffolding are in place. VLM forward capture
+composition, capability matching, public `wrap()` on-ramp, 26 registered
+analyzers, statistics layer, and the full automated diagnosis pipeline
+(`AutoDiagnoseLoop` — M1 StrategyProbe, M3 DiagnosisAgent, M4 SurgeryAgent) are
+implemented and covered by 513 unit tests (no GPU required).  VLM forward capture
 (image-token mask + spatial layout) is implemented for all models in the spec
-registry. Several modules exist as planned Stage 2/3 surfaces and intentionally
-raise `NotImplementedError`.
+registry. Several analyzers are Stage-2 stubs that intentionally raise
+`NotImplementedError`; see the [Roadmap](roadmap.md) for details.

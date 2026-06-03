@@ -1,0 +1,488 @@
+"""Tests for the AutoDiagnose pipeline.
+
+M1 ProbeAgent, M2 AnalysisModule, M3 DiagnosisAgent, M4 SurgeryAgent,
+and the full AutoDiagnoseLoop that ties them together.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from evalvitals.core.capability import Capability
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label, Step, StepRole, Trajectory
+from evalvitals.core.registry import registry
+from evalvitals.eval_agent import (
+    AnalysisModule,
+    AnalysisReport,
+    AutoDiagnoseLoop,
+    AutoDiagnoseReport,
+    DiagnosisAgent,
+    DiagnosisResult,
+    HypothesisStatus,
+    InterventionResult,
+    ModelKind,
+    ProbeAgent,
+    SurgeryAgent,
+)
+from evalvitals.eval_agent.analysis import AnalysisFinding
+from evalvitals.eval_agent.hypothesis import Hypothesis
+from tests.conftest import FakeModel
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+
+class ScriptedModel(FakeModel):
+    """FakeModel with deterministic generate() responses."""
+
+    def __init__(self, answers: list[str], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._answers = answers
+        self._i = 0
+
+    def generate(self, inputs, **kwargs) -> str:
+        answer = self._answers[self._i % len(self._answers)]
+        self._i += 1
+        return answer
+
+
+def _vlm_model() -> FakeModel:
+    return FakeModel(
+        capabilities={Capability.GENERATE, Capability.ATTENTION},
+        modalities={"text", "image"},
+    )
+
+
+def _agent_model() -> FakeModel:
+    return FakeModel(capabilities={Capability.GENERATE, Capability.TOOL_CALLS})
+
+
+def _llm_model() -> FakeModel:
+    return FakeModel(
+        capabilities={Capability.GENERATE, Capability.ATTENTION, Capability.HIDDEN_STATES}
+    )
+
+
+def _traj_batch(n_fail: int = 1, n_pass: int = 1) -> CaseBatch:
+    cases = []
+    for i in range(n_fail):
+        traj = Trajectory(
+            sample_id=f"fail_{i}",
+            goal="open file",
+            outcome=Label.FAIL,
+            steps=[
+                Step(idx=0, role=StepRole.USER, content="open file"),
+                Step(idx=1, role=StepRole.ACTOR, tool_call={"name": "open", "args": {}}),
+                Step(idx=2, role=StepRole.TOOL, observation="Error: denied"),
+                Step(idx=3, role=StepRole.ACTOR, tool_call={"name": "open", "args": {}}),
+            ],
+        )
+        cases.append(FailureCase(inputs=Inputs(prompt="open"), trajectory=traj, label=Label.FAIL))
+    for i in range(n_pass):
+        traj = Trajectory(
+            sample_id=f"pass_{i}",
+            goal="open file",
+            outcome=Label.PASS,
+            steps=[
+                Step(idx=0, role=StepRole.USER, content="open file"),
+                Step(idx=1, role=StepRole.ACTOR, tool_call={"name": "open", "args": {}}),
+                Step(idx=2, role=StepRole.TOOL, observation="OK"),
+            ],
+        )
+        cases.append(FailureCase(inputs=Inputs(prompt="open"), trajectory=traj, label=Label.PASS))
+    return CaseBatch(cases)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M1 — ProbeAgent
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_probe_agent_detects_llm_kind():
+    agent = ProbeAgent()
+    assert agent.detect_kind(_llm_model()) == ModelKind.LLM
+
+
+def test_probe_agent_detects_vlm_kind():
+    assert ProbeAgent().detect_kind(_vlm_model()) == ModelKind.VLM
+
+
+def test_probe_agent_detects_agent_kind():
+    assert ProbeAgent().detect_kind(_agent_model()) == ModelKind.AGENT
+
+
+def test_probe_agent_returns_results_dict():
+    model = _llm_model()
+    agent = ProbeAgent(max_analyzers=2)
+    results = agent.probe(model, CaseBatch([FailureCase(inputs=Inputs(prompt="x"))]))
+    assert isinstance(results, dict)
+    assert len(results) <= 2
+    assert all(name in registry.analyzers.list() for name in results)
+
+
+def test_probe_agent_only_compatible_analyzers():
+    model = _llm_model()
+    agent = ProbeAgent()
+    results = agent.probe(model, CaseBatch([FailureCase(inputs=Inputs(prompt="x"))]))
+    compatible = set(registry.analyzers.names_compatible_with(model))
+    assert set(results.keys()) <= compatible
+
+
+def test_probe_agent_skips_mandatory_arg_analyzer_with_warning(recwarn):
+    model = FakeModel(capabilities={Capability.GENERATE, Capability.TOOL_CALLS})
+    agent = ProbeAgent()
+    agent.probe(model, CaseBatch([FailureCase(inputs=Inputs(prompt="x"))]))
+    assert any("counterfactual" in str(w.message) for w in recwarn.list)
+
+
+def test_probe_agent_uses_override():
+    from evalvitals.analyzers.agent.counterfactual import CounterfactualReplay
+
+    model = FakeModel(capabilities={Capability.GENERATE, Capability.TOOL_CALLS})
+    data = _traj_batch(n_fail=1, n_pass=0)
+    rerun = CounterfactualReplay(rerun_fn=lambda t, i, s: True, n_replays=1)
+    agent = ProbeAgent(analyzer_overrides={"counterfactual": rerun})
+    results = agent.probe(model, data)
+    assert "counterfactual" in results
+
+
+def test_probe_agent_priority_ordering():
+    model = FakeModel(
+        capabilities={
+            Capability.GENERATE,
+            Capability.ATTENTION,
+            Capability.HIDDEN_STATES,
+            Capability.LOGITS,
+        }
+    )
+    agent = ProbeAgent()
+    results = agent.probe(model, CaseBatch([FailureCase(inputs=Inputs(prompt="x"))]))
+    names = list(results.keys())
+    # attention should appear before cka in LLM priority order
+    if "attention" in names and "cka" in names:
+        assert names.index("attention") < names.index("cka")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M2 — AnalysisModule
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fake_results_with_sink() -> dict:
+    """AttentionSink result with mean_sink_mass above threshold (0.6)."""
+    from evalvitals.core.result import Result
+
+    return {
+        "attention_sink": Result(
+            analyzer="attention_sink",
+            model="fake",
+            findings={"n_layers": 3, "mean_sink_mass": 0.85, "sink_token": "t0",
+                      "per_layer_sink": [0.8, 0.85, 0.9]},
+        )
+    }
+
+
+def _fake_results_healthy() -> dict:
+    from evalvitals.core.result import Result
+
+    return {
+        "attention_sink": Result(
+            analyzer="attention_sink",
+            model="fake",
+            findings={"n_layers": 3, "mean_sink_mass": 0.2, "sink_token": "t0",
+                      "per_layer_sink": [0.2, 0.2, 0.2]},
+        )
+    }
+
+
+def test_analysis_module_flags_high_sink():
+    report = AnalysisModule().analyze(_fake_results_with_sink(), "test-model")
+    assert isinstance(report, AnalysisReport)
+    assert report.severity == "high"
+    assert len(report.findings) >= 1
+    assert any(f.metric == "mean_sink_mass" for f in report.findings)
+
+
+def test_analysis_module_clean_model_gives_none_severity():
+    report = AnalysisModule().analyze(_fake_results_healthy(), "test-model")
+    assert report.severity == "none"
+    assert report.findings == []
+
+
+def test_analysis_module_narrative_contains_model_name():
+    report = AnalysisModule().analyze(_fake_results_with_sink(), "MyModel")
+    assert "MyModel" in report.narrative
+
+
+def test_analysis_module_narrative_mentions_finding():
+    report = AnalysisModule().analyze(_fake_results_with_sink(), "m")
+    assert "attention_sink" in report.narrative or "sink" in report.narrative.lower()
+
+
+def test_analysis_module_to_dict():
+    report = AnalysisModule().analyze(_fake_results_with_sink(), "m")
+    d = report.to_dict()
+    assert {"model_name", "severity", "n_findings", "findings", "narrative"} <= d.keys()
+
+
+def test_analysis_module_extra_rules():
+    from evalvitals.core.result import Result
+    from evalvitals.eval_agent.analysis import _Rule
+
+    results = {
+        "my_analyzer": Result(
+            analyzer="my_analyzer", model="m",
+            findings={"my_metric": 99.0},
+        )
+    }
+    extra = {"my_analyzer": [_Rule("my_metric", 50.0, "above", "high", "custom rule hit")]}
+    report = AnalysisModule(extra_rules=extra).analyze(results, "m")
+    assert report.severity == "high"
+    assert any(f.metric == "my_metric" for f in report.findings)
+
+
+def test_analysis_module_sorts_high_severity_first():
+    from evalvitals.core.result import Result
+    from evalvitals.eval_agent.analysis import _Rule
+
+    results = {
+        "a1": Result(analyzer="a1", model="m", findings={"m1": 10.0}),
+        "a2": Result(analyzer="a2", model="m", findings={"m2": 10.0}),
+    }
+    extra = {
+        "a1": [_Rule("m1", 5.0, "above", "low", "low issue")],
+        "a2": [_Rule("m2", 5.0, "above", "high", "high issue")],
+    }
+    report = AnalysisModule(extra_rules=extra).analyze(results, "m")
+    assert report.findings[0].severity == "high"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M3 — DiagnosisAgent (takes AnalysisReport)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_report(severity="high") -> AnalysisReport:
+
+    f = AnalysisFinding(
+        analyzer="attention_sink", metric="mean_sink_mass",
+        value=0.85, threshold=0.6, direction="above",
+        severity=severity, message="over-attends to sink",
+    )
+    return AnalysisReport(
+        model_name="test-model",
+        findings=[f],
+        severity=severity,
+        narrative="[HIGH] attention_sink.mean_sink_mass=0.85 > 0.6",
+        raw_results={},
+    )
+
+
+def test_diagnosis_parses_hypothesis_from_report():
+    judge = ScriptedModel(
+        answers=["HYPOTHESIS: model over-attends to BOS\nFAILURE_MODE: attention_sink\n"],
+        capabilities={Capability.GENERATE},
+    )
+    diag = DiagnosisAgent(judge=judge).diagnose(_make_report())
+    assert isinstance(diag, DiagnosisResult)
+    assert len(diag.hypotheses) == 1
+    assert diag.hypotheses[0].predicted_failure_mode == "attention_sink"
+    assert diag.hypotheses[0].target_model == "test-model"
+
+
+def test_diagnosis_no_issue_returns_empty():
+    judge = ScriptedModel(answers=["NO_ISSUE"], capabilities={Capability.GENERATE})
+    diag = DiagnosisAgent(judge=judge).diagnose(_make_report(severity="none"))
+    assert diag.hypotheses == []
+    assert "NO_ISSUE" in diag.raw_judge_output
+
+
+def test_diagnosis_backward_compat_accepts_results_dict():
+    """Passing a raw results dict (old API) still works via AnalysisModule wrapping."""
+    from evalvitals.analyzers.attention.summary import AttentionAnalyzer
+    model = FakeModel()
+    results = {"attention": AttentionAnalyzer().run(model, "probe")}
+    judge = ScriptedModel(answers=["NO_ISSUE"], capabilities={Capability.GENERATE})
+    diag = DiagnosisAgent(judge=judge).diagnose(results, model_name="m")
+    assert isinstance(diag, DiagnosisResult)
+
+
+def test_diagnosis_prompt_includes_severity_and_narrative():
+    captured: list[str] = []
+
+    class CapturingModel(FakeModel):
+        def generate(self, inputs, **kw):
+            captured.append(str(inputs))
+            return "NO_ISSUE"
+
+    DiagnosisAgent(judge=CapturingModel(capabilities={Capability.GENERATE})).diagnose(
+        _make_report("high")
+    )
+    assert captured
+    assert "high" in captured[0].lower()
+    assert "attention_sink" in captured[0]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M4 — SurgeryAgent (unchanged; smoke-tested here for integration)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _hypothesis(mode: str = "loop") -> Hypothesis:
+    return Hypothesis(statement="test", target_model="m", predicted_failure_mode=mode)
+
+
+def test_surgery_verify_fn_override():
+    expected = InterventionResult(
+        hypothesis=_hypothesis(),
+        status=HypothesisStatus.SUPPORTED,
+        fixed=True,
+        evidence={"custom": True},
+    )
+    agent = SurgeryAgent(verify_fn=lambda h, m, r, d: expected)
+    result = agent.operate(_hypothesis(), None, {}, CaseBatch([]))
+    assert result is expected
+
+
+def test_surgery_correlate_supported(recwarn):
+    from evalvitals.analyzers.agent.loop_detect import LoopDetector
+
+    model = _agent_model()
+    data = _traj_batch(n_fail=2, n_pass=2)
+    results = {"loop_detect": LoopDetector().run(model, data)}
+    iv = SurgeryAgent().operate(_hypothesis("loop"), model, results, data)
+    assert iv.status == HypothesisStatus.SUPPORTED
+    assert iv.evidence["fail_rate_signal"] > iv.evidence["fail_rate_control"]
+
+
+def test_surgery_inconclusive_no_labels():
+    from evalvitals.analyzers.agent.loop_detect import LoopDetector
+
+    model = _agent_model()
+    unlabeled = _traj_batch(n_fail=1, n_pass=1)
+    for c in unlabeled:
+        c.label = None
+    results = {"loop_detect": LoopDetector().run(model, unlabeled)}
+    iv = SurgeryAgent().operate(_hypothesis(), model, results, unlabeled)
+    assert iv.status == HypothesisStatus.INCONCLUSIVE
+
+
+def test_surgery_param_sweep():
+    model = FakeModel(capabilities={Capability.GENERATE, Capability.ATTENTION})
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    agent = SurgeryAgent(analyzer_params={"attention": {"top_k": 2}})
+    iv = agent.operate(_hypothesis(), model, {}, data)
+    assert iv.status == HypothesisStatus.INCONCLUSIVE
+    assert "attention" in iv.evidence["param_sweep"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AutoDiagnoseLoop — full M1→M2→M3→M4
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_loop_analysis_only_mode():
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    loop = AutoDiagnoseLoop(model=model, probe_agent=ProbeAgent(max_analyzers=2))
+    report = loop.run(data)
+    assert isinstance(report, AutoDiagnoseReport)
+    assert report.resolved is False
+    assert report.final_hypotheses == []
+    assert report.final_analysis is not None
+    assert len(report.final_results) <= 2
+
+
+def test_loop_analysis_report_populated():
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    loop = AutoDiagnoseLoop(model=model, probe_agent=ProbeAgent(max_analyzers=1))
+    report = loop.run(data)
+    assert report.final_analysis is not None
+    assert isinstance(report.final_analysis.narrative, str)
+    assert len(report.final_analysis.narrative) > 0
+
+
+def test_loop_resolves_when_surgery_returns_fixed():
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+
+    judge = ScriptedModel(
+        answers=["HYPOTHESIS: sink\nFAILURE_MODE: attention_sink\n"],
+        capabilities={Capability.GENERATE},
+    )
+
+    def always_fixed(h, m, r, d):
+        return InterventionResult(h, HypothesisStatus.SUPPORTED, fixed=True, evidence={})
+
+    loop = AutoDiagnoseLoop(
+        model=model,
+        probe_agent=ProbeAgent(max_analyzers=1),
+        diagnosis_agent=DiagnosisAgent(judge=judge),
+        surgery_agent=SurgeryAgent(verify_fn=always_fixed),
+        max_cycles=5,
+    )
+    report = loop.run(data)
+    assert report.resolved is True
+    assert report.cycles == 1
+
+
+def test_loop_stops_when_no_hypotheses():
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    judge = ScriptedModel(answers=["NO_ISSUE"], capabilities={Capability.GENERATE})
+    loop = AutoDiagnoseLoop(
+        model=model,
+        probe_agent=ProbeAgent(max_analyzers=1),
+        diagnosis_agent=DiagnosisAgent(judge=judge),
+        max_cycles=5,
+    )
+    report = loop.run(data)
+    assert report.resolved is False
+    assert report.final_hypotheses == []
+
+
+def test_loop_max_cycles_respected():
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    judge = ScriptedModel(
+        answers=["HYPOTHESIS: h\nFAILURE_MODE: f\n"],
+        capabilities={Capability.GENERATE},
+    )
+    loop = AutoDiagnoseLoop(
+        model=model,
+        probe_agent=ProbeAgent(max_analyzers=1),
+        diagnosis_agent=DiagnosisAgent(judge=judge),
+        surgery_agent=SurgeryAgent(verify_fn=lambda h, m, r, d: InterventionResult(
+            h, HypothesisStatus.INCONCLUSIVE, fixed=False, evidence={}
+        )),
+        max_cycles=3,
+    )
+    report = loop.run(data)
+    assert report.resolved is False
+    assert report.cycles <= 3
+
+
+def test_loop_store_accumulates():
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    judge = ScriptedModel(
+        answers=["HYPOTHESIS: h\nFAILURE_MODE: f\n"],
+        capabilities={Capability.GENERATE},
+    )
+    loop = AutoDiagnoseLoop(
+        model=model,
+        probe_agent=ProbeAgent(max_analyzers=1),
+        diagnosis_agent=DiagnosisAgent(judge=judge),
+        surgery_agent=SurgeryAgent(verify_fn=lambda h, m, r, d: InterventionResult(
+            h, HypothesisStatus.INCONCLUSIVE, fixed=False, evidence={}
+        )),
+        max_cycles=1,
+    )
+    report = loop.run(data)
+    assert len(report.store.results) > 0
+    assert len(report.store.hypotheses) > 0
+
+
+def test_loop_docker_mode_falls_back_gracefully(recwarn):
+    """When Docker is unavailable, ProbeAgent warns and falls back (no crash)."""
+    model = _llm_model()
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+    agent = ProbeAgent(use_docker=True, docker_image="nonexistent:tag", max_analyzers=1)
+    loop = AutoDiagnoseLoop(model=model, probe_agent=agent)
+    report = loop.run(data)
+    assert isinstance(report, AutoDiagnoseReport)

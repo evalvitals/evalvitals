@@ -12,10 +12,10 @@ evalvitals/
 +-- core/              # stable contracts and shared substrate
 +-- specs.py           # model identity registry
 +-- models/            # model composition, runtime backends, compatibility shims
-+-- analysis/          # analyzers grouped by whitebox, blackbox, and agent use
-+-- datasets/          # planned loaders that produce FailureCase / CaseBatch
-+-- stats/             # planned statistical tests over Result objects
-`-- eval_agent/        # planned self-evolving evaluation loop
++-- analyzers/         # analyzers grouped by capability (attention, lens, uncertainty, …)
++-- datasets/          # loaders that produce FailureCase / CaseBatch
++-- stats/             # statistical tests: McNemar, e-value, bootstrap CI, Friedman
+`-- eval_agent/        # automated diagnosis loop + selective-inference orchestration
 ```
 
 ## Core Contracts
@@ -134,6 +134,39 @@ The design keeps common failure modes contained:
 - Agent tooling can discover what is possible from registries instead of reading
   source code or hard-coding model names.
 
+## AutoDiagnoseLoop — M1→M4 pipeline
+
+`eval_agent/` implements a four-module automated diagnosis cycle on top of the
+core contracts described above.
+
+```text
+M1 · StrategyProbe   detect model kind (VLM/AGENT/LLM) → ranked analyzer list
+M2 · Execution       Experiment + ExperimentRunner (content-hash cache)
+M3 · DiagnosisAgent  judge.generate(findings_json) → HYPOTHESIS:/FAILURE_MODE: pairs
+M4 · SurgeryAgent     correlate per-case signals with PASS/FAIL → SUPPORTED/REFUTED
+     ↑____________________________________________________________| (refocus or stop)
+```
+
+The agent touches models only through `eval_agent/tools.py`
+(`list_analyses`, `compatible_analyses`, `run_analysis`) and stores all
+evidence in a `Store`.  `AutoDiagnoseLoop` is the concrete controller that wires
+the four modules; `SelfEvolveLoop` is the original Stage-1 skeleton kept for
+backward compatibility.
+
+### Module responsibilities
+
+| Module | Class | Contract |
+|---|---|---|
+| `probe.py` | `StrategyProbe` | `detect_kind(model) → ModelKind`; `select(model) → list[str]` |
+| *(M2 uses core)* | `ExperimentRunner` | `run(Experiment) → Result` (cached by fingerprint) |
+| `diagnosis.py` | `DiagnosisAgent` | `diagnose(results, model_name) → DiagnosisResult` |
+| `surgery.py` | `SurgeryAgent` | `operate(hypothesis, model, results, data) → InterventionResult` |
+| `loop.py` | `AutoDiagnoseLoop` | `run(data) → AutoDiagnoseReport` |
+
+All modules are injectable: pass your own `probe`, `diagnosis_agent`,
+`surgery_agent`, `store`, and `runner` to `AutoDiagnoseLoop` to customise any
+step without touching the others.
+
 ## Public Surface Guidance
 
 The intended stable public entry points are:
@@ -156,6 +189,9 @@ evalvitals.registry
 evalvitals.Capability
 evalvitals.FailureCase
 evalvitals.Result
+
+# Automated diagnosis
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, StrategyProbe, SurgeryAgent
 ```
 
 Lower-level implementation details (`compose`, `HFLocalModel`, `infer_spec`,
