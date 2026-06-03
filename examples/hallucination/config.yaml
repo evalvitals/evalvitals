@@ -2,7 +2,7 @@
 # Requires GEMINI_API_KEY env var (uses Google's OpenAI-compatible endpoint).
 # Uses gemini-2.0-flash by default; swap for any Gemini vision-capable model.
 
-model_name: gemini-2.0-flash
+model_name: gemini-2.5-flash
 
 # POPE probe: one image + yes/no questions about objects it contains/doesn't contain.
 # Build a real probe set from the POPE dataset (https://github.com/AoiDragon/POPE)

@@ -41,7 +41,7 @@ class GeminiModel(BlackboxModel):
 
     def __init__(
         self,
-        model_id: str = "gemini-2.0-flash",
+        model_id: str = "gemini-2.5-flash",
         api_key: str | None = None,
     ) -> None:
         super().__init__(
