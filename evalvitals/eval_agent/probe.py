@@ -30,6 +30,27 @@ class ModelKind(str, Enum):
     LLM   = "llm"    # text-only — interpretability analyzers first
 
 
+# Maps failure-mode tags (from M3 hypotheses) to the analyzers most likely to
+# surface evidence for that mode.  Used in cycle 2+ to focus the probe on what
+# the diagnosis agent flagged rather than running the same generic priority list.
+_FAILURE_MODE_TO_ANALYZERS: dict[str, list[str]] = {
+    "attention_sink":            ["attention_sink"],
+    "attention":                 ["attention", "attention_rollout"],
+    "hallucination":             ["pope", "chair"],
+    "low_consistency":           ["self_consistency"],
+    "unstable_generation":       ["self_consistency"],
+    "overconfidence":            ["verbalized_confidence"],
+    "miscalibrated_confidence":  ["verbalized_confidence"],
+    "confident_inconsistency":   ["self_consistency", "verbalized_confidence"],
+    "loop":                      ["loop_detect"],
+    "ignored_obs":               ["ignored_obs"],
+    "entropy":                   ["token_entropy", "logprob_entropy"],
+    "perplexity":                ["logprob_entropy"],
+    "logit_lens":                ["logit_lens"],
+    "representational_collapse": ["cka"],
+    "numerical_hallucination":   ["self_consistency", "verbalized_confidence"],
+}
+
 # Per-kind ordered priority: high → low diagnostic value for false attribution.
 # Analyzers not in the list are appended alphabetically after the ranked ones.
 _PRIORITY: dict[str, list[str]] = {
@@ -76,17 +97,21 @@ class StrategyProbe:
         self,
         model: "Model",
         max_analyzers: int | None = None,
+        hint_failure_modes: list[str] | None = None,
     ) -> list[str]:
         """Return compatible analyzer names ranked by diagnostic priority.
 
         Args:
-            model:         The model to analyse.
-            max_analyzers: If given, cap the returned list at this length.
+            model:              The model to analyse.
+            max_analyzers:      If given, cap the returned list at this length.
+            hint_failure_modes: Failure-mode tags from outstanding M3 hypotheses.
+                                Analyzers that match a hint are promoted to the
+                                front of the ranked list for focused follow-up.
 
         Returns:
-            Ordered list of registered analyzer names.  Priority-list items
-            come first (in priority order), then any remaining compatible
-            analyzers sorted alphabetically.
+            Ordered list of registered analyzer names.  Hint-matched items
+            come first, then the standard priority-list items, then remaining
+            compatible analyzers sorted alphabetically.
         """
         kind = self.detect_kind(model)
         compatible = set(registry.analyzers.names_compatible_with(model))
@@ -94,6 +119,17 @@ class StrategyProbe:
 
         ranked = [name for name in priority if name in compatible]
         ranked += sorted(compatible - set(ranked))
+
+        if hint_failure_modes:
+            # Promote analyzers that map to outstanding failure modes, preserving
+            # their relative order and avoiding duplicates.
+            boosted = dict.fromkeys(
+                a
+                for mode in hint_failure_modes
+                for a in _FAILURE_MODE_TO_ANALYZERS.get(mode.lower().replace(" ", "_"), [])
+                if a in compatible
+            )
+            ranked = list(boosted) + [a for a in ranked if a not in boosted]
 
         if max_analyzers is not None:
             ranked = ranked[:max_analyzers]
