@@ -14,6 +14,7 @@ then delegates to the subclass's :meth:`_run`.  Subclasses implement only
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +55,25 @@ class Analyzer(ABC):
     # ------------------------------------------------------------------
 
     def get_params(self) -> dict[str, Any]:
-        """Return the analyzer's hyper-parameters."""
+        """Return the analyzer's hyper-parameters.
+
+        Derived from the concrete subclass's ``__init__`` signature so that
+        typed subclasses never silently omit a parameter by forgetting to
+        forward it to ``super().__init__``.
+        """
+        sig = inspect.signature(type(self).__init__)
+        typed_params = {
+            name
+            for name, p in sig.parameters.items()
+            if name != "self"
+            and p.kind not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        }
+        if typed_params:
+            return {name: getattr(self, name) for name in typed_params}
+        # No typed params — base **params pattern or zero-param analyzer.
         return dict(self._params)
 
     def set_params(self, **params: Any) -> "Analyzer":
@@ -106,5 +125,5 @@ class Analyzer(ABC):
             )
 
     def __repr__(self) -> str:
-        params = ", ".join(f"{k}={v!r}" for k, v in self._params.items())
+        params = ", ".join(f"{k}={v!r}" for k, v in self.get_params().items())
         return f"{type(self).__name__}({params})"

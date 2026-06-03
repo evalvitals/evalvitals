@@ -219,7 +219,7 @@ class SurgeryAgent:
         data: CaseBatch,
     ) -> InterventionResult:
         """Re-run specified analyzers with modified parameters."""
-        from evalvitals.eval_agent.tools import run_analysis
+        from evalvitals.eval_agent._tools import run_analysis
 
         sweep: dict[str, Any] = {}
         for analyzer_name, params in self.analyzer_params.items():
