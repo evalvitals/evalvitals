@@ -179,6 +179,89 @@ def load_cases(path) -> CaseBatch:
     return CaseBatch(cases)
 ```
 
+## Add a Diagnosis Judge
+
+`DiagnosisAgent` accepts any `Model` with `Capability.GENERATE` as the judge.
+The simplest swap is an API model:
+
+```python
+from evalvitals.eval_agent import DiagnosisAgent, AutoDiagnoseLoop
+from evalvitals.models import compose
+from evalvitals.models.backends.base import RuntimeConfig
+
+judge = compose("qwen3-8b", "api", RuntimeConfig(generate_fn=my_generate))
+loop  = AutoDiagnoseLoop(model=my_model, diagnosis_agent=DiagnosisAgent(judge=judge))
+```
+
+The judge receives a JSON dump of all analyzer findings and must reply with lines
+of the form `HYPOTHESIS: ...` / `FAILURE_MODE: ...` (one pair per hypothesis) or
+`NO_ISSUE`.  You can use `evalvitals.eval_agent.diagnosis._DIAGNOSE_PROMPT` as a
+starting point and override it by subclassing `DiagnosisAgent`:
+
+```python
+from evalvitals.eval_agent.diagnosis import DiagnosisAgent, _parse_hypotheses, DiagnosisResult
+import json
+
+class MyDiagnosisAgent(DiagnosisAgent):
+    _PROMPT = "Your custom prompt with {model_name} and {findings_json}."
+
+    def diagnose(self, results, model_name):
+        summary = {name: r.findings for name, r in results.items()}
+        raw = self.judge.generate(
+            self._PROMPT.format(
+                model_name=model_name,
+                findings_json=json.dumps(summary, indent=2, default=str),
+            )
+        )
+        return DiagnosisResult(
+            model_name=model_name,
+            hypotheses=_parse_hypotheses(str(raw), model_name),
+            findings_summary=summary,
+            raw_judge_output=str(raw),
+        )
+```
+
+## Add a Custom SurveyAgent Intervention
+
+For domain-specific verification, pass `verify_fn` to `SurveyAgent`:
+
+```python
+from evalvitals.eval_agent import SurveyAgent, InterventionResult, HypothesisStatus
+
+def domain_verify(hypothesis, model, results, data):
+    # e.g. re-evaluate after patching the prompt template
+    improved = run_ablation(model, data, hypothesis)
+    return InterventionResult(
+        hypothesis=hypothesis,
+        status=HypothesisStatus.SUPPORTED if improved else HypothesisStatus.REFUTED,
+        fixed=improved,
+        evidence={"ablation_result": improved},
+    )
+
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
+loop = AutoDiagnoseLoop(
+    model=my_model,
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    survey_agent=SurveyAgent(verify_fn=domain_verify),
+)
+```
+
+## Extend StrategyProbe for a new model kind
+
+If you add a new capability type (e.g. `Capability.AUDIO`), you can teach
+`StrategyProbe` about it by passing a `priority_override`:
+
+```python
+from evalvitals.eval_agent import StrategyProbe, ModelKind
+
+probe = StrategyProbe(priority_override={
+    ModelKind.LLM:   ["attention", "logit_lens", "token_entropy"],
+    ModelKind.VLM:   ["pope", "chair", "attention"],
+    ModelKind.AGENT: ["loop_detect", "ignored_obs"],
+})
+loop = AutoDiagnoseLoop(model=my_model, probe=probe, ...)
+```
+
 ## Add Statistical Evaluation
 
 Statistical routines should consume `Result` objects or collections of results.

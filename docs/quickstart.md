@@ -301,6 +301,101 @@ Full runnable example: `examples/stats_compare/` (no API key, `docker compose up
 
 ---
 
+## AutoDiagnoseLoop — automated false-attribution pipeline
+
+`AutoDiagnoseLoop` closes the analysis→diagnosis→intervention cycle automatically.
+It needs a **judge model** (any instruction-following model with `GENERATE`) and
+the model under evaluation.
+
+```python
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
+from evalvitals.models import compose
+from evalvitals.models.backends.base import RuntimeConfig
+
+# 1. The model under evaluation (local VLM with white-box access)
+model = compose("qwen3-vl-8b-instruct", "hf_local", want={Capability.ATTENTION})
+
+# 2. A capable judge (API model — needs only GENERATE)
+judge = compose("qwen3-8b", "api", RuntimeConfig(generate_fn=my_generate_fn))
+
+# 3. Build the loop
+loop = AutoDiagnoseLoop(
+    model=model,
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    max_cycles=3,     # max M1→M4 iterations
+    max_analyzers=4,  # analyzers per cycle (ranked by diagnostic priority)
+)
+
+# 4. Run on your failure cases
+report = loop.run(failure_cases)
+
+print(report.resolved)                        # True if an intervention fixed it
+for h in report.final_hypotheses:
+    print(h.statement, "→", h.status)        # SUPPORTED / REFUTED / INCONCLUSIVE
+print(report.final_results.keys())            # analyzers run in the last cycle
+```
+
+### Analysis-only mode
+
+Omit `diagnosis_agent` to run M1+M2 only — useful when you want the probe's
+ranked analysis without automated hypothesis generation:
+
+```python
+loop = AutoDiagnoseLoop(model=model, max_analyzers=5)
+report = loop.run(cases)
+for name, result in report.final_results.items():
+    print(name, result.summary())
+```
+
+### Controlling analyzer selection
+
+`StrategyProbe` automatically detects model kind and ranks analyzers:
+
+```python
+from evalvitals.eval_agent import StrategyProbe, ModelKind
+
+probe = StrategyProbe()
+probe.detect_kind(model)                     # ModelKind.VLM / AGENT / LLM
+probe.select(model, max_analyzers=4)         # e.g. ["pope", "chair", "attention", "mm_shap"]
+```
+
+### Custom intervention (SurveyAgent)
+
+Override the default label-correlation verification with your own logic:
+
+```python
+from evalvitals.eval_agent import SurveyAgent, InterventionResult, HypothesisStatus
+
+def my_verify(hypothesis, model, results, data):
+    # domain-specific logic — return True when fixed
+    fixed = run_my_intervention(model, data)
+    return InterventionResult(
+        hypothesis=hypothesis,
+        status=HypothesisStatus.SUPPORTED if fixed else HypothesisStatus.INCONCLUSIVE,
+        fixed=fixed,
+        evidence={"custom": True},
+    )
+
+loop = AutoDiagnoseLoop(
+    model=model,
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    survey_agent=SurveyAgent(verify_fn=my_verify),
+)
+```
+
+Or trigger a **param sweep** — re-run analyzers with modified settings to compare
+before/after findings:
+
+```python
+loop = AutoDiagnoseLoop(
+    model=model,
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    survey_agent=SurveyAgent(analyzer_params={"attention": {"top_k": 20}}),
+)
+```
+
+---
+
 ## Eval Agent — Pre-Registered A/B Loop
 
 `EvalOrchestrator` enforces selective-inference safety: mine on `explore`,
