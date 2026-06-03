@@ -359,12 +359,12 @@ probe.detect_kind(model)                     # ModelKind.VLM / AGENT / LLM
 probe.select(model, max_analyzers=4)         # e.g. ["pope", "chair", "attention", "mm_shap"]
 ```
 
-### Custom intervention (SurveyAgent)
+### Custom intervention (SurgeryAgent)
 
 Override the default label-correlation verification with your own logic:
 
 ```python
-from evalvitals.eval_agent import SurveyAgent, InterventionResult, HypothesisStatus
+from evalvitals.eval_agent import SurgeryAgent, InterventionResult, HypothesisStatus
 
 def my_verify(hypothesis, model, results, data):
     # domain-specific logic — return True when fixed
@@ -379,7 +379,7 @@ def my_verify(hypothesis, model, results, data):
 loop = AutoDiagnoseLoop(
     model=model,
     diagnosis_agent=DiagnosisAgent(judge=judge),
-    survey_agent=SurveyAgent(verify_fn=my_verify),
+    surgery_agent=SurgeryAgent(verify_fn=my_verify),
 )
 ```
 
@@ -390,7 +390,7 @@ before/after findings:
 loop = AutoDiagnoseLoop(
     model=model,
     diagnosis_agent=DiagnosisAgent(judge=judge),
-    survey_agent=SurveyAgent(analyzer_params={"attention": {"top_k": 20}}),
+    surgery_agent=SurgeryAgent(analyzer_params={"attention": {"top_k": 20}}),
 )
 ```
 

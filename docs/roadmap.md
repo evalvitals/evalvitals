@@ -22,7 +22,7 @@ surfaces and planned interfaces.
 | Agent analyzers | `LoopDetector`, `IgnoredObservationDetector`, `FirstErrorJudge`, `CounterfactualReplay`. |
 | Statistics | `compare()` (McNemar + e-value + clustered bootstrap CI), `compare_multiple()` (Friedman + Nemenyi), `ebh()`, `kendall_tau`, `stratified_subset`. |
 | Eval agent — pre-registered A/B | `EvalOrchestrator`, `DataSplit`, `PreregisteredHypothesis`, `PreregistrationLog`. |
-| **AutoDiagnoseLoop** | **M1 `StrategyProbe`, M3 `DiagnosisAgent` (LLM judge), M4 `SurveyAgent` (label correlation / param sweep / verify_fn), `AutoDiagnoseLoop` controller.** |
+| **AutoDiagnoseLoop** | **M1 `StrategyProbe`, M3 `DiagnosisAgent` (LLM judge), M4 `SurgeryAgent` (label correlation / param sweep / verify_fn), `AutoDiagnoseLoop` controller.** |
 | Contract tests | Parametrized pyod-style suite covering all 26 registered analyzers (513 unit tests). |
 
 ## Stage 2 stubs (registered, `_run` raises `NotImplementedError`)

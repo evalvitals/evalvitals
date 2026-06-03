@@ -143,7 +143,7 @@ core contracts described above.
 M1 · StrategyProbe   detect model kind (VLM/AGENT/LLM) → ranked analyzer list
 M2 · Execution       Experiment + ExperimentRunner (content-hash cache)
 M3 · DiagnosisAgent  judge.generate(findings_json) → HYPOTHESIS:/FAILURE_MODE: pairs
-M4 · SurveyAgent     correlate per-case signals with PASS/FAIL → SUPPORTED/REFUTED
+M4 · SurgeryAgent     correlate per-case signals with PASS/FAIL → SUPPORTED/REFUTED
      ↑____________________________________________________________| (refocus or stop)
 ```
 
@@ -160,11 +160,11 @@ backward compatibility.
 | `probe.py` | `StrategyProbe` | `detect_kind(model) → ModelKind`; `select(model) → list[str]` |
 | *(M2 uses core)* | `ExperimentRunner` | `run(Experiment) → Result` (cached by fingerprint) |
 | `diagnosis.py` | `DiagnosisAgent` | `diagnose(results, model_name) → DiagnosisResult` |
-| `survey.py` | `SurveyAgent` | `survey(hypothesis, model, results, data) → InterventionResult` |
+| `surgery.py` | `SurgeryAgent` | `operate(hypothesis, model, results, data) → InterventionResult` |
 | `loop.py` | `AutoDiagnoseLoop` | `run(data) → AutoDiagnoseReport` |
 
 All modules are injectable: pass your own `probe`, `diagnosis_agent`,
-`survey_agent`, `store`, and `runner` to `AutoDiagnoseLoop` to customise any
+`surgery_agent`, `store`, and `runner` to `AutoDiagnoseLoop` to customise any
 step without touching the others.
 
 ## Public Surface Guidance
@@ -191,7 +191,7 @@ evalvitals.FailureCase
 evalvitals.Result
 
 # Automated diagnosis
-from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, StrategyProbe, SurveyAgent
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, StrategyProbe, SurgeryAgent
 ```
 
 Lower-level implementation details (`compose`, `HFLocalModel`, `infer_spec`,

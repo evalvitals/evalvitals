@@ -74,7 +74,7 @@ report = loop.run(failure_cases)
 EvalVitals is currently an alpha package. The core contracts, spec/backend
 composition, capability matching, public `wrap()` on-ramp, 26 registered
 analyzers, statistics layer, and the full automated diagnosis pipeline
-(`AutoDiagnoseLoop` — M1 StrategyProbe, M3 DiagnosisAgent, M4 SurveyAgent) are
+(`AutoDiagnoseLoop` — M1 StrategyProbe, M3 DiagnosisAgent, M4 SurgeryAgent) are
 implemented and covered by 513 unit tests (no GPU required).  VLM forward capture
 (image-token mask + spatial layout) is implemented for all models in the spec
 registry. Several analyzers are Stage-2 stubs that intentionally raise

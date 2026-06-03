@@ -225,7 +225,7 @@ intervention — looping back if the problem is not yet resolved.
 M1 StrategyProbe   → select analyzers for this model kind (VLM / agent / LLM)
 M2 Execution       → run via ExperimentRunner (content-hash cached)
 M3 DiagnosisAgent  → LLM judge reads findings, proposes HYPOTHESIS:/FAILURE_MODE: pairs
-M4 SurveyAgent     → correlate per-case signals with PASS/FAIL labels; refocus data
+M4 SurgeryAgent     → correlate per-case signals with PASS/FAIL labels; refocus data
      ↑_______________________________________________________________|  (repeat)
 ```
 
@@ -257,7 +257,7 @@ detects:
 | Agent (`TOOL_CALLS`) | `loop_detect`, `ignored_obs`, `first_error_judge`, `counterfactual` |
 | LLM (text-only) | `attention`, `logit_lens`, `token_entropy`, `logprob_entropy` |
 
-**`SurveyAgent`** has three verification strategies (first match wins):
+**`SurgeryAgent`** has three verification strategies (first match wins):
 
 1. **Injected `verify_fn`** — full caller control.
 2. **`analyzer_params`** — re-run named analyzers with modified settings; returns before/after findings.
@@ -380,7 +380,7 @@ evalvitals/
 └── eval_agent/                 automated diagnosis + selective-inference loop  ← NEW
     ├── probe.py✓               M1 StrategyProbe: VLM/AGENT/LLM detection + ranked analyzer selection
     ├── diagnosis.py✓           M3 DiagnosisAgent: LLM judge → HYPOTHESIS:/FAILURE_MODE: pairs
-    ├── survey.py✓              M4 SurveyAgent: label correlation / param sweep / verify_fn
+    ├── surgery.py✓              M4 SurgeryAgent: label correlation / param sweep / verify_fn
     ├── loop.py✓                AutoDiagnoseLoop (M1→M4 closed loop) + SelfEvolveLoop (skeleton)
     ├── preregister.py✓         DataSplit (explore/validate/confirm) + PreregisteredHypothesis + log
     ├── ab_runner.py✓           two strategies → stats.compare
@@ -428,3 +428,11 @@ cd examples/logprob_entropy && docker compose up
 cd examples/stats_compare   && docker compose up
 cd examples/eval_agent      && docker compose up
 ```
+Partial 1 - Close-loop
+Partial 2 - self-envolving 
+
+
+1. M1 agent probing tool (agent, VLM, LLM), launch each analyze in the container.
+2. M2 statistical testing (self-envolving agent to provide initial insight).
+3. M3 propose hypothesis.
+4. M4 perform intervention. (self-envolving)

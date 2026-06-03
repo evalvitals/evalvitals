@@ -221,12 +221,12 @@ class MyDiagnosisAgent(DiagnosisAgent):
         )
 ```
 
-## Add a Custom SurveyAgent Intervention
+## Add a Custom SurgeryAgent Intervention
 
-For domain-specific verification, pass `verify_fn` to `SurveyAgent`:
+For domain-specific verification, pass `verify_fn` to `SurgeryAgent`:
 
 ```python
-from evalvitals.eval_agent import SurveyAgent, InterventionResult, HypothesisStatus
+from evalvitals.eval_agent import SurgeryAgent, InterventionResult, HypothesisStatus
 
 def domain_verify(hypothesis, model, results, data):
     # e.g. re-evaluate after patching the prompt template
@@ -242,7 +242,7 @@ from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
 loop = AutoDiagnoseLoop(
     model=my_model,
     diagnosis_agent=DiagnosisAgent(judge=judge),
-    survey_agent=SurveyAgent(verify_fn=domain_verify),
+    surgery_agent=SurgeryAgent(verify_fn=domain_verify),
 )
 ```
 
