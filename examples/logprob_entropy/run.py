@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 from evalvitals.analyzers.uncertainty.logprob_entropy import LogprobEntropyAnalyzer
-from evalvitals.core.case import Case, CaseBatch, Inputs
+from evalvitals.core.case import CaseBatch, FailureCase as Case, Inputs
 
 CONFIG = Path(__file__).parent / "config.yaml"
 

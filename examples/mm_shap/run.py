@@ -38,13 +38,13 @@ from PIL import Image
 
 from evalvitals.analyzers.perturbation.mm_shap import MMShapAnalyzer
 from evalvitals.analyzers.perturbation.vl_shap import VLShapAnalyzer
-from evalvitals.core.case import Case, CaseBatch, Inputs
+from evalvitals.core.case import CaseBatch, FailureCase as Case, Inputs
 
 CONFIG = Path(__file__).parent / "config.yaml"
 
 
 def _build_api_model(model_name: str):
-    """API model with logprobs support (requires OPENAI_API_KEY)."""
+    """API model with logprobs support (requires GEMINI_API_KEY)."""
     import openai
 
     from evalvitals.models.backends.api import APIModel, parse_openai_logprobs

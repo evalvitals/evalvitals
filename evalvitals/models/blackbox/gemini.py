@@ -1,4 +1,4 @@
-"""Gemini API model — black-box GENERATE via Google's generative AI SDK.
+"""Gemini API model — black-box GENERATE via Google's Gen AI SDK.
 
 Install the optional dependency::
 
@@ -33,7 +33,7 @@ class GeminiModel(BlackboxModel):
         api_key:   API key.  Falls back to the ``GEMINI_API_KEY`` environment
                    variable when ``None``.
 
-    Requires ``pip install google-generativeai`` (``evalvitals[gemini]``).
+    Requires ``pip install google-genai`` (``evalvitals[gemini]``).
     """
 
     capabilities = frozenset({Capability.GENERATE})
@@ -51,10 +51,10 @@ class GeminiModel(BlackboxModel):
 
     def generate(self, inputs: Any, **kwargs) -> str:
         try:
-            import google.generativeai as genai
+            from google import genai
         except ImportError as exc:
             raise ImportError(
-                "GeminiModel requires the google-generativeai package. "
+                "GeminiModel requires the google-genai package. "
                 "Install it with: pip install 'evalvitals[gemini]'"
             ) from exc
 
@@ -63,9 +63,11 @@ class GeminiModel(BlackboxModel):
                 "No Gemini API key found. Pass api_key= or set GEMINI_API_KEY."
             )
 
-        genai.configure(api_key=self.api_key)
-        client = genai.GenerativeModel(self.model_id)
-        response = client.generate_content(str(inputs))
+        client = genai.Client(api_key=self.api_key)
+        response = client.models.generate_content(
+            model=self.model_id,
+            contents=str(inputs),
+        )
         return response.text
 
     def forward(self, inputs: Any, capture: set[Capability], spec: Any = None) -> Trace:  # type: ignore[override]

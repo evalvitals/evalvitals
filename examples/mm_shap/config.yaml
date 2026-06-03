@@ -1,5 +1,5 @@
 # MM-SHAP + VL-SHAP Shapley attribution example
-# Requires OPENAI_API_KEY for the logprobs-capable API model.
+# Requires an API endpoint that supports logprobs (e.g. OpenAI). GEMINI_API_KEY\n# via the Google OpenAI-compat endpoint does NOT support logprobs/top_logprobs.
 
 model_name: gpt-4o-mini
 

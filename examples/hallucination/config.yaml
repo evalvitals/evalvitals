@@ -1,5 +1,5 @@
 # Hallucination analysis — POPE + CHAIR
-# Requires an OpenAI-compatible API key (OPENAI_API_KEY env var).
+# Requires GEMINI_API_KEY env var (uses Google's OpenAI-compatible endpoint).
 # Uses GPT-4o-mini by default; swap model_name for any vision-capable endpoint.
 
 model_name: gpt-4o-mini

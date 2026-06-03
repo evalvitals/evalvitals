@@ -13,7 +13,7 @@ Both analyzers require only GENERATE capability, so any API-backed VLM works.
 
 Usage (inside Docker):
     python run.py                         # uses config.yaml
-    python run.py --model gpt-4o-mini
+    python run.py --model gemini-2.0-flash
 
 Expected output:
     [POPE]  accuracy=0.83, f1=0.86, yes_rate=0.50, unparsed=0
@@ -31,7 +31,7 @@ from PIL import Image
 
 from evalvitals.analyzers.hallucination.chair import CHAIRAnalyzer
 from evalvitals.analyzers.hallucination.pope import POPEAnalyzer
-from evalvitals.core.case import Case, CaseBatch, Inputs
+from evalvitals.core.case import CaseBatch, FailureCase as Case, Inputs
 
 CONFIG = Path(__file__).parent / "config.yaml"
 
@@ -43,13 +43,16 @@ COCO_VOCAB_DEMO = [
 
 
 def _build_api_model(model_name: str):
-    """Construct an API model backed by OpenAI (requires OPENAI_API_KEY)."""
+    """Construct an API model backed by Gemini (requires GEMINI_API_KEY)."""
     import openai
 
-    from evalvitals.models.backends.api import APIModel, parse_openai_logprobs
+    from evalvitals.models.backends.api import APIModel
     from evalvitals.models.backends.base import RuntimeConfig
 
-    client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = openai.OpenAI(
+        api_key=os.environ["GEMINI_API_KEY"],
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    )
 
     def generate_fn(prompt, *, model=model_name, image=None, **_):
         content = []
@@ -69,7 +72,7 @@ def _build_api_model(model_name: str):
 
     rt = RuntimeConfig(generate_fn=generate_fn)
     from evalvitals.core.spec import ModelSpec
-    spec = ModelSpec(key=model_name, family="openai", model_type="api")
+    spec = ModelSpec(key=model_name, family="gemini", model_type="api")
     return APIModel(spec, rt)
 
 
