@@ -6,7 +6,7 @@ WORKDIR /app
 # torch is already in the base image — install only the non-torch extras
 # to avoid pip overwriting the CUDA wheel with a CPU one from PyPI.
 COPY . /evalvitals
-RUN pip install --no-cache-dir "transformers>=4.51.0" accelerate sentencepiece tiktoken && \
+RUN pip install --no-cache-dir "transformers>=4.51.0,<5.0.0" accelerate sentencepiece tiktoken && \
     pip install --no-cache-dir --no-deps "/evalvitals"
 
 WORKDIR /app/example
