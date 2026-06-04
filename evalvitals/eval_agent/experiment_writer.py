@@ -1,39 +1,48 @@
-"""ExperimentWriter — LLM or CLI agent writes and executes a diagnostic script.
+"""ExperimentWriter — multi-phase LLM or CLI agent writes diagnostic code.
 
-Mirrors the multi-phase pattern in researchclaw/pipeline/code_agent.py.
+Mirrors the multi-phase CodeAgent from ``researchclaw/pipeline/code_agent.py``,
+adapted for evalvitals's hypothesis-testing context.
 
-Two execution paths selected by ``ExperimentWriterConfig.cli_agent.provider``:
+Six execution phases (LLM path):
 
-LLM path (default, ``provider="llm"``)
-    Phase 1 · Write    LLM generates a self-contained Python script.
-    Phase 2 · Validate AST-parse; flag critical syntax errors.
-    Phase 3 · Exec-fix Run in sandbox; feed stderr back to LLM for repair;
-                        retry up to ``exec_fix_max_iterations`` times.
+Phase 1 · Blueprint    LLM produces a YAML spec with file list, per-file
+                       pseudocode, dependency order, and output contract.
+Phase 2 · Sequential   Generate each file following blueprint order;
+                       each prior file is summarised via AST (CodeMem)
+                       and injected as context for the next.
+Phase 3 · Hard-validate AST-parse all files; critical issues (SyntaxError,
+                       missing main guard, unresolvable cross-file imports)
+                       trigger targeted repair; warnings are logged only.
+Phase 4 · Exec-fix     Run project via ``sandbox.run_project()``.  Feed
+                       stderr back to LLM for targeted single-file repair;
+                       retry up to ``exec_fix_max_iterations`` times.
+Phase 5 · Tree-search  Explore multiple blueprint variants, score by
+                       sandbox metrics, select best  (off by default).
+Phase 6 · Review       Coder-reviewer dialog; revert if run degrades
+                       (off by default, ``review_max_rounds=0``).
 
-CLI agent path (``provider="claude_code"`` / ``"codex"`` / ``"opencode"`` / …)
-    Phase 1 · Write    CLI agent (agentic, has bash/file tools) generates the
-                        script autonomously from ``cases.json`` + ``hypothesis.md``
-                        written to the workdir.  No exec-fix loop — the agent
-                        self-repairs during its own run.
-    Phase 2 · Execute  One ``sandbox.run()`` call to parse metrics + verdict.
+CLI agent path (``provider != "llm"``)
+    The CLI agent writes + self-repairs; we collect ``experiment.py``
+    (or first .py file) and run once via ``sandbox.run_project()``.
+    No exec-fix loop — the agent self-repairs during its own run.
 
-The script must print metrics in ARC-compatible format (parsed by
-:func:`~evalvitals.eval_agent.sandbox.parse_metrics`), plus a final verdict::
-
-    mean_consistency: 0.23
-    n_cases: 3
-    verdict: 1.0          # 1 = hypothesis SUPPORTED, 0 = REFUTED
-
-After the exec-fix loop :class:`ExperimentWriterResult` carries the parsed
-metrics and a ``verdict`` float that :class:`~evalvitals.eval_agent.surgery.SurgeryAgent`
-uses to decide SUPPORTED / REFUTED / INCONCLUSIVE.
+Backward compatibility
+    The public ``write_and_run(hypothesis, model_context, cases_json, sandbox)``
+    signature is unchanged.  With default config the LLM path runs Phase 2
+    (single-pass write) → Phase 3 → Phase 4, identical to the previous 3-phase
+    implementation.  ``result.code`` always equals ``result.files["main.py"]``
+    (or the single-file code) so existing callers are unaffected.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import logging
+import re
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult
@@ -41,19 +50,21 @@ from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.eval_agent.hypothesis import Hypothesis
+    from evalvitals.eval_agent.sandbox import SandboxProtocol
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration  (mirrors CodeAgentConfig)
+# Configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ExperimentWriterConfig:
-    """Toggleable phases and limits for :class:`ExperimentWriter`.
+    """Controls which phases run and their limits.
 
-    All defaults give a good quality/cost balance.  Disable phases to reduce
-    LLM calls; lower ``exec_fix_max_iterations`` to reduce sandbox usage.
+    All new fields default to off / zero so that the existing 3-phase
+    behaviour (write → validate → exec-fix) is preserved by default.
 
     To use a CLI coding agent for M4 instead of the single-pass LLM::
 
@@ -61,43 +72,70 @@ class ExperimentWriterConfig:
         cfg = ExperimentWriterConfig(
             cli_agent=CliAgentConfig(provider="claude_code", model="sonnet"),
         )
+
+    To enable the full multi-phase CodeAgent flow::
+
+        cfg = ExperimentWriterConfig(
+            blueprint_enabled=True,
+            sequential_generation=True,
+            review_max_rounds=1,
+        )
     """
 
-    # Phase 2: AST validation before execution
+    # Phase 1: blueprint planning (LLM outlines file structure first)
+    blueprint_enabled: bool = False
+
+    # Phase 2: sequential file generation following the blueprint
+    sequential_generation: bool = False
+
+    # Phase 3: AST validation + repair
     hard_validation: bool = True
     hard_validation_max_repairs: int = 3
 
-    # Phase 3: exec-fix loop (LLM path only; CLI agents self-repair)
+    # Phase 4: exec-fix loop
     exec_fix_max_iterations: int = 3
     exec_fix_timeout_sec: int = 60
 
-    # CLI agent dispatch — None means "use the LLM path" (backward-compatible default).
-    # Pass CliAgentConfig(provider="claude_code") to route through a CLI agent instead.
+    # Phase 5: solution tree search (off by default — multiplies cost)
+    tree_search_enabled: bool = False
+    tree_search_candidates: int = 3
+    tree_search_max_depth: int = 2
+
+    # Phase 6: review dialog (off by default)
+    review_max_rounds: int = 0
+
+    # CLI agent dispatch — None → LLM path (backward-compatible default)
     cli_agent: Any = None
 
 
 # ---------------------------------------------------------------------------
-# Result  (mirrors CodeAgentResult)
+# Result
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ExperimentWriterResult:
     """Output of :class:`ExperimentWriter.write_and_run`.
 
     Attributes:
-        code:              Final (possibly repaired) script source.
+        code:              ``files["main.py"]`` or the single-file code.
+                           Kept for backward compatibility.
+        files:             Multi-file output dict.  ``{}`` in single-file mode.
+        blueprint:         YAML spec produced in Phase 1; empty if disabled.
         metrics:           ``{name: float}`` parsed from stdout.
         verdict:           ``1.0`` = SUPPORTED, ``0.0`` = REFUTED,
                            ``None`` = no verdict printed (INCONCLUSIVE).
         stdout / stderr:   Raw subprocess output from the last run.
         returncode:        Exit code of the last sandbox run.
         timed_out:         ``True`` when the process was killed.
-        total_llm_calls:   Number of LLM calls made (write + repairs).
+        total_llm_calls:   Number of LLM calls made across all phases.
         total_sandbox_runs: Number of sandbox runs (initial + retries).
         validation_log:    Ordered list of events for debugging.
     """
 
-    code: str
+    code: str = ""
+    files: dict[str, str] = field(default_factory=dict)
+    blueprint: str = ""
     metrics: dict[str, float] = field(default_factory=dict)
     verdict: float | None = None
     stdout: str = ""
@@ -114,8 +152,132 @@ class ExperimentWriterResult:
 
 
 # ---------------------------------------------------------------------------
-# Prompts
+# Solution node (tree search)
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class SolutionNode:
+    """One candidate in the tree-search phase."""
+
+    node_id: str
+    files: dict[str, str]
+    parent_id: str | None = None
+    depth: int = 0
+    runs_ok: bool = False
+    returncode: int = -1
+    evaluated: bool = False
+    stdout: str = ""
+    stderr: str = ""
+    metrics: dict[str, Any] = field(default_factory=dict)
+    score: float = 0.0
+    generation_method: str = "initial"
+
+
+# ---------------------------------------------------------------------------
+# Prompts (single-file write path — phases 2/3/4)
+# ---------------------------------------------------------------------------
+
+_BLUEPRINT_SYSTEM = """\
+You are an expert ML debugging engineer. Plan the structure of a multi-file
+Python diagnostic project that will test a specific hypothesis about a model's
+behaviour.
+
+Output a YAML specification with this structure:
+```yaml
+description: one-line summary
+files:
+  - name: main.py
+    generation_order: 3
+    description: entry point
+    pseudocode: |
+      1. Load model
+      2. Run cases
+      3. Compute metrics
+      4. Print metrics in name: value format
+      5. Print verdict: 1.0 or verdict: 0.0
+    dependencies: [model_probe.py, utils.py]
+  - name: utils.py
+    generation_order: 1
+    description: shared helpers
+    pseudocode: |
+      - helper functions
+    dependencies: []
+output_contract:
+  metrics: [mean_consistency, n_cases]
+  verdict: "1.0 = hypothesis SUPPORTED, 0.0 = REFUTED"
+```
+
+Rules:
+- Generate 2–4 files maximum
+- main.py must be last in generation_order
+- main.py MUST have `if __name__ == "__main__":` block
+- The last printed line of the entire run MUST be `verdict: 1.0` or `verdict: 0.0`
+- Stay under {timeout_sec} seconds total runtime\
+"""
+
+_BLUEPRINT_USER = """\
+## Hypothesis to test
+Statement   : {statement}
+Failure mode: {failure_mode}
+
+## Model setup
+```python
+{import_expr}
+model = {load_expr}
+```
+
+Available capabilities: {capabilities}
+
+## Failure cases (JSON)
+```json
+{cases_json_snippet}
+```
+
+Write the YAML blueprint now:\
+"""
+
+_GENERATE_FILE_SYSTEM = """\
+You are an expert ML debugging engineer. Generate a single Python file
+as part of a multi-file diagnostic experiment project.
+
+Rules:
+- Implement EXACTLY the pseudocode in the file spec
+- Use only the evalvitals APIs shown
+- Output ONLY the Python code — no markdown prose before or after
+- Code must be complete and immediately executable\
+"""
+
+_GENERATE_FILE_USER = """\
+## File to generate: {file_name}
+
+### File spec
+```json
+{file_spec}
+```
+
+### Blueprint (full project)
+```yaml
+{blueprint}
+```
+
+### Dependencies already generated
+{dep_summaries}
+
+{dep_code}
+
+## EvalVitals API reference
+```python
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs
+output: str = model.generate(case.inputs)
+# logprobs (only if 'LOGPROBS' in capabilities)
+lps = model.logprobs(case.inputs)
+# internals (only if 'ATTENTION' or 'HIDDEN_STATES' in capabilities)
+trace = model.forward(case.inputs, capture={{Capability.ATTENTION}})
+```
+
+Write the complete `{file_name}` now (Python code only):\
+"""
 
 _WRITE_SYSTEM = """\
 You are an expert ML debugging engineer. Write a concise, self-contained Python
@@ -132,7 +294,8 @@ RULES:
     verdict: 0.0    # hypothesis is REFUTED
 - Never print anything after the verdict line.
 - Catch exceptions and print error metrics rather than crashing silently.
-- Stay under {timeout_sec} seconds total runtime.\
+- Stay under {timeout_sec} seconds total runtime.
+- The script MUST have `if __name__ == "__main__":` block.\
 """
 
 _WRITE_USER = """\
@@ -147,6 +310,8 @@ model = {load_expr}
 ```
 
 Available capabilities: {capabilities}
+
+{blueprint_context}
 
 ## EvalVitals API reference
 ```python
@@ -199,10 +364,21 @@ _REPAIR_USER = """\
 ```\
 """
 
+_REVIEW_SYSTEM = """\
+You are a senior code reviewer. Review this diagnostic experiment code and
+return a JSON object with:
+  - "verdict": "APPROVE" or "REQUEST_CHANGES"
+  - "score": integer 1-10
+  - "critical_issues": list of strings (empty if APPROVE)
+
+Focus on: correctness of hypothesis testing logic, metric computation,
+verdict output format, and error handling.  Do NOT flag style issues.\
+"""
 
 # ---------------------------------------------------------------------------
-# Helper: build model context from a live model object
+# Model context helper
 # ---------------------------------------------------------------------------
+
 
 def build_model_context(model: "Model") -> dict[str, Any]:
     """Extract the information needed to reconstruct *model* inside a subprocess.
@@ -214,7 +390,6 @@ def build_model_context(model: "Model") -> dict[str, Any]:
     """
     caps = sorted(str(c.name) for c in getattr(model, "capabilities", frozenset()))
 
-    # Curated spec path (HFLocalModel, APIModel loaded via evalvitals.load)
     spec = getattr(model, "spec", None)
     if spec is not None and getattr(spec, "key", None):
         return {
@@ -223,7 +398,6 @@ def build_model_context(model: "Model") -> dict[str, Any]:
             "capabilities": caps,
         }
 
-    # GeminiModel (black-box, re-instantiates from env var)
     if type(model).__name__ == "GeminiModel":
         model_id = getattr(model, "model_id", "gemini-2.5-flash")
         return {
@@ -232,7 +406,6 @@ def build_model_context(model: "Model") -> dict[str, Any]:
             "capabilities": caps,
         }
 
-    # Generic APIModel — use generate_fn pattern (no easy reconstruction)
     return {
         "import_expr": "import evalvitals",
         "load_expr": f"# WARNING: cannot reconstruct {type(model).__name__!r} automatically",
@@ -244,26 +417,26 @@ def build_model_context(model: "Model") -> dict[str, Any]:
 # ExperimentWriter
 # ---------------------------------------------------------------------------
 
+
 class ExperimentWriter:
-    """LLM or CLI agent writes and executes a targeted diagnostic script.
+    """Multi-phase LLM or CLI agent that writes and executes diagnostic code.
 
-    Mirrors ``researchclaw.pipeline.code_agent.CodeAgent``.
+    When ``config.cli_agent`` is None or has ``provider="llm"`` (default):
+        Phase 1 — Blueprint planning (optional, ``blueprint_enabled=True``)
+        Phase 2 — Sequential file generation  (optional, ``sequential_generation=True``)
+                  or single-pass write (default)
+        Phase 3 — Hard validation + targeted repair
+        Phase 4 — Exec-fix loop: run → stderr → targeted file repair → retry
+        Phase 5 — Tree search (optional, ``tree_search_enabled=True``)
+        Phase 6 — Reviewer dialog (optional, ``review_max_rounds > 0``)
 
-    When ``config.cli_agent`` is ``None`` or has ``provider="llm"`` (default):
-        Phase 1 — LLM writes the script (``_phase1_write``).
-        Phase 2 — AST validation + repair (``_hard_validate_and_repair``).
-        Phase 3 — exec-fix loop: run → stderr → LLM repair → retry.
-
-    When ``config.cli_agent.provider`` is a CLI provider (e.g. ``"claude_code"``):
-        Phase 1 — CLI agent writes ``experiment.py`` in the workdir autonomously.
-        Phase 2 — One ``sandbox.run()`` to parse metrics + verdict (no exec-fix
-                   loop; the agent self-repairs during its own run).
+    When ``config.cli_agent.provider`` is a CLI provider:
+        Phase 1 — CLI agent writes ``experiment.py`` autonomously
+        Phase 2 — One ``sandbox.run_project()`` to collect metrics (no loop)
 
     Args:
-        judge:    Any :class:`~evalvitals.core.model.Model` with
-                  ``Capability.GENERATE``.  Used on the LLM path; ignored on
-                  the CLI path (the CLI agent uses its own model).
-        config:   :class:`ExperimentWriterConfig` controlling phases and limits.
+        judge:  Any :class:`~evalvitals.core.model.Model` with ``Capability.GENERATE``.
+        config: :class:`ExperimentWriterConfig` controlling phases and limits.
     """
 
     def __init__(
@@ -276,6 +449,8 @@ class ExperimentWriter:
         self._calls = 0
         self._runs = 0
         self._log: list[str] = []
+        # Lazily created write workdir for multi-file output
+        self._workdir: Path | None = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -286,15 +461,15 @@ class ExperimentWriter:
         hypothesis: "Hypothesis",
         model_context: dict[str, Any],
         cases_json: str,
-        sandbox: ExperimentSandbox,
+        sandbox: "ExperimentSandbox | SandboxProtocol",
     ) -> ExperimentWriterResult:
-        """Generate, validate, and execute a diagnostic script.
+        """Generate, validate, and execute a diagnostic experiment.
 
         Args:
             hypothesis:    The claim to test.
             model_context: Output of :func:`build_model_context`.
-            cases_json:    JSON-serialised failure cases for the script.
-            sandbox:       :class:`ExperimentSandbox` used for execution.
+            cases_json:    JSON-serialised failure cases.
+            sandbox:       Sandbox used for execution.
 
         Returns:
             :class:`ExperimentWriterResult` with metrics and verdict.
@@ -304,7 +479,7 @@ class ExperimentWriter:
         self._log = []
         self._log_event("ExperimentWriter.write_and_run() started")
 
-        # ── CLI agent dispatch ──────────────────────────────────────────────
+        # CLI agent dispatch (unchanged from previous implementation)
         cli_cfg = self._cfg.cli_agent
         if cli_cfg is None:
             from evalvitals.eval_agent.cli_agent import CliAgentConfig
@@ -314,33 +489,79 @@ class ExperimentWriter:
                 hypothesis, model_context, cases_json, sandbox, cli_cfg
             )
 
-        # ── LLM path (unchanged below) ─────────────────────────────────────
-        # Phase 1: write
-        code = self._phase1_write(hypothesis, model_context, cases_json)
-        if not code.strip():
-            self._log_event("Phase 1 produced empty script — aborting")
-            return ExperimentWriterResult(
-                code="",
-                validation_log=list(self._log),
-                total_llm_calls=self._calls,
-                total_sandbox_runs=self._runs,
+        # LLM path: Phase 1 — blueprint
+        blueprint_yaml = ""
+        blueprint_dict: dict[str, Any] | None = None
+        if self._cfg.blueprint_enabled:
+            blueprint_yaml, blueprint_dict = self._phase1_blueprint(
+                hypothesis, model_context, cases_json
             )
 
-        # Phase 2: hard validation (AST)
-        if self._cfg.hard_validation:
-            code = self._hard_validate_and_repair(code, hypothesis, model_context, cases_json)
+        # Phase 2 — code generation (sequential or single-pass)
+        files: dict[str, str] = {}
+        if (
+            self._cfg.sequential_generation
+            and blueprint_dict is not None
+            and self._is_valid_blueprint(blueprint_dict)
+        ):
+            files = self._phase2_sequential(
+                hypothesis, model_context, cases_json, blueprint_yaml, blueprint_dict
+            )
+        else:
+            if self._cfg.sequential_generation and blueprint_dict is None:
+                self._log_event(
+                    "  Sequential generation requested but blueprint invalid — "
+                    "falling back to single-pass write"
+                )
+            code = self._phase2_write(hypothesis, model_context, cases_json, blueprint_yaml)
+            if not code.strip():
+                self._log_event("Phase 2 produced empty script — aborting")
+                return ExperimentWriterResult(
+                    blueprint=blueprint_yaml,
+                    validation_log=list(self._log),
+                    total_llm_calls=self._calls,
+                    total_sandbox_runs=self._runs,
+                )
+            files = {"main.py": code}
 
-        # Phase 3: exec-fix loop
-        code, last_result = self._exec_fix_loop(code, sandbox, hypothesis, model_context, cases_json)
+        # Phase 3 — hard validation
+        if self._cfg.hard_validation and files:
+            files = self._phase3_hard_validate(files, hypothesis, model_context, cases_json)
 
+        # Phase 4 — exec-fix loop (tree search or plain)
+        last_result: SandboxResult
+        best_files = files
+        nodes_explored = 0
+
+        if self._cfg.tree_search_enabled:
+            best_node, nodes_explored = self._phase5_tree_search(
+                files, sandbox, hypothesis, model_context, cases_json
+            )
+            best_files = best_node.files
+            last_result = self._run_files(best_files, sandbox)
+        else:
+            best_files, last_result = self._phase4_exec_fix(files, sandbox, hypothesis)
+
+        # Phase 6 — review dialog
+        review_rounds = 0
+        if self._cfg.review_max_rounds > 0 and last_result.ok:
+            best_files, last_result, review_rounds = self._phase6_review(
+                best_files, last_result, sandbox
+            )
+
+        # Build result
+        main_code = best_files.get("main.py") or (next(iter(best_files.values())) if best_files else "")
         verdict = last_result.metrics.get("verdict")
+
         self._log_event(
             f"write_and_run() done — {self._calls} LLM calls, "
             f"{self._runs} sandbox runs, verdict={verdict}"
         )
 
         return ExperimentWriterResult(
-            code=code,
+            code=main_code,
+            files=best_files,
+            blueprint=blueprint_yaml,
             metrics=last_result.metrics,
             verdict=verdict,
             stdout=last_result.stdout,
@@ -353,7 +574,763 @@ class ExperimentWriter:
         )
 
     # ------------------------------------------------------------------
-    # CLI agent path  (phases 1+2 combined)
+    # Phase 1: Blueprint planning
+    # ------------------------------------------------------------------
+
+    def _phase1_blueprint(
+        self,
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        cases_json: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Generate YAML blueprint; return (raw_yaml, parsed_dict_or_None)."""
+        self._log_event("Phase 1: Blueprint planning")
+        system = _BLUEPRINT_SYSTEM.format(timeout_sec=self._cfg.exec_fix_timeout_sec)
+        user = _BLUEPRINT_USER.format(
+            statement=hypothesis.statement,
+            failure_mode=hypothesis.predicted_failure_mode,
+            import_expr=model_context.get("import_expr", "import evalvitals"),
+            load_expr=model_context.get("load_expr", "# model"),
+            capabilities=", ".join(model_context.get("capabilities", [])) or "GENERATE",
+            cases_json_snippet=cases_json[:1500],
+        )
+        raw = self._llm_call(system, user)
+        # Extract YAML block
+        m = re.search(r"```ya?ml\s*\n(.*?)```", raw, re.DOTALL)
+        blueprint_yaml = m.group(1).strip() if m else raw.strip()
+        self._log_event(f"  Blueprint spec: {len(blueprint_yaml)} chars")
+
+        blueprint_dict = self._parse_blueprint(blueprint_yaml)
+        if blueprint_dict:
+            n_files = len(blueprint_dict.get("files", []))
+            self._log_event(f"  Parsed blueprint: {n_files} files")
+        else:
+            self._log_event("  WARNING: Could not parse blueprint YAML")
+        return blueprint_yaml, blueprint_dict
+
+    def _parse_blueprint(self, yaml_text: str) -> dict[str, Any] | None:
+        """Parse blueprint YAML, sanitising Python type annotations first (BUG-178)."""
+        try:
+            import yaml  # type: ignore[import]
+        except ImportError:
+            self._log_event("  pyyaml not available — blueprint parsing skipped")
+            return None
+
+        sanitized_lines = []
+        for line in yaml_text.split("\n"):
+            stripped = line.lstrip()
+            if not stripped or stripped.startswith("#"):
+                sanitized_lines.append(line)
+                continue
+            if stripped.startswith(("- ", "---", "...")):
+                if stripped.startswith("- ") and ":" in stripped[2:]:
+                    inner = stripped[2:]
+                else:
+                    sanitized_lines.append(line)
+                    continue
+            elif ":" in stripped:
+                inner = stripped
+            else:
+                sanitized_lines.append(line)
+                continue
+
+            m = re.search(r":\s", inner)
+            if not m:
+                sanitized_lines.append(line)
+                continue
+            val_part = inner[m.end():].strip()
+            if not val_part:
+                sanitized_lines.append(line)
+                continue
+            if val_part.startswith(("'", "|", ">")):
+                sanitized_lines.append(line)
+                continue
+            needs_quoting = False
+            if val_part.startswith('"'):
+                if not val_part.endswith('"') or val_part.count('"') % 2 != 0:
+                    needs_quoting = True
+                else:
+                    sanitized_lines.append(line)
+                    continue
+            elif ":" in val_part or "->" in val_part:
+                needs_quoting = True
+
+            if needs_quoting:
+                clean = val_part.strip('"').replace('"', '\\"')
+                comment_idx = clean.find("  #")
+                if comment_idx >= 0:
+                    clean = clean[:comment_idx].rstrip()
+                indent = line[:len(line) - len(stripped)]
+                prefix = stripped[:len(stripped) - len(inner)]
+                key_sep = inner[:m.end()]
+                sanitized_lines.append(f'{indent}{prefix}{key_sep}"{clean}"')
+            else:
+                sanitized_lines.append(line)
+
+        sanitized = "\n".join(sanitized_lines)
+        for attempt_text in (sanitized, yaml_text):
+            try:
+                data = yaml.safe_load(attempt_text)
+                if isinstance(data, dict) and "files" in data:
+                    return data
+            except Exception as exc:
+                self._log_event(f"  Blueprint YAML parse error: {exc}")
+        return None
+
+    @staticmethod
+    def _is_valid_blueprint(blueprint: dict[str, Any]) -> bool:
+        files = blueprint.get("files", [])
+        if not files or not isinstance(files, list):
+            return False
+        has_order = sum(
+            1 for f in files if isinstance(f, dict) and "generation_order" in f
+        )
+        return has_order >= 2
+
+    # ------------------------------------------------------------------
+    # Phase 2a: Sequential file generation
+    # ------------------------------------------------------------------
+
+    def _phase2_sequential(
+        self,
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        cases_json: str,
+        blueprint_yaml: str,
+        blueprint: dict[str, Any],
+    ) -> dict[str, str]:
+        """Generate files one-by-one following blueprint dependency order."""
+        self._log_event("Phase 2: Sequential generation (blueprint-guided)")
+
+        generated: dict[str, str] = {}
+        code_memory: dict[str, dict[str, Any]] = {}
+
+        file_specs = [f for f in blueprint.get("files", []) if isinstance(f, dict)]
+        for i, fs in enumerate(file_specs):
+            if "generation_order" not in fs:
+                fs["generation_order"] = i + 1
+        file_specs.sort(key=lambda f: f.get("generation_order", 99))
+
+        for file_spec in file_specs:
+            file_name = file_spec.get("name", "")
+            if not file_name:
+                continue
+            self._log_event(
+                f"  Generating {file_name} (order={file_spec.get('generation_order')})"
+            )
+
+            deps = file_spec.get("dependencies", [])
+            dep_summaries = ""
+            dep_code = ""
+            for dep in deps:
+                if isinstance(dep, str):
+                    if dep in code_memory:
+                        dep_summaries += (
+                            f"\n### {dep} (summary)\n"
+                            + json.dumps(code_memory[dep], indent=2)
+                            + "\n"
+                        )
+                    if dep in generated:
+                        dep_code += (
+                            f"\n### {dep}\n```python\n{generated[dep]}\n```\n"
+                        )
+            dep_summaries = dep_summaries or "(no dependencies yet)"
+            dep_code = dep_code or "(no dependencies yet)"
+
+            system = _GENERATE_FILE_SYSTEM
+            user = _GENERATE_FILE_USER.format(
+                file_name=file_name,
+                file_spec=json.dumps(file_spec, indent=2, default=str),
+                blueprint=blueprint_yaml[:3000],
+                dep_summaries=dep_summaries,
+                dep_code=dep_code,
+            )
+            raw = self._llm_call(system, user)
+            code = self._extract_single_file_code(raw, file_name)
+            if not code:
+                self._log_event(f"  WARNING: Empty code for {file_name}")
+                continue
+
+            generated[file_name] = code
+            code_memory[file_name] = self._build_code_summary(file_name, code)
+            self._log_event(
+                f"  {file_name}: {len(code.splitlines())} lines, "
+                f"{len(code_memory[file_name].get('classes', []))} classes"
+            )
+
+        if "main.py" not in generated and generated:
+            first_key = next(iter(generated))
+            self._log_event(
+                f"  WARNING: No main.py generated — promoting '{first_key}'"
+            )
+            generated["main.py"] = generated.pop(first_key)
+
+        self._log_event(f"  Sequential generation complete: {len(generated)} files")
+        return generated
+
+    # ------------------------------------------------------------------
+    # Phase 2b: Single-pass write (default path)
+    # ------------------------------------------------------------------
+
+    def _phase2_write(
+        self,
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        cases_json: str,
+        blueprint_yaml: str = "",
+    ) -> str:
+        self._log_event("Phase 2: Writing diagnostic script")
+        blueprint_context = (
+            f"## Blueprint (follow this structure)\n```yaml\n{blueprint_yaml}\n```\n"
+            if blueprint_yaml else ""
+        )
+        system = _WRITE_SYSTEM.format(timeout_sec=self._cfg.exec_fix_timeout_sec)
+        user = _WRITE_USER.format(
+            statement=hypothesis.statement,
+            failure_mode=hypothesis.predicted_failure_mode,
+            import_expr=model_context.get("import_expr", "import evalvitals"),
+            load_expr=model_context.get("load_expr", "# model"),
+            capabilities=", ".join(model_context.get("capabilities", [])) or "GENERATE",
+            blueprint_context=blueprint_context,
+            cases_json=cases_json,
+        )
+        raw = self._llm_call(system, user)
+        code = self._extract_code_block(raw)
+        self._log_event(f"  Script: {len(code)} chars")
+        return code
+
+    # ------------------------------------------------------------------
+    # Phase 3: Hard validation
+    # ------------------------------------------------------------------
+
+    def _phase3_hard_validate(
+        self,
+        files: dict[str, str],
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        cases_json: str,
+    ) -> dict[str, str]:
+        """AST-based validation; repair critical issues; log warnings."""
+        self._log_event("Phase 3: Hard validation")
+
+        for attempt in range(self._cfg.hard_validation_max_repairs + 1):
+            critical, warnings = self._hard_validate(files)
+
+            for w in warnings:
+                self._log_event(f"  WARNING: {w}")
+
+            if not critical:
+                self._log_event(
+                    f"  Hard validation passed ({len(warnings)} warning(s), "
+                    f"attempt {attempt})"
+                )
+                return files
+
+            self._log_event(
+                f"  {len(critical)} CRITICAL issue(s) "
+                f"(attempt {attempt}/{self._cfg.hard_validation_max_repairs})"
+            )
+            for c in critical:
+                self._log_event(f"  CRITICAL: {c}")
+
+            if attempt >= self._cfg.hard_validation_max_repairs:
+                self._log_event("  Max repairs reached — proceeding with warnings")
+                return files
+
+            files = self._repair_critical_issues(files, critical)
+
+        return files
+
+    def _hard_validate(
+        self, files: dict[str, str]
+    ) -> tuple[list[str], list[str]]:
+        """Return (critical_issues, warnings)."""
+        critical: list[str] = []
+        warnings: list[str] = []
+
+        # 1. Syntax errors — always critical
+        for fname, code in files.items():
+            if not fname.endswith(".py"):
+                continue
+            try:
+                ast.parse(code)
+            except SyntaxError as exc:
+                critical.append(
+                    f"[{fname}] SyntaxError at line {exc.lineno}: {exc.msg}"
+                )
+
+        # 2. main.py MUST have `if __name__ == "__main__":` block (BUG-R41-04)
+        main_code = files.get("main.py", "")
+        if main_code:
+            try:
+                main_tree = ast.parse(main_code)
+                has_main_guard = any(
+                    isinstance(node, ast.If)
+                    and isinstance(node.test, ast.Compare)
+                    and isinstance(node.test.left, ast.Name)
+                    and node.test.left.id == "__name__"
+                    and len(node.test.comparators) == 1
+                    and isinstance(node.test.comparators[0], ast.Constant)
+                    and node.test.comparators[0].value == "__main__"
+                    for node in ast.walk(main_tree)
+                )
+                if not has_main_guard:
+                    critical.append(
+                        '[main.py] Missing `if __name__ == "__main__":` block — '
+                        "script will define functions/classes but never execute. "
+                        "Add a main guard that calls the experiment entry point."
+                    )
+            except SyntaxError:
+                pass  # already caught above
+
+        # 3. verdict line must be reachable in main.py (warning only)
+        if main_code and "verdict:" not in main_code:
+            warnings.append(
+                "[main.py] No 'verdict:' output found — "
+                "the script must print 'verdict: 1.0' or 'verdict: 0.0'"
+            )
+
+        # 4. Cross-file import consistency
+        known_modules = {
+            fname.replace(".py", "")
+            for fname in files
+            if fname.endswith(".py")
+        }
+        for fname, code in files.items():
+            if not fname.endswith(".py"):
+                continue
+            try:
+                tree = ast.parse(code)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    mod_top = node.module.split(".")[0]
+                    if mod_top in known_modules:
+                        target_file = f"{mod_top}.py"
+                        if target_file in files and node.names:
+                            try:
+                                target_tree = ast.parse(files[target_file])
+                            except SyntaxError:
+                                continue
+                            exported = {
+                                n.name
+                                for n in ast.walk(target_tree)
+                                if isinstance(n, (ast.ClassDef, ast.FunctionDef))
+                            }
+                            for alias in node.names:
+                                name = alias.name
+                                if name != "*" and name not in exported:
+                                    critical.append(
+                                        f"[{fname}] ImportError: '{name}' not "
+                                        f"defined in '{target_file}' — will crash"
+                                    )
+
+        return critical, warnings
+
+    def _repair_critical_issues(
+        self,
+        files: dict[str, str],
+        critical_issues: list[str],
+    ) -> dict[str, str]:
+        """Ask LLM to fix critical validation issues."""
+        self._log_event("  Targeted repair for critical issues")
+
+        affected: set[str] = set()
+        for issue in critical_issues:
+            m = re.match(r"\[([^\]]+\.py)\]", issue)
+            if m:
+                affected.add(m.group(1))
+            else:
+                affected.update(f for f in files if f.endswith(".py"))
+        if not affected:
+            affected.update(f for f in files if f.endswith(".py"))
+
+        files_ctx = self._format_files(files)
+        issues_text = "\n".join(f"- {issue}" for issue in critical_issues)
+
+        prompt = (
+            "Your code has CRITICAL issues that will cause runtime failures. "
+            "Fix ALL of them.\n\n"
+            f"## Critical Issues\n{issues_text}\n\n"
+            f"## Current Code\n{files_ctx}\n\n"
+            "## Rules\n"
+            "1. Fix every critical issue listed\n"
+            "2. main.py MUST have `if __name__ == \"__main__\":` block\n"
+            "3. The last printed line MUST be `verdict: 1.0` or `verdict: 0.0`\n"
+            "4. Output ALL files in ```filename:xxx.py``` format\n"
+        )
+        raw = self._llm_call(
+            "You are an expert Python debugging engineer. Fix the code issues listed.",
+            prompt,
+        )
+        fixed = self._extract_files(raw)
+        if fixed:
+            merged = dict(files)
+            merged.update(fixed)
+            self._log_event(f"  Repair updated {len(fixed)} file(s): {', '.join(sorted(fixed))}")
+            return merged
+        # Fall back to single-file repair if multi-file extraction failed
+        if "main.py" in files:
+            single = self._extract_code_block(raw)
+            if single.strip():
+                result = dict(files)
+                result["main.py"] = single
+                self._log_event("  Repair updated main.py (single-file fallback)")
+                return result
+        self._log_event("  WARNING: Repair produced no extractable files")
+        return files
+
+    # ------------------------------------------------------------------
+    # Phase 4: Exec-fix loop
+    # ------------------------------------------------------------------
+
+    def _phase4_exec_fix(
+        self,
+        files: dict[str, str],
+        sandbox: Any,
+        hypothesis: "Hypothesis",
+    ) -> tuple[dict[str, str], SandboxResult]:
+        """Run → fix → retry loop using targeted file repair."""
+        last_result: SandboxResult | None = None
+
+        for i in range(self._cfg.exec_fix_max_iterations):
+            result = self._run_files(files, sandbox)
+            last_result = result
+
+            if result.ok:
+                self._log_event(f"  Exec-fix iter {i}: OK ({result.elapsed_sec:.1f}s)")
+                break
+
+            if result.timed_out:
+                self._log_event(f"  Exec-fix iter {i}: TIMEOUT — no further repair")
+                break
+
+            self._log_event(
+                f"  Exec-fix iter {i}: crashed (rc={result.returncode}), "
+                f"stderr={len(result.stderr)} chars"
+            )
+            if i < self._cfg.exec_fix_max_iterations - 1:
+                files = self._fix_runtime_error(files, result)
+
+        if last_result is None:
+            last_result = SandboxResult(
+                returncode=-1, stdout="", stderr="no runs performed", elapsed_sec=0.0
+            )
+
+        return files, last_result
+
+    def _fix_runtime_error(
+        self, files: dict[str, str], result: SandboxResult
+    ) -> dict[str, str]:
+        """Targeted or full-file repair after a sandbox crash (E-05 pattern)."""
+        stderr_tail = result.stderr[-3000:]
+        error_loc = self._parse_error_location(stderr_tail, files)
+
+        if error_loc:
+            fname, lineno, error_msg = error_loc
+            self._log_event(f"  Targeted repair: {fname}:{lineno} — {error_msg[:80]}")
+            fixed = self._targeted_file_repair(files, fname, lineno, error_msg, stderr_tail)
+            if fixed:
+                return fixed
+
+        # Fallback: full-file repair (single-file or multi-file)
+        if len(files) == 1:
+            code = next(iter(files.values()))
+            repaired = self._llm_call(
+                _REPAIR_SYSTEM,
+                _REPAIR_USER.format(error=stderr_tail[-2000:], code=code),
+            )
+            repaired_code = self._extract_code_block(repaired)
+            if repaired_code.strip():
+                fname = next(iter(files))
+                return {fname: repaired_code}
+        else:
+            files_ctx = self._format_files(files)
+            prompt = (
+                f"## Error\n```\n{stderr_tail}\n```\n\n"
+                f"## Code\n{files_ctx}\n\n"
+                "Fix the error. Output ALL files in ```filename:xxx.py``` format."
+            )
+            raw = self._llm_call(
+                "You are a Python debugging expert. Fix the runtime error.", prompt
+            )
+            fixed = self._extract_files(raw)
+            if fixed:
+                merged = dict(files)
+                merged.update(fixed)
+                return merged
+
+        return files
+
+    @staticmethod
+    def _parse_error_location(
+        stderr: str, files: dict[str, str]
+    ) -> tuple[str, int, str] | None:
+        """Parse Python traceback to find (filename, line_number, error_message)."""
+        known_files = set(files.keys())
+        tb_pattern = re.compile(r'File "(?:[^"]*[/\\])?([^"]+\.py)", line (\d+)')
+        matches = list(tb_pattern.finditer(stderr))
+        if not matches:
+            return None
+        for m in reversed(matches):
+            fname = m.group(1)
+            lineno = int(m.group(2))
+            if fname in known_files:
+                lines = stderr.strip().split("\n")
+                error_msg = lines[-1] if lines else "Unknown error"
+                return fname, lineno, error_msg
+        return None
+
+    def _targeted_file_repair(
+        self,
+        files: dict[str, str],
+        target_file: str,
+        error_line: int,
+        error_msg: str,
+        full_stderr: str,
+    ) -> dict[str, str] | None:
+        """Repair a single file with a ±30-line context window around the error."""
+        if target_file not in files:
+            return None
+        code = files[target_file]
+        code_lines = code.split("\n")
+        total_lines = len(code_lines)
+        window = 30
+        start = max(0, error_line - window - 1)
+        end = min(total_lines, error_line + window)
+        numbered = "\n".join(
+            f"{start + i + 1:4d} | {line}"
+            for i, line in enumerate(code_lines[start:end])
+        )
+
+        dep_summaries = ""
+        for fname, fcode in files.items():
+            if fname != target_file and fname.endswith(".py"):
+                summary = self._build_code_summary(fname, fcode)
+                dep_summaries += (
+                    f"\n### {fname}: "
+                    f"{len(summary.get('classes', []))} classes, "
+                    f"{len(summary.get('functions', []))} functions\n"
+                )
+                for cls in summary.get("classes", []):
+                    methods = ", ".join(m["name"] for m in cls.get("methods", []))
+                    dep_summaries += (
+                        f"  class {cls['name']}"
+                        f"({', '.join(cls.get('bases', []))}): [{methods}]\n"
+                    )
+
+        prompt = (
+            f"Fix the runtime error in `{target_file}` at line {error_line}.\n\n"
+            f"## Error\n```\n{error_msg}\n```\n\n"
+            f"## Traceback (last 1500 chars)\n```\n{full_stderr[-1500:]}\n```\n\n"
+            f"## {target_file} (lines {start + 1}-{end})\n"
+            f"```python\n{numbered}\n```\n\n"
+            f"## Other files\n{dep_summaries}\n\n"
+            f"## Full {target_file} ({total_lines} lines)\n"
+            f"```python\n{code}\n```\n\n"
+            f"Output the COMPLETE fixed `{target_file}` in "
+            f"```filename:{target_file}``` format."
+        )
+        raw = self._llm_call(
+            "You are a debugging expert. Fix the specific runtime error shown. "
+            "Output the COMPLETE fixed file.",
+            prompt,
+        )
+        fixed = self._extract_files(raw)
+        if not fixed:
+            m = re.search(r"```(?:python|filename:\S+)\s*\n(.*?)```", raw, re.DOTALL)
+            if m:
+                fixed = {target_file: m.group(1).strip()}
+
+        if fixed and target_file in fixed:
+            merged = dict(files)
+            merged.update(fixed)
+            self._log_event(
+                f"  Targeted repair applied to {target_file} "
+                f"({len(fixed[target_file].splitlines())} lines)"
+            )
+            return merged
+        return None
+
+    # ------------------------------------------------------------------
+    # Phase 5: Tree search (optional)
+    # ------------------------------------------------------------------
+
+    def _phase5_tree_search(
+        self,
+        initial_files: dict[str, str],
+        sandbox: Any,
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        cases_json: str,
+    ) -> tuple[SolutionNode, int]:
+        """Explore multiple candidates; return best node and count explored."""
+        self._log_event("Phase 5: Tree search")
+        all_nodes: list[SolutionNode] = []
+
+        # Generate initial candidates from blueprint variants
+        n_cand = max(self._cfg.tree_search_candidates, 1)
+        for k in range(n_cand):
+            self._log_event(f"  Generating candidate {k + 1}/{n_cand}")
+            if k == 0:
+                cand_files = initial_files
+            else:
+                # Re-generate with slight variation
+                code = self._phase2_write(hypothesis, model_context, cases_json)
+                cand_files = {"main.py": code} if code.strip() else initial_files
+            node = SolutionNode(
+                node_id=f"gen-{k}",
+                files=cand_files,
+                depth=0,
+                generation_method="initial",
+            )
+            all_nodes.append(node)
+
+        # Evaluate-fix-branch loop
+        for depth in range(self._cfg.tree_search_max_depth):
+            for node in all_nodes:
+                if not node.evaluated:
+                    self._evaluate_node(node, sandbox)
+
+            all_nodes.sort(key=lambda n: n.score, reverse=True)
+            self._log_event(
+                f"  Depth {depth}: {len(all_nodes)} nodes, "
+                f"best={all_nodes[0].node_id} score={all_nodes[0].score:.2f}"
+            )
+
+            if all_nodes[0].runs_ok:
+                break
+
+            new_nodes: list[SolutionNode] = []
+            for node in all_nodes[:2]:
+                if not node.runs_ok:
+                    fixed = self._fix_runtime_error(
+                        node.files,
+                        SandboxResult(
+                            returncode=node.returncode,
+                            stdout=node.stdout,
+                            stderr=node.stderr,
+                            elapsed_sec=0.0,
+                        ),
+                    )
+                    new_nodes.append(SolutionNode(
+                        node_id=f"{node.node_id}-fix{depth}",
+                        files=fixed,
+                        parent_id=node.node_id,
+                        depth=depth + 1,
+                        generation_method="fix",
+                    ))
+            all_nodes.extend(new_nodes)
+
+        # Final evaluation
+        for node in all_nodes:
+            if not node.evaluated:
+                self._evaluate_node(node, sandbox)
+
+        all_nodes.sort(key=lambda n: n.score, reverse=True)
+        best = all_nodes[0]
+        self._log_event(
+            f"  Tree search complete: best={best.node_id} "
+            f"score={best.score:.2f}, explored {len(all_nodes)} nodes"
+        )
+        return best, len(all_nodes)
+
+    def _evaluate_node(self, node: SolutionNode, sandbox: Any) -> None:
+        result = self._run_files(node.files, sandbox)
+        node.evaluated = True
+        node.returncode = result.returncode
+        node.stdout = result.stdout
+        node.stderr = result.stderr
+        node.runs_ok = result.ok
+        node.metrics = dict(result.metrics)
+        node.score = self._score_node(node)
+
+    @staticmethod
+    def _score_node(node: SolutionNode) -> float:
+        score = 0.0
+        if node.runs_ok:
+            score += 1.0
+        if node.stdout and len(node.stdout) > 100:
+            score += 0.3
+        if node.metrics:
+            score += 0.5
+            if "verdict" in node.metrics:
+                score += 0.5
+        if node.stderr and "Error" in node.stderr:
+            score -= 0.2
+        return max(score, 0.0)
+
+    # ------------------------------------------------------------------
+    # Phase 6: Review dialog (optional)
+    # ------------------------------------------------------------------
+
+    def _phase6_review(
+        self,
+        files: dict[str, str],
+        last_result: SandboxResult,
+        sandbox: Any,
+    ) -> tuple[dict[str, str], SandboxResult, int]:
+        """Coder-reviewer dialog; revert if re-run degrades."""
+        self._log_event("Phase 6: Review dialog")
+        rounds = 0
+
+        for r in range(self._cfg.review_max_rounds):
+            rounds += 1
+            files_ctx = self._format_files(files)
+            raw = self._llm_call(
+                _REVIEW_SYSTEM,
+                f"## Experiment Code\n{files_ctx}\n\nReturn JSON only.",
+            )
+            review = self._parse_json(raw)
+            if not isinstance(review, dict):
+                self._log_event(f"  Review round {r + 1}: could not parse JSON, skipping")
+                break
+
+            verdict = review.get("verdict", "APPROVE")
+            score = review.get("score", 10)
+            critical = review.get("critical_issues", [])
+            self._log_event(
+                f"  Review round {r + 1}: verdict={verdict}, score={score}, "
+                f"critical={len(critical)}"
+            )
+
+            if verdict == "APPROVE" or not critical:
+                break
+
+            fix_prompt = (
+                "A reviewer found critical issues. Fix ALL of them while "
+                "preserving hypothesis testing logic.\n\n"
+                "## Critical Issues\n"
+                + "\n".join(f"- {issue}" for issue in critical)
+                + f"\n\n## Current Code\n{files_ctx}\n\n"
+                "Output ALL files in ```filename:xxx.py``` format."
+            )
+            fix_raw = self._llm_call(
+                "You are an expert Python engineer. Fix the critical issues listed.",
+                fix_prompt,
+            )
+            fixed = self._extract_files(fix_raw)
+            if not fixed:
+                break
+
+            candidate = dict(files)
+            candidate.update(fixed)
+            new_result = self._run_files(candidate, sandbox)
+            if new_result.ok and new_result.returncode == 0:
+                files = candidate
+                last_result = new_result
+                self._log_event(f"  Review fixes applied and verified")
+            else:
+                self._log_event(
+                    f"  Review fixes degraded the run (rc={new_result.returncode}) — reverting"
+                )
+                break
+
+        return files, last_result, rounds
+
+    # ------------------------------------------------------------------
+    # CLI agent path (unchanged from previous implementation)
     # ------------------------------------------------------------------
 
     def _cli_write_and_run(
@@ -361,21 +1338,23 @@ class ExperimentWriter:
         hypothesis: "Hypothesis",
         model_context: dict[str, Any],
         cases_json: str,
-        sandbox: ExperimentSandbox,
+        sandbox: Any,
         cli_cfg: Any,
-    ) -> "ExperimentWriterResult":
-        """CLI agent path: agent generates + self-repairs; we collect and execute.
-
-        Mirrors the agentic sandbox pattern in
-        ``researchclaw.experiment.collider_agent_sandbox``.
-        """
+    ) -> ExperimentWriterResult:
         from evalvitals.eval_agent.cli_agent import create_cli_agent
 
         self._log_event(f"CLI path: provider={cli_cfg.provider!r}")
-        workdir = sandbox.workdir
+        workdir = getattr(sandbox, "workdir", Path(tempfile.mkdtemp(prefix="evalvitals_cli_")))
 
-        # Write context files the agent reads from its workdir
+        import json as _json
         (workdir / "cases.json").write_text(cases_json, encoding="utf-8")
+        # Summarise which cases have images so the agent prompt is accurate
+        try:
+            _cases = _json.loads(cases_json)
+            _n_images = sum(1 for c in _cases if c.get("image_path"))
+        except Exception:
+            _n_images = 0
+
         (workdir / "hypothesis.md").write_text(
             f"# Hypothesis\n\n"
             f"**Statement:** {hypothesis.statement}\n\n"
@@ -385,16 +1364,12 @@ class ExperimentWriter:
         )
 
         prompt = self._build_cli_prompt(
-            hypothesis, model_context, self._cfg.exec_fix_timeout_sec
+            hypothesis, model_context, self._cfg.exec_fix_timeout_sec,
+            n_images=_n_images,
         )
-
         cli = create_cli_agent(cli_cfg)
         self._log_event(f"  invoking {cli._provider_name!r}")
-        cli_result = cli.run(
-            prompt=prompt,
-            workdir=workdir,
-            timeout_sec=cli_cfg.timeout_sec,
-        )
+        cli_result = cli.run(prompt=prompt, workdir=workdir, timeout_sec=cli_cfg.timeout_sec)
         self._log_event(
             f"  CLI finished: ok={cli_result.ok}, "
             f"files={list(cli_result.files)}, elapsed={cli_result.elapsed_sec:.1f}s"
@@ -405,25 +1380,23 @@ class ExperimentWriter:
         if not cli_result.files:
             self._log_event("CLI agent produced no .py files — aborting")
             return ExperimentWriterResult(
-                code="",
                 validation_log=list(self._log),
                 total_llm_calls=0,
                 total_sandbox_runs=0,
             )
 
-        # Prefer experiment.py; fallback to first file alphabetically
-        code = cli_result.files.get("experiment.py") or next(
-            iter(cli_result.files.values())
-        )
+        code = cli_result.files.get("experiment.py") or next(iter(cli_result.files.values()))
         self._log_event(f"  collected script: {len(code)} chars")
 
-        # Optional AST validation (warn only — don't abort; agent may have been creative)
         if self._cfg.hard_validation:
-            errors = self._validate_ast(code)
+            errors = []
+            try:
+                ast.parse(code)
+            except SyntaxError as exc:
+                errors.append(f"SyntaxError at line {exc.lineno}: {exc.msg}")
             if errors:
                 self._log_event(f"  AST warnings: {'; '.join(errors)}")
 
-        # Single sandbox run to parse metrics + verdict
         result = sandbox.run(code, timeout_sec=self._cfg.exec_fix_timeout_sec)
         self._runs += 1
         self._log_event(
@@ -432,11 +1405,9 @@ class ExperimentWriter:
         )
 
         verdict = result.metrics.get("verdict")
-        self._log_event(
-            f"_cli_write_and_run() done — {self._runs} sandbox run(s), verdict={verdict}"
-        )
         return ExperimentWriterResult(
             code=code,
+            files={"experiment.py": code},
             metrics=result.metrics,
             verdict=verdict,
             stdout=result.stdout,
@@ -453,13 +1424,14 @@ class ExperimentWriter:
         hypothesis: "Hypothesis",
         model_context: dict[str, Any],
         timeout_sec: int,
+        n_images: int = 0,
     ) -> str:
-        """Build the prompt given to the CLI agent.
-
-        References ``cases.json`` by filename — the agent reads it from its
-        workdir rather than having it embedded inline.
-        """
         caps = ", ".join(model_context.get("capabilities", [])) or "GENERATE"
+        image_note = (
+            f", and image_path (JPEG path for {n_images} case(s)).\n"
+            "Load images with: `from PIL import Image; img = Image.open(case['image_path'])`\n\n"
+            if n_images else ".\n\n"
+        )
         return (
             "You are an ML debugging engineer. Write a self-contained Python "
             "diagnostic script that tests a specific hypothesis about a model.\n\n"
@@ -474,8 +1446,9 @@ class ExperimentWriter:
             f"Available capabilities: {caps}\n\n"
             "## Input data\n"
             "Read `cases.json` from the current directory. "
-            "Each record has: prompt, label (PASS/FAIL), id, metadata.\n\n"
-            "## Required output (print to stdout, EXACTLY this format)\n"
+            "Each record has: prompt, label (PASS/FAIL), id, metadata"
+            + image_note
+            + "## Required output (print to stdout, EXACTLY this format)\n"
             "```\n"
             "metric_a: 0.72\n"
             "metric_b: 3.0\n"
@@ -487,124 +1460,193 @@ class ExperimentWriter:
             "- Print all metrics as `name: float_value` lines.\n"
             "- The last printed line must be `verdict: 1.0` or `verdict: 0.0`.\n"
             "- Use only the evalvitals APIs shown above.\n"
-            "- Do NOT make external network calls or read files other than "
-            "`cases.json`.\n"
+            "- Do NOT make external network calls or read files other than `cases.json`.\n"
         )
 
     # ------------------------------------------------------------------
-    # Phase 1: write (LLM path)
+    # Sandbox execution helpers
     # ------------------------------------------------------------------
 
-    def _phase1_write(
-        self,
-        hypothesis: "Hypothesis",
-        model_context: dict[str, Any],
-        cases_json: str,
-    ) -> str:
-        self._log_event("Phase 1: writing diagnostic script")
-        system = _WRITE_SYSTEM.format(timeout_sec=self._cfg.exec_fix_timeout_sec)
-        user = _WRITE_USER.format(
-            statement=hypothesis.statement,
-            failure_mode=hypothesis.predicted_failure_mode,
-            import_expr=model_context.get("import_expr", "import evalvitals"),
-            load_expr=model_context.get("load_expr", "# model"),
-            capabilities=", ".join(model_context.get("capabilities", [])) or "GENERATE",
-            cases_json=cases_json,
-        )
-        raw = self._llm_call(system, user)
-        code = self._extract_code_block(raw)
-        self._log_event(f"  Script: {len(code)} chars")
-        return code
-
-    # ------------------------------------------------------------------
-    # Phase 2: hard validation (AST)
-    # ------------------------------------------------------------------
-
-    def _hard_validate_and_repair(
-        self,
-        code: str,
-        hypothesis: "Hypothesis",
-        model_context: dict[str, Any],
-        cases_json: str,
-    ) -> str:
-        for attempt in range(self._cfg.hard_validation_max_repairs + 1):
-            errors = self._validate_ast(code)
-            if not errors:
-                self._log_event(f"  AST validation OK (attempt {attempt})")
-                return code
-            self._log_event(
-                f"  AST errors (attempt {attempt}/{self._cfg.hard_validation_max_repairs}): "
-                + "; ".join(errors)
-            )
-            if attempt >= self._cfg.hard_validation_max_repairs:
-                self._log_event("  Max AST repairs reached — proceeding with warnings")
-                return code
-            code = self._repair_code(code, "\n".join(errors))
-        return code
-
-    def _validate_ast(self, code: str) -> list[str]:
+    def _run_files(self, files: dict[str, str], sandbox: Any) -> SandboxResult:
+        """Write files to a temp directory and run via sandbox."""
+        self._runs += 1
+        project_dir = Path(tempfile.mkdtemp(prefix="evalvitals_exp_"))
         try:
-            ast.parse(code)
-            return []
-        except SyntaxError as exc:
-            return [f"SyntaxError at line {exc.lineno}: {exc.msg}"]
+            for fname, code in files.items():
+                fpath = (project_dir / fname).resolve()
+                if not fpath.is_relative_to(project_dir.resolve()):
+                    self._log_event(f"  WARNING: Skipping path-traversal filename: {fname}")
+                    continue
+                fpath.parent.mkdir(parents=True, exist_ok=True)
+                fpath.write_text(code, encoding="utf-8")
 
-    # ------------------------------------------------------------------
-    # Phase 3: exec-fix loop
-    # ------------------------------------------------------------------
-
-    def _exec_fix_loop(
-        self,
-        code: str,
-        sandbox: ExperimentSandbox,
-        hypothesis: "Hypothesis",
-        model_context: dict[str, Any],
-        cases_json: str,
-    ) -> tuple[str, SandboxResult]:
-        last_result: SandboxResult | None = None
-
-        for i in range(self._cfg.exec_fix_max_iterations):
-            result = sandbox.run(code, timeout_sec=self._cfg.exec_fix_timeout_sec)
-            self._runs += 1
-            last_result = result
-
-            if result.ok:
-                self._log_event(f"  Exec-fix iter {i}: OK ({result.elapsed_sec:.1f}s)")
-                break
-
-            if result.timed_out:
-                self._log_event(f"  Exec-fix iter {i}: TIMEOUT — no further repair")
-                break
-
-            self._log_event(
-                f"  Exec-fix iter {i}: crashed (rc={result.returncode}), "
-                f"stderr={len(result.stderr)} chars"
+            if hasattr(sandbox, "run_project"):
+                result = sandbox.run_project(
+                    project_dir,
+                    entry_point="main.py",
+                    timeout_sec=self._cfg.exec_fix_timeout_sec,
+                )
+            else:
+                # Fallback: run single-file via sandbox.run()
+                main_code = files.get("main.py") or next(iter(files.values()), "")
+                result = sandbox.run(main_code, timeout_sec=self._cfg.exec_fix_timeout_sec)
+        except Exception as exc:  # noqa: BLE001
+            result = SandboxResult(
+                returncode=1,
+                stdout="",
+                stderr=f"[ExperimentWriter] sandbox error: {exc}",
+                elapsed_sec=0.0,
             )
-            if i < self._cfg.exec_fix_max_iterations - 1:
-                code = self._repair_code(code, result.stderr[-2000:])  # tail of stderr
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(project_dir, ignore_errors=True)
 
-        # Fallback: if sandbox never ran (shouldn't happen)
-        if last_result is None:
-            from evalvitals.eval_agent.sandbox import SandboxResult as SR
-            last_result = SR(returncode=-1, stdout="", stderr="no runs", elapsed_sec=0.0)
-
-        return code, last_result
-
-    # ------------------------------------------------------------------
-    # Repair helpers
-    # ------------------------------------------------------------------
-
-    def _repair_code(self, code: str, error: str) -> str:
-        self._log_event(f"  Repairing: {error[:120]}…")
-        raw = self._llm_call(
-            _REPAIR_SYSTEM,
-            _REPAIR_USER.format(error=error, code=code),
+        self._log_event(
+            f"  run_files: rc={result.returncode}, "
+            f"timed_out={result.timed_out}, metrics={list(result.metrics)}"
         )
-        repaired = self._extract_code_block(raw)
-        return repaired if repaired.strip() else code
+        return result
 
     # ------------------------------------------------------------------
-    # Utilities
+    # Code extraction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_code_block(text: str) -> str:
+        """Extract the first ```python … ``` block, or the raw text if none found."""
+        m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        lines = text.strip().splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _extract_single_file_code(content: str, expected_name: str) -> str:
+        """Extract Python code from LLM response for a single named file."""
+        m = re.search(r"```python\s*\n(.*?)```", content, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        m = re.search(
+            rf"```(?:filename:)?{re.escape(expected_name)}\s*\n(.*?)```",
+            content, re.DOTALL,
+        )
+        if m:
+            return m.group(1).strip()
+        stripped = content.strip()
+        if stripped and stripped.startswith(
+            ("import ", "from ", "#", "def ", "class ", '"""')
+        ):
+            return stripped
+        return ""
+
+    @staticmethod
+    def _extract_files(content: str) -> dict[str, str]:
+        """Extract multi-file blocks from LLM output.
+
+        Recognises both:
+            ```filename:foo.py
+            ...code...
+            ```
+        and:
+            ```python  # foo.py
+            ...code...
+            ```
+        """
+        files: dict[str, str] = {}
+        # Primary format: ```filename:xxx.py
+        for m in re.finditer(
+            r"```filename:([^\s`]+\.py)\s*\n(.*?)```", content, re.DOTALL
+        ):
+            fname = m.group(1).strip()
+            code = m.group(2).strip()
+            if fname and code:
+                files[fname] = code
+        if files:
+            return files
+        # Fallback: single ```python block → treat as main.py
+        m = re.search(r"```python\s*\n(.*?)```", content, re.DOTALL)
+        if m:
+            return {"main.py": m.group(1).strip()}
+        return files
+
+    @staticmethod
+    def _format_files(files: dict[str, str]) -> str:
+        parts = [f"```filename:{fname}\n{files[fname]}\n```" for fname in sorted(files)]
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _build_code_summary(filename: str, code: str) -> dict[str, Any]:
+        """Build a CodeMem-style AST summary (mirrors ARC's implementation)."""
+        summary: dict[str, Any] = {
+            "filename": filename,
+            "classes": [],
+            "functions": [],
+            "imports": [],
+        }
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            summary["parse_error"] = True
+            return summary
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                methods = [
+                    {"name": n.name, "args": [a.arg for a in n.args.args if a.arg != "self"]}
+                    for n in node.body
+                    if isinstance(n, ast.FunctionDef)
+                ]
+                summary["classes"].append({
+                    "name": node.name,
+                    "bases": [ast.unparse(b) for b in node.bases],
+                    "methods": methods,
+                })
+            elif isinstance(node, ast.FunctionDef) and node.col_offset == 0:
+                summary["functions"].append({
+                    "name": node.name,
+                    "args": [a.arg for a in node.args.args],
+                })
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                try:
+                    summary["imports"].append(ast.unparse(node))
+                except Exception:
+                    pass
+
+        return summary
+
+    @staticmethod
+    def _parse_json(text: str) -> dict[str, Any] | None:
+        """Best-effort JSON extraction from LLM response."""
+        def _as_dict(val: Any) -> dict[str, Any] | None:
+            return val if isinstance(val, dict) else None
+
+        try:
+            return _as_dict(json.loads(text))
+        except (json.JSONDecodeError, ValueError):
+            pass
+        m = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
+        if m:
+            try:
+                return _as_dict(json.loads(m.group(1)))
+            except (json.JSONDecodeError, ValueError):
+                pass
+        m = re.search(
+            r"\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}",
+            text, re.DOTALL,
+        )
+        if m:
+            try:
+                return _as_dict(json.loads(m.group(0)))
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return None
+
+    # ------------------------------------------------------------------
+    # LLM call
     # ------------------------------------------------------------------
 
     def _llm_call(self, system: str, user: str) -> str:
@@ -615,21 +1657,6 @@ class ExperimentWriter:
         except Exception as exc:  # noqa: BLE001
             self._log_event(f"  LLM call failed: {exc}")
             return ""
-
-    @staticmethod
-    def _extract_code_block(text: str) -> str:
-        """Extract the first ```python … ``` block, or the raw text if none found."""
-        import re
-        m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
-        if m:
-            return m.group(1).strip()
-        # Strip markdown fences if present
-        lines = text.strip().splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        return "\n".join(lines).strip()
 
     def _log_event(self, msg: str) -> None:
         logger.debug(msg)

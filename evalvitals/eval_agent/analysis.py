@@ -35,7 +35,41 @@ class _Rule:
     message: str
 
 
+# Image-related token name fragments — used to compute image_token_attention_ratio
+# from the top_attended_tokens list produced by the attention analyzer.
+_IMAGE_TOKEN_FRAGMENTS = frozenset(
+    {"image_pad", "vision_start", "vision_end", "img", "<|vision", "<|image"}
+)
+
+
+def _compute_image_token_attention_ratio(findings: dict) -> float | None:
+    """Sum attention weights of image-related tokens from top_attended_tokens.
+
+    Returns the ratio (0–1) or None if the field is absent / not a list.
+    """
+    top = findings.get("top_attended_tokens")
+    if not isinstance(top, list) or not top:
+        return None
+    total = 0.0
+    image_total = 0.0
+    for entry in top:
+        w = entry.get("weight", 0.0)
+        total += w
+        tok = str(entry.get("token", "")).lower()
+        if any(frag in tok for frag in _IMAGE_TOKEN_FRAGMENTS):
+            image_total += w
+    if total <= 0:
+        return None
+    return image_total / total
+
+
 _RULES: dict[str, list[_Rule]] = {
+    "attention": [
+        _Rule(
+            "image_token_attention_ratio", 0.05, "below", "medium",
+            "VLM nearly ignores image tokens — attention dominated by text/structural tokens",
+        ),
+    ],
     "attention_sink": [
         _Rule("mean_sink_mass", 0.6, "above", "high",
               "model over-attends to the attention sink token"),
@@ -188,9 +222,17 @@ class AnalysisModule:
         findings: list[AnalysisFinding] = []
 
         for analyzer_name, result in results.items():
+            # Derive scalar metrics from structured findings before applying rules.
+            # This lets rules operate on computed values not directly in findings.
+            derived: dict[str, float] = {}
+            if analyzer_name == "attention":
+                ratio = _compute_image_token_attention_ratio(result.findings)
+                if ratio is not None:
+                    derived["image_token_attention_ratio"] = ratio
+
             rules = self._rules.get(analyzer_name, [])
             for rule in rules:
-                raw_val = result.findings.get(rule.metric)
+                raw_val = derived.get(rule.metric) or result.findings.get(rule.metric)
                 if raw_val is None:
                     continue
                 try:
@@ -211,7 +253,9 @@ class AnalysisModule:
                             threshold=rule.threshold,
                             direction=rule.direction,
                             severity=rule.severity,
-                            message=rule.message,
+                            message=f"{rule.message} (image_attn_ratio={val:.3f})"
+                            if rule.metric == "image_token_attention_ratio"
+                            else rule.message,
                         )
                     )
 
