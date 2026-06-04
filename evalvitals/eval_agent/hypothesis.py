@@ -60,6 +60,44 @@ class HypothesisGenerator:
         raise NotImplementedError("HypothesisGenerator.mutate is planned for Stage 2.")
 
 
+# ---------------------------------------------------------------------------
+# Serialization helpers (needed by JsonlStore and loop checkpointing)
+# ---------------------------------------------------------------------------
+
+
+def hypothesis_to_dict(h: Hypothesis) -> dict[str, Any]:
+    """Serialize a Hypothesis to a JSON-compatible dict."""
+    return {
+        "statement": h.statement,
+        "target_model": h.target_model,
+        "predicted_failure_mode": h.predicted_failure_mode,
+        "status": h.status.value if h.status else HypothesisStatus.PROPOSED.value,
+        "parent_id": h.parent_id,
+        "id": h.id,
+        "evidence": list(h.evidence),
+        "metadata": dict(h.metadata),
+    }
+
+
+def hypothesis_from_dict(data: dict[str, Any]) -> Hypothesis:
+    """Deserialize a Hypothesis from a dict (e.g., loaded from JSONL)."""
+    raw_status = data.get("status", HypothesisStatus.PROPOSED.value)
+    try:
+        status = HypothesisStatus(raw_status)
+    except ValueError:
+        status = HypothesisStatus.PROPOSED
+    return Hypothesis(
+        statement=str(data.get("statement", "")),
+        target_model=str(data.get("target_model", "")),
+        predicted_failure_mode=str(data.get("predicted_failure_mode", "")),
+        status=status,
+        parent_id=data.get("parent_id"),
+        id=str(data.get("id", "")),
+        evidence=list(data.get("evidence", [])),
+        metadata=dict(data.get("metadata", {})),
+    )
+
+
 class ManualHypothesisGenerator(HypothesisGenerator):
     """A non-LLM generator: drains a fixed queue, or calls an injected ``proposer``.
 

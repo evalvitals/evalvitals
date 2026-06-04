@@ -58,13 +58,15 @@ class InterventionResult:
 
 # Keys that carry diagnostic meaning in per-case finding entries.
 # Excluded from the signal scan because they are indices, not boolean flags.
-def _serialize_cases(data: CaseBatch) -> str:
+def _serialize_cases(data: CaseBatch, image_dir: "Any | None" = None) -> str:
     """Serialize *data* to a compact JSON string embeddable in a script.
 
-    Only text-serialisable fields are included (prompt, label, metadata).
-    Heavy objects like PIL images are skipped — the generated script should
-    deal with text-only probes or fetch its own test data.
+    Text fields are always included.  When *image_dir* is provided, PIL images
+    are saved as JPEG files there and the path is included as ``image_path`` so
+    the generated diagnostic script (and codex) can load them.
     """
+    from pathlib import Path as _Path
+
     records = []
     for case in data:
         rec: dict[str, Any] = {"prompt": str(case.inputs)}
@@ -76,6 +78,21 @@ def _serialize_cases(data: CaseBatch) -> str:
         if meta:
             rec["metadata"] = {k: v for k, v in meta.items()
                                if isinstance(v, (str, int, float, bool, type(None)))}
+
+        # Save image to disk so codex / the diagnostic script can read it
+        image = getattr(case.inputs, "image", None) if hasattr(case, "inputs") else None
+        if image is not None and image_dir is not None:
+            try:
+                img_dir = _Path(image_dir)
+                img_dir.mkdir(parents=True, exist_ok=True)
+                case_id = case.id or f"case_{len(records)}"
+                img_path = img_dir / f"{case_id}.jpg"
+                # PIL image
+                image.convert("RGB").save(str(img_path), format="JPEG")
+                rec["image_path"] = str(img_path)
+            except Exception:
+                pass  # non-PIL or unsavable — skip silently
+
         records.append(rec)
     return json.dumps(records, indent=2)
 
@@ -279,7 +296,9 @@ class SurgeryAgent:
         from evalvitals.eval_agent.experiment_writer import build_model_context
 
         model_context = build_model_context(model)
-        cases_json = _serialize_cases(data)
+        # Save images alongside cases.json so codex can load them
+        image_dir = getattr(self._sandbox, "workdir", None)
+        cases_json = _serialize_cases(data, image_dir=image_dir)
 
         writer_result = self._writer.write_and_run(  # type: ignore[union-attr]
             hypothesis=hypothesis,

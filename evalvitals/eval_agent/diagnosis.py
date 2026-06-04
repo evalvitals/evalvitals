@@ -201,6 +201,23 @@ class DiagnosisAgent:
         )
         raw = self.judge.generate(prompt)
         hypotheses = _parse_hypotheses(str(raw), analysis.model_name or model_name)
+
+        # Fallback: if the judge returned NO_ISSUE but M2 has medium/high findings,
+        # auto-generate one hypothesis per finding so M4 can still run.
+        # This prevents self-diagnosis bias when the judge is the model under test.
+        if not hypotheses and analysis.findings:
+            from evalvitals.eval_agent.analysis import _SEVERITY_ORDER
+            for finding in analysis.findings:
+                if _SEVERITY_ORDER.get(finding.severity, 0) >= 2:  # medium or high
+                    hypotheses.append(Hypothesis(
+                        statement=(
+                            f"The model {finding.message} "
+                            f"({finding.analyzer}.{finding.metric}={finding.value:.3g})"
+                        ),
+                        target_model=analysis.model_name or model_name,
+                        predicted_failure_mode=finding.analyzer,
+                    ))
+
         return DiagnosisResult(
             model_name=analysis.model_name or model_name,
             hypotheses=hypotheses,

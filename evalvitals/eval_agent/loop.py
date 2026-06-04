@@ -11,16 +11,37 @@
     └───────────────────────────────────────────────────────────────────┘
                             ↑__________________________│  (repeat)
 
+Run-directory infrastructure (mirrors AutoResearchClaw):
+
+When ``run_dir`` is supplied:
+  - ``run_dir/artifacts/{run_id}/``  — per-run artifact staging
+  - ``run_dir/checkpoint.json``      — atomic resume state (temp+rename)
+  - ``run_dir/heartbeat.json``       — per-cycle liveness signal
+  - ``run_dir/evolution/``           — JSONL lesson store (auto-created)
+
+Git integration:
+  - When the repo is detected, each resolved run is committed on
+    ``eval/{run_id}``; unresolved runs are discarded with git reset.
+
 Usage::
 
-    loop   = AutoDiagnoseLoop(model=my_model)   # Gemini default for M3
+    loop   = AutoDiagnoseLoop(model=my_model, run_dir=Path("./runs"))
     report = loop.run(failure_cases)
     print(report.resolved, report.final_hypotheses)
+
+    # Resume an interrupted run
+    report = AutoDiagnoseLoop.resume(Path("./runs"), model=my_model, data=cases)
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from evalvitals.eval_agent.hypothesis import HypothesisStatus
@@ -32,10 +53,14 @@ if TYPE_CHECKING:
     from evalvitals.core.result import Result
     from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
     from evalvitals.eval_agent.diagnosis import DiagnosisAgent
+    from evalvitals.eval_agent.evolution import EvolutionStore
+    from evalvitals.eval_agent.git_manager import ExperimentGitManager
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisGenerator
     from evalvitals.eval_agent.probe_agent import ProbeAgent
     from evalvitals.eval_agent.run_logger import RunLogger
     from evalvitals.eval_agent.surgery import SurgeryAgent
+
+logger = logging.getLogger(__name__)
 
 
 class SelfEvolveLoop:
@@ -100,6 +125,8 @@ class AutoDiagnoseReport:
     final_results: dict[str, "Result"] = field(default_factory=dict)
     final_analysis: "AnalysisReport | None" = None
     store: Store = field(default_factory=InMemoryStore)
+    # Internal — set by AutoDiagnoseLoop for evolution/git integration
+    _run_id: str = field(default="", repr=False)
 
 
 class AutoDiagnoseLoop:
@@ -119,8 +146,15 @@ class AutoDiagnoseLoop:
         store:            Persistent memory.  Defaults to ``InMemoryStore()``.
         max_cycles:       Hard cap on M1→M4 iterations.
         run_logger:       Optional :class:`~evalvitals.eval_agent.run_logger.RunLogger`
-                          that writes a JSONL event log and saves analyzer artifacts
-                          (tensors, arrays) to disk after each cycle.
+                          that writes a JSONL event log and saves analyzer artifacts.
+        run_dir:          Optional root directory for run infrastructure.
+                          When set, enables checkpoints, heartbeat, and the
+                          ``EvolutionStore``.
+        git_manager:      Optional :class:`~evalvitals.eval_agent.git_manager.ExperimentGitManager`.
+                          ``None`` → auto-detect git repo when *run_dir* is given.
+        evolution_store:  Optional :class:`~evalvitals.eval_agent.evolution.EvolutionStore`.
+                          ``None`` → auto-create under ``run_dir/evolution/`` when
+                          *run_dir* is given.
     """
 
     def __init__(
@@ -133,6 +167,10 @@ class AutoDiagnoseLoop:
         store: Store | None = None,
         max_cycles: int = 5,
         run_logger: "RunLogger | None" = None,
+        # --- run-directory infrastructure (new) ---
+        run_dir: "Path | None" = None,
+        git_manager: "ExperimentGitManager | None" = None,
+        evolution_store: "EvolutionStore | None" = None,
     ) -> None:
         from evalvitals.eval_agent.analysis import AnalysisModule
         from evalvitals.eval_agent.probe_agent import ProbeAgent
@@ -141,11 +179,52 @@ class AutoDiagnoseLoop:
         self.model = model
         self.probe_agent = probe_agent or ProbeAgent()
         self.analysis_module = analysis_module or AnalysisModule()
-        self.diagnosis_agent = diagnosis_agent  # None = analysis-only mode
+        self.diagnosis_agent = diagnosis_agent
         self.surgery_agent = surgery_agent or SurgeryAgent()
         self.store = store or InMemoryStore()
         self.max_cycles = max_cycles
         self.run_logger = run_logger
+
+        # --- run-directory setup ---
+        self._run_dir: Path | None = None
+        self._artifacts_dir: Path | None = None
+        self._checkpoint_path: Path | None = None
+        self._heartbeat_path: Path | None = None
+        self._run_id: str = ""
+
+        if run_dir is not None:
+            run_dir = Path(run_dir)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            self._run_id = ts
+            self._run_dir = run_dir
+            self._artifacts_dir = run_dir / "artifacts" / ts
+            self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+            self._checkpoint_path = run_dir / "checkpoint.json"
+            self._heartbeat_path = run_dir / "heartbeat.json"
+
+        # EvolutionStore: auto-create when run_dir is set
+        self.evolution_store: "EvolutionStore | None" = evolution_store
+        if self.evolution_store is None and run_dir is not None:
+            try:
+                from evalvitals.eval_agent.evolution import EvolutionStore
+                self.evolution_store = EvolutionStore(run_dir / "evolution")
+            except Exception as exc:
+                logger.debug("Could not create EvolutionStore: %s", exc)
+
+        # ExperimentGitManager: auto-detect when run_dir is set
+        self.git_manager: "ExperimentGitManager | None" = git_manager
+        if self.git_manager is None and run_dir is not None:
+            try:
+                from evalvitals.eval_agent.git_manager import ExperimentGitManager
+                _gm = ExperimentGitManager(run_dir)
+                if _gm.is_git_repo():
+                    self.git_manager = _gm
+            except Exception as exc:
+                logger.debug("Git manager auto-detect failed: %s", exc)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────
 
     def run(self, data: "CaseBatch") -> AutoDiagnoseReport:
         """Drive the M1→M2→M3→M4 loop until resolved or *max_cycles* reached.
@@ -161,18 +240,26 @@ class AutoDiagnoseLoop:
         final_results: dict[str, Any] = {}
         final_analysis = None
 
-        # State threaded across cycles.
-        # prior_cycles: fed to M3 so the judge avoids re-proposing tested hypotheses.
-        # outstanding_modes: failure-mode tags from INCONCLUSIVE hypotheses, used
-        #   by M1 to focus the next probe on hypothesis-relevant analyzers.
+        # Determine start cycle from checkpoint (resume support)
+        start_cycle = 0
+        if self._checkpoint_path is not None:
+            cp = self._read_checkpoint()
+            if cp is not None:
+                start_cycle = cp.get("last_completed_cycle", -1) + 1
+                if start_cycle > 0:
+                    logger.info(
+                        "Resuming from checkpoint: skipping cycles 0–%d",
+                        start_cycle - 1,
+                    )
+
         prior_cycles: list[dict[str, Any]] = []
         outstanding_modes: list[str] = []
         completed_cycles = 0
 
-        for cycle in range(self.max_cycles):
+        for cycle in range(start_cycle, self.max_cycles):
             completed_cycles = cycle + 1
 
-            # ── M1: probe — select analyzers, boost by outstanding modes ───
+            # ── M1: probe ───────────────────────────────────────────────
             probe_results = self.probe_agent.probe(
                 self.model, data,
                 hint_failure_modes=outstanding_modes or None,
@@ -185,28 +272,30 @@ class AutoDiagnoseLoop:
             if self.run_logger:
                 self.run_logger.log_probe(cycle, probe_results)
 
-            # ── M2: analyze — interpret raw results into a report ──────────
+            # ── M2: analyze ─────────────────────────────────────────────
             analysis = self.analysis_module.analyze(probe_results, repr(self.model))
             final_analysis = analysis
             if self.run_logger:
                 self.run_logger.log_analysis(cycle, analysis)
 
             if self.diagnosis_agent is None:
-                break  # analysis-only mode: stop after first M1+M2 pass
+                self._on_cycle_complete(cycle, all_hypotheses)
+                break  # analysis-only mode
 
-            # ── M3: diagnose — LLM proposes hypotheses, with prior context ─
+            # ── M3: diagnose ─────────────────────────────────────────────
             diag = self.diagnosis_agent.diagnose(
                 analysis, prior_cycles=prior_cycles or None
             )
             if self.run_logger:
                 self.run_logger.log_diagnosis(cycle, diag)
             if not diag.hypotheses:
+                self._on_cycle_complete(cycle, all_hypotheses)
                 break
             for h in diag.hypotheses:
                 self.store.add_hypothesis(h)
             all_hypotheses.extend(diag.hypotheses)
 
-            # ── M4: surgery — intervene and verify each hypothesis ─────────
+            # ── M4: surgery ──────────────────────────────────────────────
             outstanding_modes = []
             for h in diag.hypotheses:
                 iv = self.surgery_agent.operate(h, self.model, probe_results, data)
@@ -221,17 +310,17 @@ class AutoDiagnoseLoop:
                         final_results=final_results,
                         final_analysis=final_analysis,
                         store=self.store,
+                        _run_id=self._run_id,
                     )
-                    if self.run_logger:
-                        self.run_logger.log_loop_end(report)
+                    self._on_cycle_complete(cycle, all_hypotheses)
+                    self._on_loop_end(report)
                     return report
-                # Collect inconclusive modes so M1 can focus the next probe.
                 if iv.status == HypothesisStatus.INCONCLUSIVE:
                     outstanding_modes.append(h.predicted_failure_mode)
                 if iv.new_data is not None and len(iv.new_data) > 0:
-                    data = iv.new_data  # refocus on unexplained cases
+                    data = iv.new_data
 
-            # Record this cycle so M3 can see what was already tested.
+            # Record cycle for M3 context
             prior_cycles.append({
                 "cycle": cycle,
                 "severity": analysis.severity,
@@ -245,6 +334,9 @@ class AutoDiagnoseLoop:
                 ],
             })
 
+            # Write checkpoint + heartbeat after each full cycle
+            self._on_cycle_complete(cycle, all_hypotheses)
+
         report = AutoDiagnoseReport(
             cycles=completed_cycles,
             resolved=False,
@@ -252,7 +344,137 @@ class AutoDiagnoseLoop:
             final_results=final_results,
             final_analysis=final_analysis,
             store=self.store,
+            _run_id=self._run_id,
         )
+        self._on_loop_end(report)
+        return report
+
+    @classmethod
+    def resume(
+        cls,
+        run_dir: Path,
+        model: "Model",
+        data: "CaseBatch",
+        **kwargs: Any,
+    ) -> "AutoDiagnoseReport":
+        """Resume a loop from a checkpoint.
+
+        Reads ``run_dir/checkpoint.json``, skips already-completed cycles,
+        and continues from ``last_completed_cycle + 1``.
+
+        Args:
+            run_dir: Directory that contains ``checkpoint.json``.
+            model:   The model under evaluation.
+            data:    Original :class:`CaseBatch` to continue from.
+            **kwargs: Forwarded to :class:`AutoDiagnoseLoop.__init__`.
+                      ``run_dir`` is set automatically — do not pass it.
+        """
+        instance = cls(model=model, run_dir=run_dir, **kwargs)
+        return instance.run(data)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Per-cycle and end-of-loop hooks
+    # ──────────────────────────────────────────────────────────────────
+
+    def _on_cycle_complete(
+        self, cycle: int, hypotheses: list["Hypothesis"]
+    ) -> None:
+        """Write checkpoint and heartbeat after each completed cycle."""
+        statuses = [
+            h.status.value if h.status else "pending"
+            for h in hypotheses
+        ]
+        if self._checkpoint_path is not None:
+            self._write_checkpoint(cycle, statuses)
+        if self._heartbeat_path is not None:
+            self._write_heartbeat(cycle)
+
+    def _on_loop_end(self, report: AutoDiagnoseReport) -> None:
+        """Append lessons to EvolutionStore and commit/discard via git."""
         if self.run_logger:
             self.run_logger.log_loop_end(report)
-        return report
+
+        # EvolutionStore lesson extraction
+        if self.evolution_store is not None:
+            try:
+                from evalvitals.eval_agent.evolution import extract_lessons
+                lessons = extract_lessons(report)
+                self.evolution_store.append_many(lessons)
+                logger.debug(
+                    "EvolutionStore: appended %d lesson(s) for run %s",
+                    len(lessons), self._run_id,
+                )
+            except Exception as exc:
+                logger.warning("Failed to record evolution lessons: %s", exc)
+
+        # Git integration
+        if self.git_manager is not None and self._run_id:
+            hyp_statuses = {
+                h.statement[:80]: (h.status.value if h.status else "pending")
+                for h in report.final_hypotheses
+            }
+            try:
+                if report.resolved:
+                    self.git_manager.commit_experiment(
+                        self._run_id,
+                        report.cycles,
+                        hyp_statuses,
+                        "resolved",
+                    )
+                    logger.info(
+                        "Git: committed resolved run %s on eval/%s",
+                        self._run_id, self._run_id,
+                    )
+                else:
+                    self.git_manager.discard_experiment(
+                        self._run_id, "not resolved"
+                    )
+            except Exception as exc:
+                logger.warning("Git integration failed: %s", exc)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Checkpoint / heartbeat
+    # ──────────────────────────────────────────────────────────────────
+
+    def _write_checkpoint(self, cycle: int, hypothesis_statuses: list[str]) -> None:
+        """Atomic checkpoint write (temp-file + rename)."""
+        assert self._checkpoint_path is not None
+        data = {
+            "last_completed_cycle": cycle,
+            "run_id": self._run_id,
+            "hypothesis_statuses": hypothesis_statuses,
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        target = self._checkpoint_path
+        fd, tmp_path = tempfile.mkstemp(
+            dir=target.parent, suffix=".tmp", prefix="checkpoint_"
+        )
+        os.close(fd)
+        try:
+            Path(tmp_path).write_text(
+                json.dumps(data, indent=2), encoding="utf-8"
+            )
+            Path(tmp_path).replace(target)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+
+    def _write_heartbeat(self, cycle: int) -> None:
+        assert self._heartbeat_path is not None
+        data = {
+            "pid": os.getpid(),
+            "last_cycle": cycle,
+            "run_id": self._run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        self._heartbeat_path.write_text(
+            json.dumps(data, indent=2), encoding="utf-8"
+        )
+
+    def _read_checkpoint(self) -> dict[str, Any] | None:
+        if self._checkpoint_path is None or not self._checkpoint_path.exists():
+            return None
+        try:
+            return json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None

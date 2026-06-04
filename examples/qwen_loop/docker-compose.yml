@@ -1,0 +1,28 @@
+services:
+  qwen_loop:
+    build:
+      context: ../..
+      dockerfile: examples/qwen_loop/Dockerfile
+    image: evalvitals-qwen-loop
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}      # codex auth — inherited from host env
+      - CUDA_VISIBLE_DEVICES=3               # use GPU 3 (free)
+    volumes:
+      - ${HF_HOME:-~/.cache/huggingface}:/hf_cache
+      - ./outputs:/app/example/outputs        # checkpoint + evolution log persisted
+      # Mount the host codex binary into the container (no install needed).
+      # Before running: export CODEX_PATH=$(which codex)
+      - ${CODEX_PATH:-/usr/local/bin/codex}:/usr/local/bin/codex:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      python run.py
+        --model qwen3-vl-4b-instruct
+        --device cuda
+        --max-cycles 2
+        --max-analyzers 2
