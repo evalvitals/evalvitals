@@ -1,12 +1,21 @@
-"""ExperimentWriter — LLM writes and executes a targeted diagnostic script.
+"""ExperimentWriter — LLM or CLI agent writes and executes a diagnostic script.
 
-Mirrors the multi-phase pattern in researchclaw/pipeline/code_agent.py:
+Mirrors the multi-phase pattern in researchclaw/pipeline/code_agent.py.
 
-    Phase 1 · Write    LLM generates a self-contained Python script that tests
-                        one hypothesis against the model being evaluated.
-    Phase 2 · Validate AST-parse the script; flag critical syntax errors.
-    Phase 3 · Exec-fix Run in sandbox; feed stderr back to the LLM for repair;
+Two execution paths selected by ``ExperimentWriterConfig.cli_agent.provider``:
+
+LLM path (default, ``provider="llm"``)
+    Phase 1 · Write    LLM generates a self-contained Python script.
+    Phase 2 · Validate AST-parse; flag critical syntax errors.
+    Phase 3 · Exec-fix Run in sandbox; feed stderr back to LLM for repair;
                         retry up to ``exec_fix_max_iterations`` times.
+
+CLI agent path (``provider="claude_code"`` / ``"codex"`` / ``"opencode"`` / …)
+    Phase 1 · Write    CLI agent (agentic, has bash/file tools) generates the
+                        script autonomously from ``cases.json`` + ``hypothesis.md``
+                        written to the workdir.  No exec-fix loop — the agent
+                        self-repairs during its own run.
+    Phase 2 · Execute  One ``sandbox.run()`` call to parse metrics + verdict.
 
 The script must print metrics in ARC-compatible format (parsed by
 :func:`~evalvitals.eval_agent.sandbox.parse_metrics`), plus a final verdict::
@@ -45,15 +54,26 @@ class ExperimentWriterConfig:
 
     All defaults give a good quality/cost balance.  Disable phases to reduce
     LLM calls; lower ``exec_fix_max_iterations`` to reduce sandbox usage.
+
+    To use a CLI coding agent for M4 instead of the single-pass LLM::
+
+        from evalvitals.eval_agent.cli_agent import CliAgentConfig
+        cfg = ExperimentWriterConfig(
+            cli_agent=CliAgentConfig(provider="claude_code", model="sonnet"),
+        )
     """
 
     # Phase 2: AST validation before execution
     hard_validation: bool = True
     hard_validation_max_repairs: int = 3
 
-    # Phase 3: exec-fix loop
+    # Phase 3: exec-fix loop (LLM path only; CLI agents self-repair)
     exec_fix_max_iterations: int = 3
     exec_fix_timeout_sec: int = 60
+
+    # CLI agent dispatch — None means "use the LLM path" (backward-compatible default).
+    # Pass CliAgentConfig(provider="claude_code") to route through a CLI agent instead.
+    cli_agent: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -225,17 +245,24 @@ def build_model_context(model: "Model") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class ExperimentWriter:
-    """LLM writes and iteratively repairs a diagnostic Python script.
+    """LLM or CLI agent writes and executes a targeted diagnostic script.
 
-    Mirrors ``researchclaw.pipeline.code_agent.CodeAgent``:
+    Mirrors ``researchclaw.pipeline.code_agent.CodeAgent``.
 
-    * Phase 1 — ``_phase1_write()``: LLM generates the initial script.
-    * Phase 2 — ``_validate()``: AST syntax check + targeted repair.
-    * Phase 3 — ``_exec_fix_loop()``: run → stderr → repair → retry.
+    When ``config.cli_agent`` is ``None`` or has ``provider="llm"`` (default):
+        Phase 1 — LLM writes the script (``_phase1_write``).
+        Phase 2 — AST validation + repair (``_hard_validate_and_repair``).
+        Phase 3 — exec-fix loop: run → stderr → LLM repair → retry.
+
+    When ``config.cli_agent.provider`` is a CLI provider (e.g. ``"claude_code"``):
+        Phase 1 — CLI agent writes ``experiment.py`` in the workdir autonomously.
+        Phase 2 — One ``sandbox.run()`` to parse metrics + verdict (no exec-fix
+                   loop; the agent self-repairs during its own run).
 
     Args:
         judge:    Any :class:`~evalvitals.core.model.Model` with
-                  ``Capability.GENERATE`` (Gemini by default).
+                  ``Capability.GENERATE``.  Used on the LLM path; ignored on
+                  the CLI path (the CLI agent uses its own model).
         config:   :class:`ExperimentWriterConfig` controlling phases and limits.
     """
 
@@ -277,6 +304,17 @@ class ExperimentWriter:
         self._log = []
         self._log_event("ExperimentWriter.write_and_run() started")
 
+        # ── CLI agent dispatch ──────────────────────────────────────────────
+        cli_cfg = self._cfg.cli_agent
+        if cli_cfg is None:
+            from evalvitals.eval_agent.cli_agent import CliAgentConfig
+            cli_cfg = CliAgentConfig()
+        if cli_cfg.provider != "llm":
+            return self._cli_write_and_run(
+                hypothesis, model_context, cases_json, sandbox, cli_cfg
+            )
+
+        # ── LLM path (unchanged below) ─────────────────────────────────────
         # Phase 1: write
         code = self._phase1_write(hypothesis, model_context, cases_json)
         if not code.strip():
@@ -315,7 +353,146 @@ class ExperimentWriter:
         )
 
     # ------------------------------------------------------------------
-    # Phase 1: write
+    # CLI agent path  (phases 1+2 combined)
+    # ------------------------------------------------------------------
+
+    def _cli_write_and_run(
+        self,
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        cases_json: str,
+        sandbox: ExperimentSandbox,
+        cli_cfg: Any,
+    ) -> "ExperimentWriterResult":
+        """CLI agent path: agent generates + self-repairs; we collect and execute.
+
+        Mirrors the agentic sandbox pattern in
+        ``researchclaw.experiment.collider_agent_sandbox``.
+        """
+        from evalvitals.eval_agent.cli_agent import create_cli_agent
+
+        self._log_event(f"CLI path: provider={cli_cfg.provider!r}")
+        workdir = sandbox.workdir
+
+        # Write context files the agent reads from its workdir
+        (workdir / "cases.json").write_text(cases_json, encoding="utf-8")
+        (workdir / "hypothesis.md").write_text(
+            f"# Hypothesis\n\n"
+            f"**Statement:** {hypothesis.statement}\n\n"
+            f"**Failure mode:** {hypothesis.predicted_failure_mode}\n\n"
+            f"**Target model:** {hypothesis.target_model}\n",
+            encoding="utf-8",
+        )
+
+        prompt = self._build_cli_prompt(
+            hypothesis, model_context, self._cfg.exec_fix_timeout_sec
+        )
+
+        cli = create_cli_agent(cli_cfg)
+        self._log_event(f"  invoking {cli._provider_name!r}")
+        cli_result = cli.run(
+            prompt=prompt,
+            workdir=workdir,
+            timeout_sec=cli_cfg.timeout_sec,
+        )
+        self._log_event(
+            f"  CLI finished: ok={cli_result.ok}, "
+            f"files={list(cli_result.files)}, elapsed={cli_result.elapsed_sec:.1f}s"
+        )
+        if cli_result.error:
+            self._log_event(f"  CLI error: {cli_result.error}")
+
+        if not cli_result.files:
+            self._log_event("CLI agent produced no .py files — aborting")
+            return ExperimentWriterResult(
+                code="",
+                validation_log=list(self._log),
+                total_llm_calls=0,
+                total_sandbox_runs=0,
+            )
+
+        # Prefer experiment.py; fallback to first file alphabetically
+        code = cli_result.files.get("experiment.py") or next(
+            iter(cli_result.files.values())
+        )
+        self._log_event(f"  collected script: {len(code)} chars")
+
+        # Optional AST validation (warn only — don't abort; agent may have been creative)
+        if self._cfg.hard_validation:
+            errors = self._validate_ast(code)
+            if errors:
+                self._log_event(f"  AST warnings: {'; '.join(errors)}")
+
+        # Single sandbox run to parse metrics + verdict
+        result = sandbox.run(code, timeout_sec=self._cfg.exec_fix_timeout_sec)
+        self._runs += 1
+        self._log_event(
+            f"  sandbox run: rc={result.returncode}, "
+            f"timed_out={result.timed_out}, metrics={list(result.metrics)}"
+        )
+
+        verdict = result.metrics.get("verdict")
+        self._log_event(
+            f"_cli_write_and_run() done — {self._runs} sandbox run(s), verdict={verdict}"
+        )
+        return ExperimentWriterResult(
+            code=code,
+            metrics=result.metrics,
+            verdict=verdict,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            returncode=result.returncode,
+            timed_out=result.timed_out,
+            total_llm_calls=0,
+            total_sandbox_runs=self._runs,
+            validation_log=list(self._log),
+        )
+
+    @staticmethod
+    def _build_cli_prompt(
+        hypothesis: "Hypothesis",
+        model_context: dict[str, Any],
+        timeout_sec: int,
+    ) -> str:
+        """Build the prompt given to the CLI agent.
+
+        References ``cases.json`` by filename — the agent reads it from its
+        workdir rather than having it embedded inline.
+        """
+        caps = ", ".join(model_context.get("capabilities", [])) or "GENERATE"
+        return (
+            "You are an ML debugging engineer. Write a self-contained Python "
+            "diagnostic script that tests a specific hypothesis about a model.\n\n"
+            "## Hypothesis\n"
+            f"Statement   : {hypothesis.statement}\n"
+            f"Failure mode: {hypothesis.predicted_failure_mode}\n\n"
+            "## Model setup (copy verbatim)\n"
+            "```python\n"
+            f"{model_context.get('import_expr', 'import evalvitals')}\n"
+            f"model = {model_context.get('load_expr', '# model')}\n"
+            "```\n\n"
+            f"Available capabilities: {caps}\n\n"
+            "## Input data\n"
+            "Read `cases.json` from the current directory. "
+            "Each record has: prompt, label (PASS/FAIL), id, metadata.\n\n"
+            "## Required output (print to stdout, EXACTLY this format)\n"
+            "```\n"
+            "metric_a: 0.72\n"
+            "metric_b: 3.0\n"
+            "verdict: 1.0    # 1.0=SUPPORTED  0.0=REFUTED\n"
+            "```\n\n"
+            "## Rules\n"
+            f"- Stay under {timeout_sec} seconds total runtime.\n"
+            "- Save the script as `experiment.py` in the current directory.\n"
+            "- Print all metrics as `name: float_value` lines.\n"
+            "- The last printed line must be `verdict: 1.0` or `verdict: 0.0`.\n"
+            "- Use only the evalvitals APIs shown above.\n"
+            "- Do NOT make external network calls or read files other than "
+            "`cases.json`.\n"
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 1: write (LLM path)
     # ------------------------------------------------------------------
 
     def _phase1_write(

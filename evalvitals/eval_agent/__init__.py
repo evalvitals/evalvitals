@@ -16,6 +16,7 @@ Layout:
 
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
 from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
+from evalvitals.eval_agent.cli_agent import CliAgentConfig, CliAgentResult, create_cli_agent
 from evalvitals.eval_agent.diagnosis import DiagnosisAgent, DiagnosisResult
 from evalvitals.eval_agent.experiment_writer import (
     ExperimentWriter,
@@ -87,4 +88,8 @@ __all__ = [
     "ExperimentSandbox",
     "SandboxResult",
     "parse_metrics",
+    # CLI agents
+    "CliAgentConfig",
+    "CliAgentResult",
+    "create_cli_agent",
 ]

@@ -28,6 +28,7 @@ Also demonstrates:
 from __future__ import annotations
 
 import argparse
+import os
 import random
 from pathlib import Path
 
@@ -193,6 +194,71 @@ def demo_auto_diagnose() -> None:
         print(f"    mode      : {h.predicted_failure_mode}  status: {h.status}")
 
 
+def demo_cli_agent() -> None:
+    """M4 using Claude Code (or another CLI agent) as the experiment writer.
+
+    Instead of the single-pass LLM path, SurgeryAgent routes through an
+    agentic CLI tool that has bash/file access and self-repairs.
+
+    Requires:
+        - ``claude`` binary on PATH and ANTHROPIC_API_KEY set  (claude_code)
+        - OR set EVALVITALS_CLI_PROVIDER to another provider name
+          (codex / opencode / gemini_cli / kimi_cli) with the corresponding binary.
+
+    Enable with: EVALVITALS_CLI_DEMO=1 python run.py
+    """
+    import evalvitals  # noqa: F401 — registers all analyzers
+
+    from evalvitals.eval_agent import (
+        AutoDiagnoseLoop,
+        CliAgentConfig,
+        DiagnosisAgent,
+        ExperimentWriterConfig,
+        SurgeryAgent,
+    )
+    from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
+    from evalvitals.eval_agent.probe_agent import ProbeAgent
+    from evalvitals.models.blackbox.gemini import GeminiModel
+
+    provider = os.getenv("EVALVITALS_CLI_PROVIDER", "claude_code")
+    model = GeminiModel()
+
+    cases = CaseBatch([
+        FailureCase(id="cli_0", inputs=Inputs(prompt="What is 17 × 19?"), label=Label.FAIL),
+        FailureCase(id="cli_1", inputs=Inputs(prompt="Longest river in Africa?"), label=Label.FAIL),
+    ])
+
+    writer_cfg = ExperimentWriterConfig(
+        cli_agent=CliAgentConfig(
+            provider=provider,
+            model="sonnet" if provider == "claude_code" else "",
+            max_budget_usd=1.0,
+            timeout_sec=120,
+        ),
+        exec_fix_timeout_sec=30,
+    )
+
+    text_probe = StrategyProbe(priority_override={
+        kind: ["self_consistency", "verbalized_confidence"]
+        for kind in ModelKind
+    })
+
+    surgery = SurgeryAgent(judge=model, writer_config=writer_cfg)
+    loop = AutoDiagnoseLoop(
+        model=model,
+        probe_agent=ProbeAgent(probe=text_probe, max_analyzers=2),
+        diagnosis_agent=DiagnosisAgent(),
+        surgery_agent=surgery,
+        max_cycles=1,
+    )
+    report = loop.run(cases)
+
+    print(f"\n[CLI Agent Demo — {provider}] cycles={report.cycles}")
+    for h in report.final_hypotheses:
+        print(f"  hypothesis: {h.statement}")
+        print(f"    status  : {h.status}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(CONFIG))
@@ -212,6 +278,11 @@ def main() -> None:
 
     print("\n=== AutoDiagnoseLoop M1→M4 (requires GEMINI_API_KEY) ===")
     demo_auto_diagnose()
+
+    if os.getenv("EVALVITALS_CLI_DEMO"):
+        provider = os.getenv("EVALVITALS_CLI_PROVIDER", "claude_code")
+        print(f"\n=== CLI Agent Demo ({provider}) ===")
+        demo_cli_agent()
 
 
 if __name__ == "__main__":
