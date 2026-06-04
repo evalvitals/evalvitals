@@ -404,8 +404,8 @@ def test_evolution_extract_lessons_inconclusive():
     )
     report._run_id = "run-test"
     lessons = extract_lessons(report)
-    categories = {l.category for l in lessons}
-    severities = {l.severity for l in lessons}
+    categories = {lesson.category for lesson in lessons}
+    severities = {lesson.severity for lesson in lessons}
     assert "surgery" in categories
     assert "diagnosis" in categories
     assert "warning" in severities
@@ -424,7 +424,7 @@ def test_evolution_extract_lessons_resolved_has_no_diagnosis_warning():
     )
     report._run_id = "run-ok"
     lessons = extract_lessons(report)
-    diag_warnings = [l for l in lessons if l.category == "diagnosis" and l.severity == "warning"]
+    diag_warnings = [lesson for lesson in lessons if lesson.category == "diagnosis" and lesson.severity == "warning"]
     assert len(diag_warnings) == 0, "Resolved run should not produce a diagnosis warning"
 
 
@@ -540,7 +540,6 @@ def test_loop_creates_evolution_dir(tmp_path):
 def test_loop_checkpoint_written_after_cycle(tmp_path):
     """Checkpoint is written when at least one full cycle completes."""
     from evalvitals.eval_agent.loop import AutoDiagnoseLoop
-    from evalvitals.eval_agent.hypothesis import HypothesisStatus
 
     mock_model = MagicMock()
     mock_probe = MagicMock()

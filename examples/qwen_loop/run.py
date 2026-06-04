@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import logging
-import sys
 import textwrap
 import urllib.request
 from pathlib import Path
@@ -209,6 +207,7 @@ def main() -> None:
     surgery_agent = None
     if diagnosis_agent is not None:
         import shutil
+
         from evalvitals.eval_agent import CliAgentConfig, ExperimentWriterConfig, SurgeryAgent
 
         codex_bin = shutil.which("codex")
@@ -253,7 +252,7 @@ def main() -> None:
     print(f"AutoDiagnoseLoop  model={args.model}  max_cycles={args.max_cycles}")
     print(f"{'='*60}")
 
-    report = loop.run(cases)
+    loop.run(cases)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     import json

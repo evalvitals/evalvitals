@@ -176,7 +176,7 @@ class JsonlStore(Store):
                 out.append(rec)
 
         if kind in (None, "hypotheses"):
-            from evalvitals.eval_agent.hypothesis import HypothesisStatus, hypothesis_from_dict
+            from evalvitals.eval_agent.hypothesis import hypothesis_from_dict
             for rec in self._load(self._hyp_path):
                 h = hypothesis_from_dict(rec)
                 if filters.get("status") is not None:

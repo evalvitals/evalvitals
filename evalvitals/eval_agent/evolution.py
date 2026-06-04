@@ -249,9 +249,9 @@ class EvolutionStore:
         Results are sorted descending by weight; at most *max_lessons* returned.
         """
         all_lessons = self.load_all()
-        relevant = [l for l in all_lessons if l.category == category]
+        relevant = [lesson for lesson in all_lessons if lesson.category == category]
         # Sort by time-decay weight descending (most recent first)
-        relevant.sort(key=lambda l: _time_weight(l.timestamp), reverse=True)
+        relevant.sort(key=lambda lesson: _time_weight(lesson.timestamp), reverse=True)
         return relevant[:max_lessons]
 
     def build_overlay(self, category: str, *, max_lessons: int = 5) -> str:

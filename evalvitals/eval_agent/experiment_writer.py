@@ -1320,7 +1320,7 @@ class ExperimentWriter:
             if new_result.ok and new_result.returncode == 0:
                 files = candidate
                 last_result = new_result
-                self._log_event(f"  Review fixes applied and verified")
+                self._log_event("  Review fixes applied and verified")
             else:
                 self._log_event(
                     f"  Review fixes degraded the run (rc={new_result.returncode}) — reverting"

@@ -58,7 +58,7 @@ class InterventionResult:
 
 # Keys that carry diagnostic meaning in per-case finding entries.
 # Excluded from the signal scan because they are indices, not boolean flags.
-def _serialize_cases(data: CaseBatch, image_dir: "Path | None" = None) -> str:
+def _serialize_cases(data: CaseBatch, image_dir: "Any | None" = None) -> str:
     """Serialize *data* to a compact JSON string embeddable in a script.
 
     Text fields are always included.  When *image_dir* is provided, PIL images
