@@ -4,6 +4,11 @@ Writes a JSONL event log (one line per M1/M2/M3/M4 event) and saves heavy
 analyzer artifacts (attention tensors, hidden-state arrays) to a separate
 ``artifacts/`` directory, keyed by cycle number so they stay navigable.
 
+Each JSON record always contains a ``ts`` (ISO-8601) and an ``event`` field.
+The underlying file handler is a standard :class:`logging.FileHandler`, so
+callers can attach additional handlers (e.g. a ``StreamHandler`` for console
+output) by accessing ``RunLogger.logger``.
+
 Usage::
 
     from evalvitals.eval_agent import AutoDiagnoseLoop, RunLogger
@@ -26,11 +31,18 @@ Auto-timestamped run dir (default when no path is given)::
 
     loop = AutoDiagnoseLoop(model=model, run_logger=RunLogger())
     print(loop.run_logger.run_dir)   # → runs/20260603_142305/
+
+Add a console handler to mirror events to stderr::
+
+    import logging, sys
+    rl = RunLogger("runs/exp_01")
+    rl.logger.addHandler(logging.StreamHandler(sys.stderr))
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +57,13 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.surgery import InterventionResult
 
 
+class _JsonFormatter(logging.Formatter):
+    """Format each LogRecord as a single JSON line using the ``_payload`` extra."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return json.dumps(getattr(record, "_payload", {}), default=str)
+
+
 class RunLogger:
     """Structured JSONL logger + artifact sink for one :class:`AutoDiagnoseLoop` run.
 
@@ -52,6 +71,10 @@ class RunLogger:
     (always including a ``ts`` ISO-8601 timestamp and a ``cycle`` index).
     Heavy artifacts from M1 results are written to ``artifacts/`` as ``.npy``
     (numpy / torch tensors) or ``.json`` (dicts / lists).
+
+    The underlying :attr:`logger` is a standard :class:`logging.Logger` named
+    ``evalvitals.run.<run_dir_name>``.  It does **not** propagate to the root
+    logger so it stays silent unless you add handlers.
 
     Args:
         run_dir:  Directory to write into.  Created if it does not exist.
@@ -72,7 +95,14 @@ class RunLogger:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.artifact_dir.mkdir(exist_ok=True)
         self.log_path = self.run_dir / "run_log.jsonl"
-        self._fh = open(self.log_path, "a", encoding="utf-8")  # noqa: SIM115
+
+        self.logger = logging.getLogger(f"evalvitals.run.{self.run_dir.name}")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False
+
+        self._file_handler = logging.FileHandler(self.log_path, encoding="utf-8")
+        self._file_handler.setFormatter(_JsonFormatter())
+        self.logger.addHandler(self._file_handler)
 
     # ------------------------------------------------------------------
     # Event hooks — called by AutoDiagnoseLoop at each stage
@@ -81,7 +111,7 @@ class RunLogger:
     def log_probe(self, cycle: int, results: dict[str, "Result"]) -> None:
         """M1: log findings (JSON) and persist heavy artifacts to disk."""
         artifact_paths = self._save_probe_artifacts(cycle, results)
-        self._write({
+        self._log({
             "event": "probe",
             "cycle": cycle,
             "analyzers": list(results),
@@ -91,7 +121,7 @@ class RunLogger:
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""
-        self._write({
+        self._log({
             "event": "analysis",
             "cycle": cycle,
             "severity": report.severity,
@@ -102,7 +132,7 @@ class RunLogger:
 
     def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:
         """M3: log raw LLM output and every parsed hypothesis."""
-        self._write({
+        self._log({
             "event": "diagnosis",
             "cycle": cycle,
             "model_name": diag.model_name,
@@ -125,7 +155,7 @@ class RunLogger:
         iv: "InterventionResult",
     ) -> None:
         """M4: log intervention outcome for one hypothesis."""
-        self._write({
+        self._log({
             "event": "surgery",
             "cycle": cycle,
             "hypothesis": hypothesis.statement,
@@ -138,7 +168,7 @@ class RunLogger:
 
     def log_loop_end(self, report: "AutoDiagnoseReport") -> None:
         """Final summary entry — written and file closed when the loop exits."""
-        self._write({
+        self._log({
             "event": "loop_end",
             "cycles": report.cycles,
             "resolved": report.resolved,
@@ -159,9 +189,10 @@ class RunLogger:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Flush and close the log file."""
-        if not self._fh.closed:
-            self._fh.close()
+        """Flush and close the log file handler."""
+        self._file_handler.flush()
+        self._file_handler.close()
+        self.logger.removeHandler(self._file_handler)
 
     def __enter__(self) -> "RunLogger":
         return self
@@ -176,10 +207,9 @@ class RunLogger:
     # Internals
     # ------------------------------------------------------------------
 
-    def _write(self, entry: dict[str, Any]) -> None:
+    def _log(self, entry: dict[str, Any]) -> None:
         entry["ts"] = datetime.now().isoformat()
-        self._fh.write(json.dumps(entry, default=str) + "\n")
-        self._fh.flush()
+        self.logger.info("run_event", extra={"_payload": entry})
 
     def _save_probe_artifacts(
         self,
