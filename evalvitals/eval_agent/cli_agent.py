@@ -1,0 +1,442 @@
+"""CLI coding-agent backends for M4 ExperimentWriter.
+
+Mirrors researchclaw/experiment/code_agent.py.
+
+Supported providers:
+
+    ``"llm"``         — single-pass LLM (default; handled by ExperimentWriter,
+                        not by this module)
+    ``"claude_code"`` — Claude Code CLI  (``claude -p``)
+    ``"codex"``       — OpenAI Codex CLI  (``codex exec``)
+    ``"opencode"``    — OpenCode CLI      (``opencode run``)
+    ``"gemini_cli"``  — Gemini CLI        (``gemini -p``)
+    ``"kimi_cli"``    — Kimi CLI          (``kimi chat``)
+
+Usage::
+
+    from evalvitals.eval_agent.cli_agent import CliAgentConfig, create_cli_agent
+
+    cfg   = CliAgentConfig(provider="claude_code", model="sonnet", max_budget_usd=2.0)
+    agent = create_cli_agent(cfg)
+    result = agent.run(prompt, workdir=Path("runs/exp_01"), timeout_sec=300)
+    if result.ok:
+        code = result.files.get("experiment.py")
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import signal
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+_VALID_PROVIDERS = frozenset(
+    {"llm", "claude_code", "codex", "opencode", "gemini_cli", "kimi_cli"}
+)
+
+_BINARY_DEFAULTS: dict[str, str] = {
+    "claude_code": "claude",
+    "codex":       "codex",
+    "opencode":    "opencode",
+    "gemini_cli":  "gemini",
+    "kimi_cli":    "kimi",
+}
+
+
+@dataclass(frozen=True)
+class CliAgentConfig:
+    """Configuration for a CLI-based coding-agent backend.
+
+    Args:
+        provider:        Which CLI agent to use.  ``"llm"`` (default) means no
+                         CLI agent — ``ExperimentWriter`` falls back to its
+                         single-pass LLM path.
+        binary_path:     Explicit path to the CLI binary.  Auto-detected via
+                         :func:`shutil.which` when empty.
+        model:           Model-override flag forwarded to the binary (e.g.
+                         ``"sonnet"`` for Claude Code, ``"gpt-4o"`` for Codex).
+        max_budget_usd:  Spend cap forwarded to ``--max-budget-usd`` (Claude Code).
+        timeout_sec:     Hard wall-clock limit for the agent subprocess.
+        extra_args:      Additional flags appended verbatim to the CLI command.
+    """
+
+    provider: str = "llm"
+    binary_path: str = ""
+    model: str = ""
+    max_budget_usd: float = 5.0
+    timeout_sec: int = 600
+    extra_args: tuple[str, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# Result
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CliAgentResult:
+    """Output of one CLI agent invocation.
+
+    Attributes:
+        files:         ``{filename: source_code}`` collected from the workdir
+                       after the agent exits.
+        provider_name: Short identifier of the provider that ran (e.g.
+                       ``"claude_code"``).
+        elapsed_sec:   Wall-clock seconds for the subprocess.
+        raw_output:    First 3 000 chars of stdout (for logging / debug).
+        error:         Non-``None`` when the agent timed out or exited non-zero
+                       **and** produced no files.
+    """
+
+    files: dict[str, str]
+    provider_name: str
+    elapsed_sec: float
+    raw_output: str = ""
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.files)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _to_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _collect_py_files(workdir: Path) -> dict[str, str]:
+    """Read all ``.py`` files from *workdir* (flat, non-recursive).
+
+    Skips files whose names start with ``_codex_`` or ``_agent_`` (provider-
+    internal temp files).  Mirrors the ARC pattern exactly.
+    """
+    files: dict[str, str] = {}
+    for pyfile in sorted(workdir.glob("*.py")):
+        if pyfile.name.startswith(("_codex_", "_agent_")):
+            continue
+        try:
+            files[pyfile.name] = pyfile.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return files
+
+
+# ---------------------------------------------------------------------------
+# Base class
+# ---------------------------------------------------------------------------
+
+class _CliAgentBase:
+    """Subprocess runner shared by all CLI agent providers.
+
+    Mirrors ``researchclaw.experiment.code_agent._CliAgentBase``.
+    """
+
+    _provider_name: str = "unknown"
+
+    def __init__(
+        self,
+        binary_path: str,
+        model: str = "",
+        max_budget_usd: float = 5.0,
+        timeout_sec: int = 600,
+        extra_args: list[str] | None = None,
+    ) -> None:
+        self._binary = binary_path
+        self._model = model
+        self._max_budget_usd = max_budget_usd
+        self._timeout_sec = timeout_sec
+        self._extra_args: list[str] = extra_args or []
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def run(
+        self,
+        prompt: str,
+        workdir: Path,
+        timeout_sec: int | None = None,
+    ) -> CliAgentResult:
+        """Invoke the CLI agent with *prompt* and return collected files.
+
+        Args:
+            prompt:      Full prompt string forwarded to the CLI.
+            workdir:     Directory the agent operates in (must already exist or
+                         will be created).
+            timeout_sec: Override the instance-level timeout.
+        """
+        timeout = timeout_sec if timeout_sec is not None else self._timeout_sec
+        cmd = self._build_cmd(prompt, workdir)
+        logger.debug("%s: running %s", self._provider_name, cmd[0])
+
+        rc, stdout, stderr, elapsed, timed_out = self._run_subprocess(
+            cmd, workdir, timeout
+        )
+        return self._build_result(workdir, rc, stdout, stderr, elapsed, timed_out)
+
+    # ------------------------------------------------------------------
+    # Overridden by each provider
+    # ------------------------------------------------------------------
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:  # pragma: no cover
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    # Core subprocess runner  (mirrors ARC's _run_subprocess)
+    # ------------------------------------------------------------------
+
+    def _run_subprocess(
+        self,
+        cmd: list[str],
+        workdir: Path,
+        timeout_sec: int,
+    ) -> tuple[int, str, str, float, bool]:
+        """Run *cmd* in *workdir*; return ``(rc, stdout, stderr, elapsed, timed_out)``."""
+        workdir.mkdir(parents=True, exist_ok=True)
+        start = time.monotonic()
+        timed_out = False
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=workdir,
+            env={**os.environ},
+            start_new_session=True,  # own process group for clean kill
+        )
+
+        try:
+            stdout_bytes, stderr_bytes = proc.communicate(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            # SIGTERM first; give it 5 s; then SIGKILL
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except OSError:
+                pass
+            try:
+                stdout_bytes, stderr_bytes = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+                stdout_bytes, stderr_bytes = b"", b""
+                try:
+                    proc.communicate(timeout=5)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        elapsed = time.monotonic() - start
+        rc = proc.returncode if proc.returncode is not None else -1
+        return rc, _to_text(stdout_bytes), _to_text(stderr_bytes), elapsed, timed_out
+
+    def _build_result(
+        self,
+        workdir: Path,
+        rc: int,
+        stdout: str,
+        stderr: str,
+        elapsed: float,
+        timed_out: bool,
+    ) -> CliAgentResult:
+        files = _collect_py_files(workdir)
+        error: str | None = None
+        if timed_out:
+            error = f"[TIMEOUT] agent killed after {elapsed:.0f}s"
+        elif rc != 0 and not files:
+            error = f"Exited {rc}: {stderr[:500]}"
+
+        logger.debug(
+            "%s: rc=%d files=%s elapsed=%.1fs timed_out=%s",
+            self._provider_name, rc, list(files), elapsed, timed_out,
+        )
+        return CliAgentResult(
+            files=files,
+            provider_name=self._provider_name,
+            elapsed_sec=elapsed,
+            raw_output=stdout[:3000],
+            error=error,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Provider implementations
+# ---------------------------------------------------------------------------
+
+class ClaudeCodeAgent(_CliAgentBase):
+    """Claude Code CLI backend (``claude -p``).
+
+    Requires the ``claude`` binary installed and ``ANTHROPIC_API_KEY`` set.
+    """
+
+    _provider_name = "claude_code"
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        cmd = [
+            self._binary, "-p", prompt,
+            "--dangerously-skip-permissions",
+            "--output-format", "text",
+            "--allowed-tools", "Bash Edit Write Read",
+            "--add-dir", str(workdir),
+        ]
+        if self._model:
+            cmd += ["--model", self._model]
+        if self._max_budget_usd:
+            cmd += ["--max-budget-usd", str(self._max_budget_usd)]
+        cmd.extend(self._extra_args)
+        return cmd
+
+
+class CodexAgent(_CliAgentBase):
+    """OpenAI Codex CLI backend (``codex exec``).
+
+    Requires ``codex`` installed and ``OPENAI_API_KEY`` set.
+    """
+
+    _provider_name = "codex"
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        cmd = [
+            self._binary, "exec", prompt,
+            "--sandbox", "workspace-write",
+            "--json",
+            "-C", str(workdir),
+        ]
+        if self._model:
+            cmd += ["-m", self._model]
+        cmd.extend(self._extra_args)
+        return cmd
+
+
+class OpenCodeAgent(_CliAgentBase):
+    """OpenCode CLI backend (``opencode run``).
+
+    Requires ``opencode`` installed.
+    """
+
+    _provider_name = "opencode"
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        cmd = [
+            self._binary, "run",
+            "--message", prompt,
+            "--cwd", str(workdir),
+        ]
+        if self._model:
+            cmd += ["--model", self._model]
+        cmd.extend(self._extra_args)
+        return cmd
+
+
+class GeminiCliAgent(_CliAgentBase):
+    """Gemini CLI backend (``gemini -p``).
+
+    Requires ``gemini`` installed and ``GEMINI_API_KEY`` set.
+    """
+
+    _provider_name = "gemini_cli"
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        cmd = [
+            self._binary, "-p", prompt,
+            "--cwd", str(workdir),
+        ]
+        if self._model:
+            cmd += ["--model", self._model]
+        cmd.extend(self._extra_args)
+        return cmd
+
+
+class KimiCliAgent(_CliAgentBase):
+    """Kimi CLI backend (``kimi chat``).
+
+    Requires ``kimi`` installed and ``MOONSHOT_API_KEY`` set.
+    """
+
+    _provider_name = "kimi_cli"
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        cmd = [
+            self._binary, "chat",
+            "--message", prompt,
+            "--workdir", str(workdir),
+        ]
+        if self._model:
+            cmd += ["--model", self._model]
+        cmd.extend(self._extra_args)
+        return cmd
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+_PROVIDER_CLASSES: dict[str, type[_CliAgentBase]] = {
+    "claude_code": ClaudeCodeAgent,
+    "codex":       CodexAgent,
+    "opencode":    OpenCodeAgent,
+    "gemini_cli":  GeminiCliAgent,
+    "kimi_cli":    KimiCliAgent,
+}
+
+
+def create_cli_agent(config: CliAgentConfig) -> _CliAgentBase:
+    """Instantiate the appropriate CLI agent for *config*.
+
+    Args:
+        config: :class:`CliAgentConfig` with ``provider`` set to a non-``"llm"``
+                value.
+
+    Raises:
+        ValueError:  When ``provider`` is ``"llm"`` or unknown.
+        RuntimeError: When the CLI binary is not found on PATH and no explicit
+                      ``binary_path`` was given.
+    """
+    provider = config.provider
+
+    if provider == "llm":
+        raise ValueError(
+            "'llm' is not a CLI provider. Use ExperimentWriter directly "
+            "(leave cli_agent=None or CliAgentConfig(provider='llm'))."
+        )
+
+    cls = _PROVIDER_CLASSES.get(provider)
+    if cls is None:
+        raise ValueError(
+            f"Unknown CLI provider: {provider!r}. "
+            f"Valid: {sorted(_PROVIDER_CLASSES)}"
+        )
+
+    binary = config.binary_path or shutil.which(_BINARY_DEFAULTS[provider]) or ""
+    if not binary:
+        raise RuntimeError(
+            f"CLI agent binary for {provider!r} not found in PATH. "
+            f"Install '{_BINARY_DEFAULTS[provider]}' or pass "
+            f"CliAgentConfig(binary_path='/path/to/{_BINARY_DEFAULTS[provider]}')."
+        )
+
+    return cls(
+        binary_path=binary,
+        model=config.model,
+        max_budget_usd=config.max_budget_usd,
+        timeout_sec=config.timeout_sec,
+        extra_args=list(config.extra_args),
+    )

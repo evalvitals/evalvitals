@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.eval_agent.hypothesis import HypothesisStatus
 from evalvitals.eval_agent.store import InMemoryStore, Store
 
 if TYPE_CHECKING:
@@ -160,9 +161,22 @@ class AutoDiagnoseLoop:
         final_results: dict[str, Any] = {}
         final_analysis = None
 
+        # State threaded across cycles.
+        # prior_cycles: fed to M3 so the judge avoids re-proposing tested hypotheses.
+        # outstanding_modes: failure-mode tags from INCONCLUSIVE hypotheses, used
+        #   by M1 to focus the next probe on hypothesis-relevant analyzers.
+        prior_cycles: list[dict[str, Any]] = []
+        outstanding_modes: list[str] = []
+        completed_cycles = 0
+
         for cycle in range(self.max_cycles):
-            # ── M1: probe — select analyzers and execute them ──────────────
-            probe_results = self.probe_agent.probe(self.model, data)
+            completed_cycles = cycle + 1
+
+            # ── M1: probe — select analyzers, boost by outstanding modes ───
+            probe_results = self.probe_agent.probe(
+                self.model, data,
+                hint_failure_modes=outstanding_modes or None,
+            )
             if not probe_results:
                 break
             final_results = probe_results
@@ -180,8 +194,10 @@ class AutoDiagnoseLoop:
             if self.diagnosis_agent is None:
                 break  # analysis-only mode: stop after first M1+M2 pass
 
-            # ── M3: diagnose — LLM proposes hypotheses from the report ─────
-            diag = self.diagnosis_agent.diagnose(analysis)
+            # ── M3: diagnose — LLM proposes hypotheses, with prior context ─
+            diag = self.diagnosis_agent.diagnose(
+                analysis, prior_cycles=prior_cycles or None
+            )
             if self.run_logger:
                 self.run_logger.log_diagnosis(cycle, diag)
             if not diag.hypotheses:
@@ -191,6 +207,7 @@ class AutoDiagnoseLoop:
             all_hypotheses.extend(diag.hypotheses)
 
             # ── M4: surgery — intervene and verify each hypothesis ─────────
+            outstanding_modes = []
             for h in diag.hypotheses:
                 iv = self.surgery_agent.operate(h, self.model, probe_results, data)
                 h.status = iv.status
@@ -198,7 +215,7 @@ class AutoDiagnoseLoop:
                     self.run_logger.log_surgery(cycle, h, iv)
                 if iv.fixed:
                     report = AutoDiagnoseReport(
-                        cycles=cycle + 1,
+                        cycles=completed_cycles,
                         resolved=True,
                         final_hypotheses=all_hypotheses,
                         final_results=final_results,
@@ -208,11 +225,28 @@ class AutoDiagnoseLoop:
                     if self.run_logger:
                         self.run_logger.log_loop_end(report)
                     return report
+                # Collect inconclusive modes so M1 can focus the next probe.
+                if iv.status == HypothesisStatus.INCONCLUSIVE:
+                    outstanding_modes.append(h.predicted_failure_mode)
                 if iv.new_data is not None and len(iv.new_data) > 0:
                     data = iv.new_data  # refocus on unexplained cases
 
+            # Record this cycle so M3 can see what was already tested.
+            prior_cycles.append({
+                "cycle": cycle,
+                "severity": analysis.severity,
+                "hypotheses": [
+                    {
+                        "statement": h.statement,
+                        "failure_mode": h.predicted_failure_mode,
+                        "status": h.status.value if h.status else "pending",
+                    }
+                    for h in diag.hypotheses
+                ],
+            })
+
         report = AutoDiagnoseReport(
-            cycles=self.max_cycles,
+            cycles=completed_cycles,
             resolved=False,
             final_hypotheses=all_hypotheses,
             final_results=final_results,

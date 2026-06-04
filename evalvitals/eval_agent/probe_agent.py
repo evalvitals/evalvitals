@@ -99,13 +99,29 @@ class ProbeAgent:
     # Public interface
     # ------------------------------------------------------------------
 
-    def probe(self, model: "Model", data: "CaseBatch") -> dict[str, "Result"]:
+    def probe(
+        self,
+        model: "Model",
+        data: "CaseBatch",
+        hint_failure_modes: list[str] | None = None,
+    ) -> dict[str, "Result"]:
         """Select analyzers and run each one, returning a ``{name: Result}`` dict.
 
         Black-box-compatible analyzers are dispatched to Docker when
         ``use_docker=True``; all others always run in-process.
+
+        Args:
+            model:              The model to probe.
+            data:               Cases to run analyzers on.
+            hint_failure_modes: Failure-mode tags from M3 — used to boost
+                                analyzers that are relevant to outstanding
+                                hypotheses (cycle 2+ focused probing).
         """
-        names = self.selector.select(model, max_analyzers=self.max_analyzers)
+        names = self.selector.select(
+            model,
+            max_analyzers=self.max_analyzers,
+            hint_failure_modes=hint_failure_modes,
+        )
         results: dict[str, "Result"] = {}
 
         for name in names:

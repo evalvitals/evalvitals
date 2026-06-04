@@ -22,6 +22,7 @@ Usage::
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -57,6 +58,28 @@ class InterventionResult:
 
 # Keys that carry diagnostic meaning in per-case finding entries.
 # Excluded from the signal scan because they are indices, not boolean flags.
+def _serialize_cases(data: CaseBatch) -> str:
+    """Serialize *data* to a compact JSON string embeddable in a script.
+
+    Only text-serialisable fields are included (prompt, label, metadata).
+    Heavy objects like PIL images are skipped — the generated script should
+    deal with text-only probes or fetch its own test data.
+    """
+    records = []
+    for case in data:
+        rec: dict[str, Any] = {"prompt": str(case.inputs)}
+        if getattr(case, "label", None) is not None:
+            rec["label"] = str(case.label)
+        if getattr(case, "id", None):
+            rec["id"] = case.id
+        meta = getattr(case, "metadata", {}) or {}
+        if meta:
+            rec["metadata"] = {k: v for k, v in meta.items()
+                               if isinstance(v, (str, int, float, bool, type(None)))}
+        records.append(rec)
+    return json.dumps(records, indent=2)
+
+
 _NON_SIGNAL_KEYS = frozenset(
     {"sample_id", "id", "step", "first_error_step", "action", "judge_raw"}
 )
@@ -86,13 +109,26 @@ def _extract_per_case_signals(results: dict[str, "Result"]) -> dict[str, bool]:
 class SurgeryAgent:
     """Verify hypotheses by operating on the model or data.
 
+    Strategy selection (first match wins):
+
+    1. ``verify_fn`` injected → full custom override.
+    2. ``analyzer_params`` provided → param sweep (re-run named analyzers).
+    3. ``judge`` provided → :class:`~evalvitals.eval_agent.experiment_writer.ExperimentWriter`
+       writes a targeted Python script, runs it in a sandbox, and interprets
+       the ``verdict`` metric printed to stdout.
+    4. Default → label-correlation analysis (passive, no code execution).
+
     Args:
-        verify_fn:       Optional callable ``(hypothesis, model, results, data)
-                         -> InterventionResult`` that fully overrides the default
-                         logic.  Use when you need domain-specific verification.
-        analyzer_params: ``{analyzer_name: {param: value}}`` dict triggering the
-                         param-sweep path.  Runs each named analyzer with the
-                         given params and surfaces before/after findings.
+        verify_fn:       Custom verification callable.
+        analyzer_params: ``{analyzer_name: {param: value}}`` for param sweep.
+        judge:           Any ``Model`` with ``Capability.GENERATE`` used by the
+                         experiment writer to write diagnostic code.  When ``None``
+                         the writer is disabled and the agent falls back to label
+                         correlation.
+        sandbox_dir:     Directory for sandbox script files.  A temp dir is
+                         created automatically when ``None``.
+        writer_config:   :class:`~evalvitals.eval_agent.experiment_writer.ExperimentWriterConfig`
+                         controlling phases and limits.
     """
 
     def __init__(
@@ -103,9 +139,26 @@ class SurgeryAgent:
         ]
         | None = None,
         analyzer_params: dict[str, dict[str, Any]] | None = None,
+        judge: "Model | None" = None,
+        sandbox_dir: "str | None" = None,
+        writer_config: "Any | None" = None,
     ) -> None:
         self.verify_fn = verify_fn
         self.analyzer_params = analyzer_params or {}
+
+        self._writer = None
+        self._sandbox = None
+        if judge is not None:
+            from evalvitals.eval_agent.experiment_writer import (
+                ExperimentWriter,
+                ExperimentWriterConfig,
+            )
+            from evalvitals.eval_agent.sandbox import ExperimentSandbox
+
+            cfg = writer_config if isinstance(writer_config, ExperimentWriterConfig) \
+                else ExperimentWriterConfig()
+            self._writer = ExperimentWriter(judge=judge, config=cfg)
+            self._sandbox = ExperimentSandbox(workdir=sandbox_dir)
 
     def operate(
         self,
@@ -114,18 +167,13 @@ class SurgeryAgent:
         results: dict[str, "Result"],
         data: CaseBatch,
     ) -> InterventionResult:
-        """Perform the intervention for *hypothesis* and return the outcome.
-
-        Strategy selection (first match wins):
-
-        1. ``verify_fn`` injected → delegate entirely.
-        2. ``analyzer_params`` provided → param sweep.
-        3. Default → label-correlation analysis.
-        """
+        """Perform the intervention for *hypothesis* and return the outcome."""
         if self.verify_fn is not None:
             return self.verify_fn(hypothesis, model, results, data)
         if self.analyzer_params:
             return self._param_sweep(hypothesis, model, data)
+        if self._writer is not None:
+            return self._execute_experiment(hypothesis, model, data)
         return self._correlate_with_labels(hypothesis, results, data)
 
     # ------------------------------------------------------------------
@@ -210,6 +258,77 @@ class SurgeryAgent:
             fixed=fixed,
             evidence=evidence,
             new_data=new_data,
+        )
+
+    def _execute_experiment(
+        self,
+        hypothesis: Hypothesis,
+        model: "Model",
+        data: CaseBatch,
+    ) -> InterventionResult:
+        """M4 strategy 3: write + execute a targeted diagnostic script.
+
+        Mirrors ``researchclaw`` Stage-14 diagnosis + repair loop:
+
+        1. :class:`~evalvitals.eval_agent.experiment_writer.ExperimentWriter`
+           generates a self-contained Python script via the LLM judge.
+        2. The script is run in a subprocess sandbox (exec-fix loop).
+        3. ``verdict: 1.0`` → SUPPORTED; ``verdict: 0.0`` → REFUTED;
+           no verdict or crash → INCONCLUSIVE.
+        """
+        from evalvitals.eval_agent.experiment_writer import build_model_context
+
+        model_context = build_model_context(model)
+        cases_json = _serialize_cases(data)
+
+        writer_result = self._writer.write_and_run(  # type: ignore[union-attr]
+            hypothesis=hypothesis,
+            model_context=model_context,
+            cases_json=cases_json,
+            sandbox=self._sandbox,  # type: ignore[arg-type]
+        )
+
+        evidence: dict[str, Any] = {
+            "metrics": writer_result.metrics,
+            "returncode": writer_result.returncode,
+            "timed_out": writer_result.timed_out,
+            "llm_calls": writer_result.total_llm_calls,
+            "sandbox_runs": writer_result.total_sandbox_runs,
+            "validation_log": writer_result.validation_log,
+        }
+
+        # Crashed or timed out with no metrics → inconclusive
+        if not writer_result.ok and not writer_result.metrics:
+            return InterventionResult(
+                hypothesis=hypothesis,
+                status=HypothesisStatus.INCONCLUSIVE,
+                fixed=False,
+                evidence={**evidence, "reason": "script did not produce metrics"},
+            )
+
+        verdict = writer_result.verdict
+        if verdict is None:
+            return InterventionResult(
+                hypothesis=hypothesis,
+                status=HypothesisStatus.INCONCLUSIVE,
+                fixed=False,
+                evidence={**evidence, "reason": "no verdict line in output"},
+            )
+
+        if verdict >= 0.5:
+            status = HypothesisStatus.SUPPORTED
+            # "Fixed" means confidence is very high (verdict == 1.0 and high confidence)
+            confidence = writer_result.metrics.get("confidence", verdict)
+            fixed = verdict >= 1.0 and confidence >= 0.9
+        else:
+            status = HypothesisStatus.REFUTED
+            fixed = False
+
+        return InterventionResult(
+            hypothesis=hypothesis,
+            status=status,
+            fixed=fixed,
+            evidence=evidence,
         )
 
     def _param_sweep(

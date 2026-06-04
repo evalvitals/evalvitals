@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 _DIAGNOSE_PROMPT = """\
 You are an expert ML diagnostician. Based on the analysis report below, propose
 specific, falsifiable hypotheses about the root cause of the model's failures.
-
+{prior_section}
 Model: {model_name}
 Overall severity: {severity}
 
@@ -51,7 +51,26 @@ HYPOTHESIS: <one-sentence falsifiable claim about the failure mode>
 FAILURE_MODE: <short tag, e.g. attention_sink / hallucination / loop / low_consistency>
 
 Only include hypotheses clearly supported by the analysis.
+Do NOT repeat hypotheses already listed in the prior cycles above.
 If the model looks healthy, respond with: NO_ISSUE"""
+
+
+def _format_prior_section(prior_cycles: list[dict]) -> str:
+    """Render prior cycle history as a context block for the diagnosis prompt."""
+    if not prior_cycles:
+        return ""
+    lines = [
+        "\nPrior investigation cycles — do NOT repeat these hypotheses; propose "
+        "distinct or refined ones that address what remains unexplained:",
+    ]
+    for c in prior_cycles:
+        lines.append(f"\nCycle {c['cycle']} (severity={c['severity']}):")
+        for h in c.get("hypotheses", []):
+            lines.append(
+                f"  [{h['status'].upper()}] {h['statement']} "
+                f"(failure_mode: {h['failure_mode']})"
+            )
+    return "\n".join(lines) + "\n"
 
 
 @dataclass
@@ -146,15 +165,22 @@ class DiagnosisAgent:
         self,
         analysis: "AnalysisReport | dict[str, Result]",
         model_name: str = "",
+        prior_cycles: list[dict] | None = None,
     ) -> DiagnosisResult:
         """Synthesize *analysis* into a set of falsifiable hypotheses.
 
         Args:
-            analysis:   An :class:`~evalvitals.eval_agent.analysis.AnalysisReport`
-                        from M2, or (for backward compatibility) a plain
-                        ``{analyzer_name: Result}`` dict.
-            model_name: Ignored when *analysis* is an ``AnalysisReport``
-                        (the name is taken from the report).
+            analysis:     An :class:`~evalvitals.eval_agent.analysis.AnalysisReport`
+                          from M2, or (for backward compatibility) a plain
+                          ``{analyzer_name: Result}`` dict.
+            model_name:   Ignored when *analysis* is an ``AnalysisReport``
+                          (the name is taken from the report).
+            prior_cycles: Summary of previous M1→M4 cycles produced by
+                          :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`.
+                          Each entry is ``{"cycle": int, "severity": str,
+                          "hypotheses": [{"statement", "failure_mode", "status"}]}``.
+                          Injected into the prompt so the judge avoids re-proposing
+                          already-tested hypotheses.
 
         Returns:
             :class:`DiagnosisResult` with zero or more hypotheses.
@@ -167,6 +193,7 @@ class DiagnosisAgent:
 
         summary = {name: r.findings for name, r in analysis.raw_results.items()}
         prompt = _DIAGNOSE_PROMPT.format(
+            prior_section=_format_prior_section(prior_cycles or []),
             model_name=analysis.model_name or model_name,
             severity=analysis.severity,
             narrative=analysis.narrative,
