@@ -17,6 +17,12 @@ Layout:
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
 from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
 from evalvitals.eval_agent.diagnosis import DiagnosisAgent, DiagnosisResult
+from evalvitals.eval_agent.experiment_writer import (
+    ExperimentWriter,
+    ExperimentWriterConfig,
+    ExperimentWriterResult,
+    build_model_context,
+)
 from evalvitals.eval_agent.hypothesis import (
     Hypothesis,
     HypothesisGenerator,
@@ -35,6 +41,7 @@ from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.probe_agent import ProbeAgent
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_logger import RunLogger
+from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult, parse_metrics
 from evalvitals.eval_agent.store import InMemoryStore, Store
 from evalvitals.eval_agent.surgery import InterventionResult, SurgeryAgent
 
@@ -72,4 +79,12 @@ __all__ = [
     "PreregistrationLog",
     "DiagnosticReport",
     "RunLogger",
+    # Experiment execution
+    "ExperimentWriter",
+    "ExperimentWriterConfig",
+    "ExperimentWriterResult",
+    "build_model_context",
+    "ExperimentSandbox",
+    "SandboxResult",
+    "parse_metrics",
 ]

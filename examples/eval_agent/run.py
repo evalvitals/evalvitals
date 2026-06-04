@@ -136,7 +136,7 @@ def demo_auto_diagnose() -> None:
     """
     import evalvitals  # noqa: F401 — side-effect: registers all analyzers
 
-    from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
+    from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, SurgeryAgent
     from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
     from evalvitals.eval_agent.probe_agent import ProbeAgent
     from evalvitals.models.blackbox.gemini import GeminiModel
@@ -170,10 +170,15 @@ def demo_auto_diagnose() -> None:
     logger = RunLogger()
     print(f"  logging to: {logger.run_dir}")
 
+    # SurgeryAgent uses the same Gemini model as judge to write + execute
+    # targeted diagnostic scripts via ExperimentWriter (M4 code-execution path).
+    surgery = SurgeryAgent(judge=model)
+
     loop = AutoDiagnoseLoop(
         model=model,
         probe_agent=ProbeAgent(probe=text_probe, max_analyzers=2),
         diagnosis_agent=DiagnosisAgent(),
+        surgery_agent=surgery,
         max_cycles=2,
         run_logger=logger,
     )
