@@ -6,6 +6,84 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — experiment infrastructure (ported from AutoResearchClaw)
+
+- **`ExperimentGitManager`** (`eval_agent/git_manager.py`): git-native run versioning.
+  Each resolved diagnosis run is committed on branch `eval/{run_id}`; unresolved runs
+  are discarded with `git reset --hard HEAD`.  Auto-detected when `run_dir` is inside
+  a git repository.
+
+- **`EvolutionStore`** (`eval_agent/evolution.py`): append-only JSONL store for
+  cross-run lessons.  Lessons are weighted by a 30-day half-life exponential decay.
+  `extract_lessons(report)` derives lessons from `AutoDiagnoseReport` automatically.
+  `build_overlay(category)` formats the top-k lessons as a prompt injection string.
+
+- **`JsonlStore`** (`eval_agent/store.py`): durable JSONL-backed implementation of the
+  `Store` interface.  Hypotheses are fully round-tripped via `hypothesis_to_dict` /
+  `hypothesis_from_dict` and survive process restarts.
+
+- **`create_sandbox` factory** (`eval_agent/factory.py`): `SandboxFactoryConfig(mode=...)`
+  dispatches to `ExperimentSandbox` (subprocess, default) or `DockerSandbox` (with
+  graceful fallback when Docker is unavailable).
+
+- **`ExperimentSandbox.run_project()`** (`eval_agent/sandbox.py`): multi-file project
+  execution.  Path traversal protection (pre-copy syntax check + post-copy symlink
+  resolve).  Immutable `experiment_harness.py` injected before execution; projects
+  cannot overwrite it.  Numbered `_project_{N}` dirs (thread-safe).  Cleanup-on-success
+  policy (failure artefacts preserved for debugging).  `SandboxProtocol` structural type
+  for transparent backend substitution.
+
+- **`experiment_harness.py`**: immutable evaluation harness (time budget, NaN-guarded
+  metric reporting, `results.json` persistence) injected into every sandbox project.
+
+- **`Hypothesis.to_dict` / `from_dict`** (`eval_agent/hypothesis.py`): serialization
+  helpers used by `JsonlStore` and loop checkpointing.
+
+- **Multi-phase `ExperimentWriter`** (`eval_agent/experiment_writer.py`): full port of
+  AutoResearchClaw's `CodeAgent`.  Six opt-in phases:
+  1. Blueprint — YAML spec with file list, per-file pseudocode, and dependency order.
+  2. Sequential generation — files generated in dependency order; each prior file
+     summarised by AST-based CodeMem for context injection.
+  3. Hard validation — AST parse; critical issues (SyntaxError, missing `__main__` guard,
+     unresolvable cross-file imports) trigger targeted repair.
+  4. Exec-fix loop — parse traceback to identify failing file/line; targeted ±30-line
+     context repair; falls back to full-file repair.
+  5. Tree search (opt-in) — explore multiple blueprint variants, score by metrics.
+  6. Review dialog (opt-in) — coder-reviewer LLM exchange; reverts if run degrades.
+  `result.code` always equals `result.files["main.py"]` for backward compatibility.
+  Case images are saved as JPEG files in the sandbox workdir and referenced in the
+  codex prompt via `image_path` in `cases.json`.
+
+- **Run-directory infrastructure** (`eval_agent/loop.py`): `AutoDiagnoseLoop` now
+  accepts `run_dir`, `git_manager`, and `evolution_store` parameters.
+  - Atomic checkpoint writes (temp+rename) to `run_dir/checkpoint.json` after every cycle.
+  - Heartbeat writes to `run_dir/heartbeat.json` (pid, last_cycle, timestamp).
+  - `AutoDiagnoseLoop.resume(run_dir, model, data)` classmethod reads the checkpoint
+    and skips already-completed cycles.
+  - `EvolutionStore` auto-created under `run_dir/evolution/` when `run_dir` is set.
+  - `ExperimentGitManager` auto-detected from `run_dir` when inside a git repo.
+
+- **VLM image-attention rule** (`eval_agent/analysis.py`): `AnalysisModule` derives
+  `image_token_attention_ratio` from `top_attended_tokens` in attention findings.
+  Fires a `medium`-severity finding when the ratio is below 0.05 — indicating the VLM
+  is ignoring image tokens in favour of structural text tokens.
+
+- **Diagnosis fallback** (`eval_agent/diagnosis.py`): when the LLM judge returns
+  `NO_ISSUE` but M2 findings include medium-or-higher severity anomalies, `DiagnosisAgent`
+  automatically generates one hypothesis per finding.  Prevents self-diagnosis bias when
+  the judge is the same model under test.
+
+- **38 new infrastructure tests** (`tests/test_eval_agent/test_infrastructure.py`):
+  git manager, sandbox entry-point validation, `run_project`, harness injection,
+  cleanup policy, `JsonlStore` roundtrip, `EvolutionStore` time-decay, `extract_lessons`,
+  sandbox factory, `ExperimentWriterResult` backward compat, `AutoDiagnoseLoop` run_dir
+  lifecycle, checkpoint/heartbeat/resume.
+
+- **`examples/qwen_loop/`**: end-to-end `AutoDiagnoseLoop` example on Qwen3-VL-4B
+  with a real (or synthetic fallback) image.  `VerboseRunLogger` mirrors each M1/M2/M3/M4
+  event to stdout as it happens.  Docker Compose with CUDA 12.4 wheels, GPU selection,
+  host codex binary mount, and `./outputs/` volume.
+
 ### Added
 - `ModelSpec` / `Backend` / `compose()` architecture — identity separate from runtime.
 - 14 model specs registered: Qwen3/Qwen2.5/Qwen2 (LLM + VLM), DeepSeek-V3, Llama 3.1, Gemma 3, GLM-4, Kimi-VL, Llama-4-Scout, Step-1o.

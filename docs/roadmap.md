@@ -22,8 +22,15 @@ surfaces and planned interfaces.
 | Agent analyzers | `LoopDetector`, `IgnoredObservationDetector`, `FirstErrorJudge`, `CounterfactualReplay`. |
 | Statistics | `compare()` (McNemar + e-value + clustered bootstrap CI), `compare_multiple()` (Friedman + Nemenyi), `ebh()`, `kendall_tau`, `stratified_subset`. |
 | Eval agent — pre-registered A/B | `EvalOrchestrator`, `DataSplit`, `PreregisteredHypothesis`, `PreregistrationLog`. |
-| **AutoDiagnoseLoop** | **M1 `StrategyProbe`, M3 `DiagnosisAgent` (LLM judge), M4 `SurgeryAgent` (label correlation / param sweep / verify_fn), `AutoDiagnoseLoop` controller.** |
-| Contract tests | Parametrized pyod-style suite covering all 26 registered analyzers (513 unit tests). |
+| **AutoDiagnoseLoop** | **M1→M4 controller with hint-driven probe focus, prior-cycle context, and `resolved` fast-exit.** |
+| **ExperimentWriter** | **6-phase CodeAgent: blueprint → sequential multi-file generation (CodeMem AST summaries) → hard-validate → exec-fix (targeted traceback repair) → tree-search → review.  CLI agent backends: `codex`, `claude_code`, `opencode`, `gemini_cli`, `kimi_cli`.** |
+| **ExperimentSandbox** | **`run_project()` for multi-file projects; path traversal protection; harness injection; cleanup-on-success; `SandboxProtocol` + `create_sandbox()` factory.** |
+| **ExperimentGitManager** | **Git-native run versioning: `eval/{run_id}` branches; commit on resolve; `git reset --hard` on discard.** |
+| **EvolutionStore** | **JSONL lesson accumulation with 30-day half-life time decay; `extract_lessons(report)`; `build_overlay()` for prompt injection.** |
+| **JsonlStore** | **Durable JSONL-backed `Store`; hypotheses serialized via `hypothesis_to_dict`/`from_dict`; survives process restart.** |
+| **Run-directory infrastructure** | **Atomic checkpoints (`checkpoint.json`), heartbeat (`heartbeat.json`), `AutoDiagnoseLoop.resume()`, auto-created `EvolutionStore`.** |
+| **VLM image-attention rule** | **M2 derives `image_token_attention_ratio` from `top_attended_tokens`; fires medium-severity finding when VLM ignores image tokens.** |
+| Contract tests | Parametrized pyod-style suite covering all 26 registered analyzers (554 unit tests). |
 
 ## Stage 2 stubs (registered, `_run` raises `NotImplementedError`)
 
@@ -45,7 +52,7 @@ surfaces and planned interfaces.
 | VLM vision-tower internals | Cross-modal hidden states, vision-tower attention maps. |
 | LLM-backed hypothesis generation | `HypothesisGenerator.propose()` / `.mutate()` backed by the judge model. |
 | Case synthesis | `make_cases(spec)` — agent-driven adversarial case construction. |
-| Durable store | JSONL / SQLite backend for `Store` (currently in-memory only). |
+| SQLite store | SQLite backend for `Store` with semantic recall (JSONL `JsonlStore` already implemented). |
 | RISE | Requires user-supplied `score_fn`; improve discoverability. |
 | Omni model forward capture | Audio + video tower internals (needs `transformers≥5.2.0`). |
 
@@ -53,5 +60,6 @@ surfaces and planned interfaces.
 
 1. Keep the public API narrow and stable.
 2. Implement Stage-2 stubs incrementally (causal trace, tuned lens).
-3. Add a durable `Store` backend so `AutoDiagnoseLoop` results persist across runs.
-4. Add docs examples for the `AutoDiagnoseLoop`.
+3. Add SQLite backend for `Store` with semantic recall.
+4. `HypothesisGenerator.propose()` / `.mutate()` backed by the judge model (LLM-driven hypothesis generation).
+5. Add `FDR` control across M3 hypotheses in one cycle.
