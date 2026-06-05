@@ -54,6 +54,26 @@ Only include hypotheses clearly supported by the analysis.
 Do NOT repeat hypotheses already listed in the prior cycles above.
 If the model looks healthy, respond with: NO_ISSUE"""
 
+_VALIDATE_PROMPT = """\
+You are an adversarial ML reviewer. Your job is to find reasons to REJECT each
+hypothesis below. Only approve a hypothesis if you cannot find a significant flaw.
+
+Check each for:
+1. Unsupported claim — does the cited evidence actually imply this failure mode?
+2. Circular reasoning — does the hypothesis merely restate the symptom?
+3. Overgeneralisation — does it make a claim far broader than the evidence supports?
+4. Confounded alternative — is there a simpler explanation the hypothesis ignores?
+
+Findings summary (the evidence the hypotheses were drawn from):
+{findings_json}
+
+Hypotheses to review:
+{hypotheses_text}
+
+For each hypothesis output exactly two lines:
+KEEP: <hypothesis statement>  or  REJECT: <hypothesis statement>
+REASON: <specific flaw, or "evidence directly supports this claim" if keeping>"""
+
 
 def _format_prior_section(prior_cycles: list[dict]) -> str:
     """Render prior cycle history as a context block for the diagnosis prompt."""
@@ -110,6 +130,69 @@ def _parse_hypotheses(raw: str, model_name: str) -> list[Hypothesis]:
             )
             statement = None
     return hypotheses
+
+
+def _validate_hypotheses(
+    hypotheses: list[Hypothesis],
+    findings_json: str,
+    judge: "Model",
+) -> list[Hypothesis]:
+    """Adversarially filter *hypotheses* using a critic call at temperature=0.
+
+    The same judge is called a second time with a prompt designed to find
+    reasons to *reject* each hypothesis.  This breaks the confirmation bias
+    loop where a model that generated a hypothesis then gives it a free pass.
+    Temperature is forced to 0 for deterministic, reproducible verdicts.
+
+    Returns the subset of hypotheses that survive the critic.  Falls back to
+    the original list if the validation call fails so the loop is never
+    completely blocked by a transient error.
+    """
+    if not hypotheses:
+        return hypotheses
+
+    hyp_lines = "\n".join(
+        f"- HYPOTHESIS: {h.statement}  (failure_mode: {h.predicted_failure_mode})"
+        for h in hypotheses
+    )
+    prompt = _VALIDATE_PROMPT.format(
+        findings_json=findings_json,
+        hypotheses_text=hyp_lines,
+    )
+
+    try:
+        # Use temperature=0 so the critic is deterministic and strict.
+        # Models that don't accept a temperature kwarg are called without it.
+        import inspect
+        sig = inspect.signature(judge.generate)
+        if "temperature" in sig.parameters:
+            raw = judge.generate(prompt, temperature=0)
+        else:
+            raw = judge.generate(prompt)
+    except Exception:
+        return hypotheses  # validation failed — keep originals
+
+    kept: set[str] = set()
+    for line in str(raw).splitlines():
+        line = line.strip()
+        if line.upper().startswith("KEEP:"):
+            stmt = line[len("KEEP:"):].strip().lower()
+            for h in hypotheses:
+                if h.statement.lower()[:60] in stmt or stmt in h.statement.lower():
+                    kept.add(h.statement)
+
+    if not kept:
+        # Critic rejected everything or parse failed — return originals so the
+        # loop doesn't deadlock, but log the event
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "DiagnosisAgent validation: critic rejected all %d hypothesis(es) "
+            "or could not be parsed — keeping originals",
+            len(hypotheses),
+        )
+        return hypotheses
+
+    return [h for h in hypotheses if h.statement in kept]
 
 
 def _default_judge() -> "Model":
@@ -201,6 +284,14 @@ class DiagnosisAgent:
         )
         raw = self.judge.generate(prompt)
         hypotheses = _parse_hypotheses(str(raw), analysis.model_name or model_name)
+
+        # Adversarial validation: run a second critic call at temperature=0 to
+        # prune hypotheses the generator produced without sufficient evidence.
+        # This prevents the self-evaluation loop where the same model that
+        # proposed a hypothesis then approves it uncritically.
+        if hypotheses:
+            findings_json_str = json.dumps(summary, indent=2, default=str)
+            hypotheses = _validate_hypotheses(hypotheses, findings_json_str, self.judge)
 
         # Fallback: if the judge returned NO_ISSUE but M2 has medium/high findings,
         # auto-generate one hypothesis per finding so M4 can still run.
