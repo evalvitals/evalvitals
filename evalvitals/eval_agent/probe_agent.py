@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import subprocess
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from evalvitals.core.capability import Capability
@@ -107,8 +108,16 @@ class ProbeAgent:
     ) -> dict[str, "Result"]:
         """Select analyzers and run each one, returning a ``{name: Result}`` dict.
 
-        Black-box-compatible analyzers are dispatched to Docker when
-        ``use_docker=True``; all others always run in-process.
+        Analyzers are executed in parallel using a ``ThreadPoolExecutor`` so
+        that independent analyzers (e.g. self_consistency and attention both
+        probing the same model) do not wait on each other.  Each analyzer
+        still runs in its own thread; the GIL is released for I/O-heavy
+        analyzers (API calls, file reads) giving near-linear speedup for
+        black-box / API-based analyzers.
+
+        Docker-dispatched analyzers are also parallelised — each container
+        launch is an independent subprocess so the wall-clock time for N
+        Docker analyzers is ≈ max(individual times), not their sum.
 
         Args:
             model:              The model to probe.
@@ -122,21 +131,44 @@ class ProbeAgent:
             max_analyzers=self.max_analyzers,
             hint_failure_modes=hint_failure_modes,
         )
-        results: dict[str, "Result"] = {}
 
+        # Build (name, analyzer) pairs up front — _make_analyzer is cheap and
+        # not thread-safe to call concurrently.
+        tasks: list[tuple[str, "Analyzer"]] = []
         for name in names:
             analyzer = self._make_analyzer(name)
-            if analyzer is None:
-                continue
+            if analyzer is not None:
+                tasks.append((name, analyzer))
 
+        if not tasks:
+            return {}
+
+        results: dict[str, "Result"] = {}
+
+        def _run_one(name: str, analyzer: "Analyzer") -> tuple[str, "Result | None"]:
             cls = type(analyzer)
             if self.use_docker and _is_blackbox_compatible(cls):
-                result = self._run_in_docker(name, analyzer, data)
-            else:
-                result = self._run_direct(analyzer, model, data)
+                return name, self._run_in_docker(name, analyzer, data)
+            return name, self._run_direct(analyzer, model, data)
 
-            if result is not None:
-                results[name] = result
+        # Use min(len(tasks), 8) workers so we don't over-subscribe small runs
+        max_workers = min(len(tasks), 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_run_one, name, analyzer): name
+                for name, analyzer in tasks
+            }
+            for future in as_completed(futures):
+                try:
+                    name, result = future.result()
+                    if result is not None:
+                        results[name] = result
+                except Exception as exc:
+                    name = futures[future]
+                    warnings.warn(
+                        f"Analyzer '{name}' raised in parallel run: {exc}",
+                        stacklevel=2,
+                    )
 
         return results
 
