@@ -35,7 +35,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Protocol
+from typing import Callable, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -198,15 +198,65 @@ class SandboxProtocol(Protocol):
 # ---------------------------------------------------------------------------
 
 
+def _make_resource_preexec(
+    max_memory_bytes: int | None,
+    max_cpu_seconds: int | None,
+) -> "Callable[[], None] | None":
+    """Return a ``preexec_fn`` that sets resource limits on Linux, or ``None``.
+
+    Uses ``resource.setrlimit`` which is only available on Unix.  The function
+    is constructed at call time and captures the limit values in its closure so
+    each subprocess gets its own independent limits.
+
+    Memory is capped via ``RLIMIT_AS`` (virtual address space).  CPU time is
+    capped via ``RLIMIT_CPU`` (user+system seconds).  Hitting the CPU limit
+    sends SIGXCPU to the process; the subprocess.run *timeout* handles wall-clock
+    kills independently, so both limits are in effect simultaneously.
+    """
+    import sys
+    if sys.platform == "win32":
+        return None
+    try:
+        import resource as _resource
+    except ImportError:
+        return None
+
+    def _preexec() -> None:
+        if max_memory_bytes is not None:
+            try:
+                _resource.setrlimit(
+                    _resource.RLIMIT_AS,
+                    (max_memory_bytes, max_memory_bytes),
+                )
+            except (ValueError, _resource.error):
+                pass
+        if max_cpu_seconds is not None:
+            try:
+                _resource.setrlimit(
+                    _resource.RLIMIT_CPU,
+                    (max_cpu_seconds, max_cpu_seconds),
+                )
+            except (ValueError, _resource.error):
+                pass
+
+    return _preexec
+
+
 class ExperimentSandbox:
     """Run Python code in a subprocess and parse metrics from stdout.
 
     Mirrors ``researchclaw.experiment.sandbox.ExperimentSandbox``.
 
     Args:
-        workdir:     Directory where scripts are written.  A temporary
-                     directory is created when ``None``.
-        python_path: Python executable to use.  Defaults to ``sys.executable``.
+        workdir:          Directory where scripts are written.  A temporary
+                          directory is created when ``None``.
+        python_path:      Python executable to use.  Defaults to ``sys.executable``.
+        max_memory_bytes: Virtual-address-space cap applied via ``RLIMIT_AS``
+                          before the child process starts (Linux/macOS only).
+                          ``None`` means no memory limit.
+        max_cpu_seconds:  CPU-time cap applied via ``RLIMIT_CPU`` (Linux/macOS).
+                          ``None`` means no CPU limit.  This complements the
+                          wall-clock *timeout_sec* argument to ``run()``.
     """
 
     def __init__(
@@ -214,6 +264,8 @@ class ExperimentSandbox:
         workdir: Path | str | None = None,
         *,
         python_path: str | None = None,
+        max_memory_bytes: int | None = None,
+        max_cpu_seconds: int | None = None,
     ) -> None:
         if workdir is None:
             workdir = Path(tempfile.mkdtemp(prefix="evalvitals_sandbox_"))
@@ -222,6 +274,7 @@ class ExperimentSandbox:
         self._python_path: str = python_path or sys.executable
         self._run_counter: int = 0
         self._counter_lock = threading.Lock()
+        self._preexec_fn = _make_resource_preexec(max_memory_bytes, max_cpu_seconds)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -362,6 +415,7 @@ class ExperimentSandbox:
                 cwd=run_cwd,
                 env=env,
                 check=False,
+                preexec_fn=self._preexec_fn,
             )
             return self._result_from_completed(completed, elapsed_sec=time.monotonic() - start)
         except subprocess.TimeoutExpired as exc:
