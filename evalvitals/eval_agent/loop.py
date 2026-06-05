@@ -171,6 +171,8 @@ class AutoDiagnoseLoop:
         run_dir: "Path | None" = None,
         git_manager: "ExperimentGitManager | None" = None,
         evolution_store: "EvolutionStore | None" = None,
+        # --- token / cost budget ---
+        token_budget: int = 0,
     ) -> None:
         from evalvitals.eval_agent.analysis import AnalysisModule
         from evalvitals.eval_agent.probe_agent import ProbeAgent
@@ -184,6 +186,8 @@ class AutoDiagnoseLoop:
         self.store = store or InMemoryStore()
         self.max_cycles = max_cycles
         self.run_logger = run_logger
+        self.token_budget = token_budget
+        self._tokens_used: int = 0
 
         # --- run-directory setup ---
         self._run_dir: Path | None = None
@@ -257,8 +261,16 @@ class AutoDiagnoseLoop:
         completed_cycles = 0
         # Per-cycle max confidence scores: detect flat progress early
         _confidence_history: list[float] = []
+        self._tokens_used = 0
 
         for cycle in range(start_cycle, self.max_cycles):
+            # Budget guard: stop before consuming more tokens than allowed
+            if self.token_budget > 0 and self._tokens_used >= self.token_budget:
+                logger.warning(
+                    "Token budget %d exhausted (%d used) — stopping loop after %d cycles",
+                    self.token_budget, self._tokens_used, completed_cycles,
+                )
+                break
             completed_cycles = cycle + 1
 
             # ── M1: probe ───────────────────────────────────────────────
@@ -288,6 +300,13 @@ class AutoDiagnoseLoop:
             diag = self.diagnosis_agent.diagnose(
                 analysis, prior_cycles=prior_cycles or None
             )
+            # Track token usage from the diagnosis LLM call.
+            # Use response metadata when available; otherwise estimate from
+            # output length (1 token ≈ 4 chars) so the budget is always counted.
+            _diag_tokens = getattr(diag, "tokens_used", None)
+            if _diag_tokens is None:
+                _diag_tokens = max(1, len(diag.raw_judge_output) // 4)
+            self._tokens_used += _diag_tokens
             if self.run_logger:
                 self.run_logger.log_diagnosis(cycle, diag)
             if not diag.hypotheses:
