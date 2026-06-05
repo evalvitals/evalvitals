@@ -31,6 +31,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Keyword tokenisation for relevance scoring
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_TOKEN_RE = _re.compile(r"[a-z0-9]+")
+
+
+def _tokenise(text: str) -> frozenset[str]:
+    """Lowercase + split on non-alphanumeric characters; return a frozenset of tokens."""
+    return frozenset(_TOKEN_RE.findall(text.lower()))
+
 # Half-life for time-decay weighting (days)
 HALF_LIFE_DAYS: float = 30.0
 MAX_AGE_DAYS: float = 90.0
@@ -242,25 +255,79 @@ class EvolutionStore:
         return entries
 
     def query_for_category(
-        self, category: str, *, max_lessons: int = 5
+        self,
+        category: str,
+        *,
+        max_lessons: int = 5,
+        context_keywords: list[str] | None = None,
     ) -> list[LessonEntry]:
-        """Return the most relevant lessons for *category*, time-decay weighted.
+        """Return the most relevant lessons for *category*.
 
-        Results are sorted descending by weight; at most *max_lessons* returned.
+        Scoring combines three signals so that a highly relevant older lesson
+        can rank above a recent but unrelated one:
+
+        1. **Recency** — 30-day exponential half-life.
+        2. **Keyword relevance** — Jaccard-like token overlap between the lesson
+           text and the query context supplied via *context_keywords* (e.g. the
+           current failure modes, analysis narrative snippets).
+        3. **Severity boost** — errors outrank warnings which outrank info.
+
+        *context_keywords*: additional terms from the current run context.
+        The query always includes the category name itself as a token.
         """
         all_lessons = self.load_all()
         relevant = [lesson for lesson in all_lessons if lesson.category == category]
-        # Sort by time-decay weight descending (most recent first)
-        relevant.sort(key=lambda lesson: _time_weight(lesson.timestamp), reverse=True)
-        return relevant[:max_lessons]
+        if not relevant:
+            return []
 
-    def build_overlay(self, category: str, *, max_lessons: int = 5) -> str:
+        # Build query token set from category + caller-supplied keywords
+        query_tokens = _tokenise(category)
+        for kw in (context_keywords or []):
+            query_tokens |= _tokenise(kw)
+
+        scored: list[tuple[float, LessonEntry]] = []
+        for lesson in relevant:
+            weight = _time_weight(lesson.timestamp)
+            if weight <= 0.0:
+                continue
+
+            # Keyword relevance: overlap between query and lesson text
+            lesson_tokens = _tokenise(lesson.description)
+            overlap = len(query_tokens & lesson_tokens)
+            if overlap > 0:
+                # Cap boost at 3× so recency still matters
+                weight *= 1.0 + min(overlap * 0.4, 2.0)
+
+            # Severity boost
+            if lesson.severity == "error":
+                weight *= 1.5
+            elif lesson.severity == "warning":
+                weight *= 1.2
+
+            scored.append((weight, lesson))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [entry for _, entry in scored[:max_lessons]]
+
+    def build_overlay(
+        self,
+        category: str,
+        *,
+        max_lessons: int = 5,
+        context_keywords: list[str] | None = None,
+    ) -> str:
         """Generate a prompt overlay string for a given M1–M4 *category*.
 
         Returns an empty string when no relevant lessons qualify.
         The overlay is formatted for direct injection into LLM prompts.
+
+        Args:
+            context_keywords: Extra terms from the current run (e.g. failure
+                mode tags, narrative keywords) used to boost relevance scoring.
         """
-        lessons = self.query_for_category(category, max_lessons=max_lessons)
+        lessons = self.query_for_category(
+            category, max_lessons=max_lessons, context_keywords=context_keywords
+        )
         if not lessons:
             return ""
 
