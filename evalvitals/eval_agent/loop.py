@@ -173,6 +173,7 @@ class AutoDiagnoseLoop:
         evolution_store: "EvolutionStore | None" = None,
         # --- token / cost budget ---
         token_budget: int = 0,
+        _run_id_override: str | None = None,
     ) -> None:
         from evalvitals.eval_agent.analysis import AnalysisModule
         from evalvitals.eval_agent.probe_agent import ProbeAgent
@@ -199,7 +200,7 @@ class AutoDiagnoseLoop:
         if run_dir is not None:
             run_dir = Path(run_dir)
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            self._run_id = ts
+            self._run_id = _run_id_override or ts
             self._run_dir = run_dir
             self._artifacts_dir = run_dir / "artifacts" / ts
             self._artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -244,11 +245,15 @@ class AutoDiagnoseLoop:
         final_results: dict[str, Any] = {}
         final_analysis = None
 
-        # Determine start cycle from checkpoint (resume support)
+        # Determine start cycle from checkpoint (resume support).
+        # Only honor the checkpoint when run_id matches — this means the
+        # caller explicitly requested a resume of a specific prior run
+        # (via AutoDiagnoseLoop.resume() or _run_id_override).  A fresh
+        # AutoDiagnoseLoop always gets a new run_id and starts from 0.
         start_cycle = 0
         if self._checkpoint_path is not None:
             cp = self._read_checkpoint()
-            if cp is not None:
+            if cp is not None and cp.get("run_id") == self._run_id:
                 start_cycle = cp.get("last_completed_cycle", -1) + 1
                 if start_cycle > 0:
                     logger.info(
@@ -405,7 +410,19 @@ class AutoDiagnoseLoop:
             **kwargs: Forwarded to :class:`AutoDiagnoseLoop.__init__`.
                       ``run_dir`` is set automatically — do not pass it.
         """
-        instance = cls(model=model, run_dir=run_dir, **kwargs)
+        # Read the stored run_id so the checkpoint match succeeds and
+        # the loop correctly skips already-completed cycles.
+        run_id_override: str | None = None
+        cp_path = Path(run_dir) / "checkpoint.json"
+        if cp_path.exists():
+            try:
+                cp = json.loads(cp_path.read_text(encoding="utf-8"))
+                run_id_override = cp.get("run_id")
+            except (json.JSONDecodeError, OSError):
+                pass
+        instance = cls(
+            model=model, run_dir=run_dir, _run_id_override=run_id_override, **kwargs
+        )
         return instance.run(data)
 
     # ──────────────────────────────────────────────────────────────────
