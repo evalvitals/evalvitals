@@ -133,8 +133,6 @@ def _compute_confidence(
     any single dimension collapses the overall score — a 90 % gap on 2 cases
     should not produce high confidence.
     """
-    import math
-
     evidence_gap = max(0.0, min(1.0, (fail_signal - fail_control) / 1.0))
     n_min = min(n_signal, n_control) if n_control > 0 else n_signal
     sample_adequacy = min(1.0, n_min / _ADEQUACY_SATURATION)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re as _re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,8 +35,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Keyword tokenisation for relevance scoring
 # ---------------------------------------------------------------------------
-
-import re as _re
 
 _TOKEN_RE = _re.compile(r"[a-z0-9]+")
 
@@ -371,13 +370,13 @@ class EvolutionStore:
             "n_lessons": len(lessons),
             "lessons": [
                 {
-                    "run_id": l.run_id,
-                    "cycle": l.cycle,
-                    "severity": l.severity,
-                    "description": l.description[:120],
-                    "timestamp": l.timestamp,
+                    "run_id": lesson.run_id,
+                    "cycle": lesson.cycle,
+                    "severity": lesson.severity,
+                    "description": lesson.description[:120],
+                    "timestamp": lesson.timestamp,
                 }
-                for l in lessons
+                for lesson in lessons
             ],
         }
         try:
