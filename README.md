@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/evalvitals)](https://pypi.org/project/evalvitals/)
 [![Python](https://img.shields.io/pypi/pyversions/evalvitals)](https://pypi.org/project/evalvitals/)
 [![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://evalvitals.github.io/evalvitals/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: CC0-1.0](https://img.shields.io/badge/license-CC0--1.0-green)](LICENSE)
 
 EvalVitals is an sklearn-like toolkit for failure-case analysis in the era of
 LLMs, VLMs, omni (text+image+audio+video) models, and agentic systems.
@@ -342,52 +342,123 @@ pip install -e ".[dev]"
 
 ```
 evalvitals/
-├── core/                       # the sklearn-like substrate (torch-free)
-│   ├── capability.py           Capability enum (+ TOOL_CALLS, LOGPROBS) + CapabilityError
-│   ├── spec.py                 ModelSpec / VisionSpec / ModulePaths / AttnSemantics  ← NEW
-│   ├── tool.py                 Tool / ToolCall / ChatTurn (agent value types)  ← NEW
-│   ├── model.py                Model ABC, Trace, CaptureSpec, chat(), call_x shim
-│   ├── analyzer.py             Analyzer ABC (run/get_params/set_params)
-│   ├── case.py                 FailureCase, CaseBatch + Step/Trajectory (agent traces)  ← NEW
-│   ├── result.py               Result (findings + artifacts)
-│   ├── registry.py             model/analyzer registries + capability matching
-│   ├── pipeline.py             Pipeline (compose analyzers)
-│   └── experiment.py           Experiment + ExperimentRunner (content-hash cache)
-├── specs.py                    ModelSpec REGISTRY: Qwen3(-VL/-Omni)/DeepSeek/GLM/Kimi/Llama/Gemma/Step  ← NEW
-├── models/
-│   ├── compose.py              compose(spec, backend, want) + capability negotiation  ← NEW
-│   ├── agent.py                Agent(wraps=handle) + ToolExecutor → Trajectory  ← NEW
-│   ├── toolcodec.py            ToolCallCodec: OpenAI (native) / Qwen (Hermes text)  ← NEW
-│   ├── _discover.py            runtime decoder-layer discovery (anti-hardcoding)  ← NEW
-│   ├── backends/{api,hf_local,vllm_offline}.py   ModelSpec × Backend runtimes  ← NEW
-│   └── whitebox/{qwen,qwen_vl,qwen_omni}.py  per-version factories (qwen3_8b(), qwen3_vl_8b_instruct(), qwen3_omni_30b_a3b_instruct(), …) → compose(spec,'hf_local')  ← NEW
-├── analyzers/                  # functional taxonomy by CAPABILITY (not black/white-box)  ← NEW
-│   │                           #   each declares required_capabilities + applies_to_modalities
-│   ├── perturbation/  rise✓ vl_shap✓ mm_shap✓          # GENERATE / LOGPROBS (Shapley-over-masking)
-│   ├── uncertainty/   entropy✓ self_consistency✓ verbalized_conf✓   # LOGITS / GENERATE (black-box-feasible)
-│   ├── hallucination/ pope✓ chair✓ opera vcd          # GENERATE (BB) / ATTENTION (VLM)
-│   ├── attention/     summary✓ rollout✓ sink✓ relative_attn✓  # ATTENTION
-│   ├── attribution/   gradcam generic_attn             # GRADIENTS (white-box)
-│   ├── lens/          logit_lens✓ tuned_lens           # HIDDEN_STATES
-│   ├── patching/      causal_trace                     # HIDDEN_STATES read+write (nnsight)
-│   ├── geometry/      cka✓ linear_probe                # HIDDEN_STATES (CLIP/SigLIP-scoped)
-│   └── agent/         loop_detect✓ ignored_obs✓ first_error_judge✓ counterfactual✓   # Trajectory
-│                      #  ✓ = implemented + unit-tested; others declare contract, raise (Stage 2)
-├── datasets/                   LLMQA✓ / VLMQA✓ + Spatial457✓ (HF 6D-spatial VQA) / WebSearchQA✓ / GUIOS✓ → CaseBatch + verifiers✓
-├── stats/                      compare() single entry — never a bare p  ← NEW
-│   ├── mcnemar.py✓ bootstrap.py✓ (clustered CI)  evalue.py✓ ebh.py✓  friedman.py✓ (Friedman+Nemenyi, >2 strategies)  subset_sampling.py✓
-│   └── api.py✓                 compare() (pairwise) + compare_multiple() (3+ strategies) → StatResult / MultiCompareResult
-└── eval_agent/                 automated diagnosis + selective-inference loop  ← NEW
-    ├── probe.py✓               M1 StrategyProbe: VLM/AGENT/LLM detection + ranked analyzer selection
-    ├── diagnosis.py✓           M3 DiagnosisAgent: LLM judge → HYPOTHESIS:/FAILURE_MODE: pairs
-    ├── surgery.py✓              M4 SurgeryAgent: label correlation / param sweep / verify_fn
-    ├── loop.py✓                AutoDiagnoseLoop (M1→M4 closed loop) + SelfEvolveLoop (skeleton)
-    ├── preregister.py✓         DataSplit (explore/validate/confirm) + PreregisteredHypothesis + log
-    ├── ab_runner.py✓           two strategies → stats.compare
-    ├── orchestrator.py✓        define → split → pre-register → test → report
-    ├── report.py✓ store.py✓    DiagnosticReport ; InMemoryStore(+query)
-    ├── hypothesis.py✓          Hypothesis + ManualHypothesisGenerator
-    └── tools.py✓               agent action space: list_analyses / compatible_analyses / run_analysis
+│
+├── core/                          ← Foundational abstractions (no deps on other submodules)
+│   ├── case.py          Case      ← single failure record (input + expected + actual)
+│   ├── result.py        AnalysisResult
+│   ├── model.py         ModelBase
+│   ├── analyzer.py      AnalyzerBase
+│   ├── pipeline.py      Pipeline  ← Case → [Analyzer...] → AnalysisResult
+│   ├── experiment.py    Experiment
+│   ├── spec.py          ExperimentSpec
+│   ├── registry.py      Registry  ← global analyzer/model lookup
+│   ├── capability.py    Capability flags
+│   ├── tool.py          Tool
+│   └── tokentype.py     TokenType
+│
+├── config.py            RuntimeConfig   ← API keys, generate_fn injection
+├── specs.py             built-in ExperimentSpec presets
+│
+├── models/                        ← Model wrappers (implement core.ModelBase)
+│   ├── base.py          ModelBase (re-export)
+│   ├── compose.py       ComposedModel   ← fan-out over multiple models
+│   ├── inference.py     run_inference()
+│   ├── agent.py         AgentModel
+│   ├── toolcodec.py     tool call encode/decode
+│   ├── _discover.py     auto-register models
+│   ├── blackbox/        API-only (no weights)
+│   │   ├── base.py
+│   │   ├── llm_api.py   OpenAI-compat LLM
+│   │   ├── vlm_api.py   OpenAI-compat VLM
+│   │   ├── gemini.py    Gemini
+│   │   └── agent.py     BlackboxAgentModel
+│   ├── whitebox/        local weights + internals capture
+│   │   ├── base.py
+│   │   ├── qwen.py      Qwen-2.5
+│   │   ├── qwen_vl.py   Qwen-VL
+│   │   ├── qwen_omni.py Qwen-Omni
+│   │   └── agent.py     WhiteboxAgentModel
+│   └── backends/        inference engines
+│       ├── base.py
+│       ├── api.py        HTTP/OpenAI
+│       ├── hf_local.py   HuggingFace local
+│       └── vllm_offline.py vLLM offline
+│
+├── analyzers/                     ← Analyzers (implement core.AnalyzerBase)
+│   ├── base.py
+│   ├── agent/           agentic-trace analyzers       [Trajectory]
+│   │   ├── loop_detect.py
+│   │   ├── first_error_judge.py
+│   │   ├── ignored_obs.py
+│   │   └── counterfactual.py
+│   ├── attention/        attention-weight analyzers   [ATTENTION]
+│   │   ├── rollout.py, sink.py, relative_attn.py, summary.py
+│   ├── attribution/      gradient/saliency            [GRADIENTS]
+│   │   ├── gradcam.py, generic_attn.py
+│   ├── geometry/         representational geometry    [HIDDEN_STATES]
+│   │   ├── cka.py, linear_probe.py
+│   ├── hallucination/    hallucination detectors      [GENERATE / ATTENTION]
+│   │   ├── chair.py, pope.py, opera.py, vcd.py
+│   ├── lens/             logit/tuned lens             [HIDDEN_STATES]
+│   │   ├── logit_lens.py, tuned_lens.py
+│   ├── patching/         causal tracing               [HIDDEN_STATES]
+│   │   └── causal_trace.py
+│   ├── perturbation/     input-perturbation           [GENERATE / LOGPROBS]
+│   │   ├── mm_shap.py, vl_shap.py, rise.py, _shapley.py
+│   └── uncertainty/      confidence / consistency     [LOGITS / GENERATE]
+│       ├── logprob_entropy.py, entropy.py
+│       ├── verbalized_conf.py, self_consistency.py
+│
+├── datasets/                      ← Dataset loaders (implement DatasetBase)
+│   ├── base.py
+│   ├── pure_qa.py, llm_qa.py, vlm_qa.py
+│   ├── gui_os.py
+│   └── web_search_qa.py
+│
+├── stats/                         ← Statistical tests (standalone, no evalvitals deps)
+│   ├── api.py           compare() / compare_multiple() entry points
+│   ├── mcnemar.py
+│   ├── bootstrap.py     clustered-bootstrap CI
+│   ├── friedman.py      Friedman + Nemenyi (3+ strategies)
+│   ├── ebh.py           e-BH procedure
+│   ├── evalue.py
+│   └── subset_sampling.py
+│
+└── eval_agent/                    ← Experiment automation loop (M1→M4)
+    ├── orchestrator.py  top-level driver
+    ├── loop.py          run loop (cycles, checkpoint resume)
+    ├── experiment_harness.py
+    ├── experiment_writer.py  LLM → experiment code
+    ├── cli_agent.py     CLI coding-agent backends
+    │                    (claude_code, codex, opencode, gemini_cli, kimi_cli)
+    ├── ab_runner.py     A/B experiment runner
+    ├── evolution.py     EvolutionStore, build_overlay
+    ├── store.py         artifact store
+    ├── run_logger.py    structured event log (trace_id, span_id)
+    ├── hypothesis.py    hypothesis tracking
+    ├── probe.py / probe_agent.py
+    ├── diagnosis.py
+    ├── analysis.py
+    ├── report.py
+    ├── surgery.py       model weight surgery
+    ├── sandbox.py
+    ├── preregister.py
+    ├── factory.py
+    ├── git_manager.py
+    ├── _docker_runner.py
+    └── _tools.py
+```
+
+**Data flow:**
+
+```
+Dataset  →  Model (blackbox | whitebox)  →  Case
+                                              ↓
+                                          Analyzer(s)
+                                              ↓
+                                         AnalysisResult
+                                              ↓
+                                  stats.compare() / eval_agent loop
 ```
 
 ## The automated diagnosis loop
