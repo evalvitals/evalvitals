@@ -111,8 +111,107 @@ class DiagnosisResult:
     raw_judge_output: str = ""
 
 
+_HYPOTHESIS_SCHEMA: dict = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": ["hypothesis", "failure_mode"],
+        "properties": {
+            "hypothesis":   {"type": "string", "minLength": 10},
+            "failure_mode": {"type": "string", "minLength": 2},
+        },
+    },
+}
+
+
+def _validate_json_schema(data: object, schema: dict) -> list[str]:
+    """Minimal JSON schema validator (no external deps).
+
+    Returns a list of error strings; empty means valid.
+    Only handles type/required/minLength — enough to catch the common
+    LLM mistakes (missing field, empty string, wrong top-level type).
+    """
+    errors: list[str] = []
+
+    def _check(node: object, s: dict, path: str) -> None:
+        expected_type = s.get("type")
+        if expected_type == "array":
+            if not isinstance(node, list):
+                errors.append(f"{path}: expected array, got {type(node).__name__}")
+                return
+            item_schema = s.get("items", {})
+            for i, item in enumerate(node):
+                _check(item, item_schema, f"{path}[{i}]")
+        elif expected_type == "object":
+            if not isinstance(node, dict):
+                errors.append(f"{path}: expected object, got {type(node).__name__}")
+                return
+            for req in s.get("required", []):
+                if req not in node:
+                    errors.append(f"{path}: missing required field '{req}'")
+            for prop, prop_schema in s.get("properties", {}).items():
+                if prop in node:
+                    _check(node[prop], prop_schema, f"{path}.{prop}")
+        elif expected_type == "string":
+            if not isinstance(node, str):
+                errors.append(f"{path}: expected string, got {type(node).__name__}")
+            elif "minLength" in s and len(node) < s["minLength"]:
+                errors.append(
+                    f"{path}: string too short ({len(node)} < {s['minLength']})"
+                )
+
+    _check(data, schema, "$")
+    return errors
+
+
+def _parse_hypotheses_json(raw: str, model_name: str) -> list[Hypothesis] | None:
+    """Try to parse *raw* as a JSON array of hypothesis objects.
+
+    Returns ``None`` when the response is not JSON or fails schema validation
+    so the caller can fall back to the text parser.
+    """
+    text = raw.strip()
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        import re as _re
+        text = _re.sub(r"^```\w*\n?", "", text)
+        text = _re.sub(r"\n?```\s*$", "", text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+    errors = _validate_json_schema(data, _HYPOTHESIS_SCHEMA)
+    if errors:
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "DiagnosisAgent JSON schema validation failed: %s", errors
+        )
+        return None
+
+    return [
+        Hypothesis(
+            statement=item["hypothesis"],
+            target_model=model_name,
+            predicted_failure_mode=item["failure_mode"],
+        )
+        for item in data
+        if item.get("hypothesis") and item.get("failure_mode")
+    ]
+
+
 def _parse_hypotheses(raw: str, model_name: str) -> list[Hypothesis]:
-    """Extract ``HYPOTHESIS:`` / ``FAILURE_MODE:`` pairs from LLM output."""
+    """Parse hypothesis objects from LLM output.
+
+    Tries JSON structured format first (more reliable), then falls back to the
+    line-oriented ``HYPOTHESIS:`` / ``FAILURE_MODE:`` text format.  This makes
+    the parser resilient to both output modes without requiring a hard migration.
+    """
+    json_result = _parse_hypotheses_json(raw, model_name)
+    if json_result is not None:
+        return json_result
+
+    # Text-format fallback
     hypotheses: list[Hypothesis] = []
     statement: str | None = None
     for line in raw.splitlines():
