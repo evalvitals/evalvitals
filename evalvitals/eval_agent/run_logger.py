@@ -58,6 +58,97 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.surgery import InterventionResult
 
 
+def _artifact_to_numpy(artifact: Any) -> "Any | None":
+    """Convert *artifact* to a numpy array, or return None if not possible.
+
+    Handles: torch.Tensor, list[torch.Tensor] (e.g. per-layer attentions),
+    and numpy arrays.  A list of tensors is stacked along a new first axis so
+    that ``attentions`` (list of ``(heads, seq, seq)``) becomes
+    ``(layers, heads, seq, seq)`` — a single array that retains all the data.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+
+    if hasattr(artifact, "detach"):  # torch.Tensor
+        return artifact.detach().cpu().float().numpy()
+    if isinstance(artifact, np.ndarray):
+        return artifact
+    if isinstance(artifact, list) and artifact and hasattr(artifact[0], "detach"):
+        try:
+            import torch
+            return torch.stack(artifact).detach().cpu().float().numpy()
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _save_artifact_figure(artifact_dir: Path, stem: str, arr: Any) -> None:
+    """Save a matplotlib figure of *arr* when the shape and stem are recognised.
+
+    Dispatch table (first match wins):
+    - 4-D + ``attn`` in stem → mean over (layers, heads) → 2-D heatmap
+    - 3-D + ``attn`` in stem → mean over heads → 2-D heatmap
+    - 2-D + heatmap keyword  → direct heatmap (viridis)
+    - 1-D + curve keyword    → line plot
+    Skips silently when matplotlib is unavailable or the shape is unrecognised.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        plt.ioff()
+    except ImportError:
+        return
+
+    key = stem.lower()
+    # Skip logit arrays — (seq, vocab) shape is too large for a useful figure
+    if "logit" in key:
+        return
+
+    _is_attn = any(k in key for k in ("attn", "attention"))
+
+    fig = None
+    try:
+        ndim = arr.ndim
+        if ndim == 4 and _is_attn:
+            mat = arr.mean(axis=(0, 1))  # (layers, heads, seq, seq) → (seq, seq)
+            n_layers, n_heads = arr.shape[0], arr.shape[1]
+            fig, ax = plt.subplots(figsize=(8, 7))
+            im = ax.imshow(mat, cmap="viridis", aspect="auto", vmin=0)
+            ax.set_title(f"{stem}  (mean over {n_layers}L × {n_heads}H)")
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            plt.tight_layout()
+        elif ndim == 3 and _is_attn:
+            mat = arr.mean(axis=0)  # (heads, seq, seq) → (seq, seq)
+            n_heads = arr.shape[0]
+            fig, ax = plt.subplots(figsize=(8, 7))
+            im = ax.imshow(mat, cmap="viridis", aspect="auto", vmin=0)
+            ax.set_title(f"{stem}  (mean over {n_heads} heads)")
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            plt.tight_layout()
+        elif ndim == 2 and (_is_attn or any(k in key for k in ("rollout", "spatial", "map"))):
+            fig, ax = plt.subplots(figsize=(8, 7))
+            im = ax.imshow(arr, cmap="viridis", aspect="auto")
+            ax.set_title(stem)
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            plt.tight_layout()
+        elif ndim == 1 and any(k in key for k in ("entropy", "score", "prob", "weight", "rollout")):
+            fig, ax = plt.subplots(figsize=(8, 3))
+            ax.plot(arr)
+            ax.set_xlabel("position")
+            ax.set_ylabel(stem)
+            ax.set_title(stem)
+            plt.tight_layout()
+
+        if fig is not None:
+            fig.savefig(artifact_dir / f"{stem}.png", dpi=100, bbox_inches="tight")
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        if fig is not None:
+            plt.close(fig)
+
+
 class _JsonFormatter(logging.Formatter):
     """Format each LogRecord as a single JSON line using the ``_payload`` extra."""
 
@@ -258,18 +349,24 @@ class RunLogger:
         return paths
 
     def _save_artifact(self, stem: str, artifact: Any) -> Path | None:
-        """Write one artifact to ``artifacts/<stem>.<ext>``; return path or None."""
+        """Write one artifact to ``artifacts/<stem>.<ext>``; return path or None.
+
+        For numeric artifacts (tensors, arrays, list-of-tensors):
+          - Saves raw data as ``<stem>.npy``.
+          - Also saves a ``<stem>.png`` figure when the shape and stem keyword
+            are recognised (attention → heatmap, entropy/rollout → line/heatmap).
+            Silently skipped when matplotlib is not installed.
+
+        For dict/list artifacts: saves ``<stem>.json``.
+        """
         try:
             import numpy as np
 
-            if hasattr(artifact, "detach"):  # torch.Tensor
-                arr = artifact.detach().cpu().numpy()
+            arr = _artifact_to_numpy(artifact)
+            if arr is not None:
                 path = self.artifact_dir / f"{stem}.npy"
                 np.save(path, arr)
-                return path
-            if isinstance(artifact, np.ndarray):
-                path = self.artifact_dir / f"{stem}.npy"
-                np.save(path, artifact)
+                _save_artifact_figure(self.artifact_dir, stem, arr)
                 return path
             if isinstance(artifact, (dict, list)):
                 path = self.artifact_dir / f"{stem}.json"
