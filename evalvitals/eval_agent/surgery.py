@@ -39,14 +39,23 @@ class InterventionResult:
     """Output of :class:`SurgeryAgent.operate`.
 
     Attributes:
-        hypothesis: The hypothesis under test.
-        status:     Updated :class:`~evalvitals.eval_agent.hypothesis.HypothesisStatus`.
-        fixed:      ``True`` when the intervention completely separates failing from
-                    passing cases (signal group always fails, control group never
-                    fails).  Signals the loop that the problem is resolved.
-        evidence:   Supporting statistics or sweep findings.
-        new_data:   When *status* is SUPPORTED, the cases **not** in the signal
-                    group — the refined subset for the next M1 cycle.
+        hypothesis:          The hypothesis under test.
+        status:              Updated :class:`~evalvitals.eval_agent.hypothesis.HypothesisStatus`.
+        fixed:               ``True`` when the intervention completely separates failing from
+                             passing cases (signal group always fails, control group never
+                             fails).  Signals the loop that the problem is resolved.
+        evidence:            Supporting statistics or sweep findings.
+        new_data:            When *status* is SUPPORTED, the cases **not** in the signal
+                             group — the refined subset for the next M1 cycle.
+        confidence_score:    Float in [0, 1] measuring overall evidence strength.  Derived
+                             from the combination of signal-vs-control gap, sample adequacy,
+                             and control-group cleanliness.  A binary ``fixed`` flag alone
+                             cannot convey how strongly supported the finding is — e.g.
+                             a 10 % gap on 3 cases is very different from a 90 % gap on 300.
+        evidence_dimensions: Breakdown of ``confidence_score`` by sub-criterion so the loop
+                             and callers can make finer-grained decisions (e.g. raise a
+                             INCONCLUSIVE when ``sample_adequacy`` is low even if the gap
+                             looks large).
     """
 
     hypothesis: Hypothesis
@@ -54,6 +63,8 @@ class InterventionResult:
     fixed: bool
     evidence: dict[str, Any] = field(default_factory=dict)
     new_data: CaseBatch | None = None
+    confidence_score: float = 0.0
+    evidence_dimensions: dict[str, float] = field(default_factory=dict)
 
 
 # Keys that carry diagnostic meaning in per-case finding entries.
@@ -100,6 +111,44 @@ def _serialize_cases(data: CaseBatch, image_dir: "Any | None" = None) -> str:
 _NON_SIGNAL_KEYS = frozenset(
     {"sample_id", "id", "step", "first_error_step", "action", "judge_raw"}
 )
+
+# Minimum cases per group before sample_adequacy reaches 1.0
+_ADEQUACY_SATURATION = 30
+
+
+def _compute_confidence(
+    fail_signal: float,
+    fail_control: float,
+    n_signal: int,
+    n_control: int,
+) -> tuple[float, dict[str, float]]:
+    """Compute overall confidence and per-dimension breakdown.
+
+    Three dimensions, each in [0, 1]:
+    - ``evidence_gap``:     normalised fail-rate difference (how much worse signal group is).
+    - ``sample_adequacy``:  whether both groups are large enough to trust the gap.
+    - ``control_cleanliness``: how low the control fail-rate is (ideally 0).
+
+    ``confidence_score`` = geometric mean of all three so that a near-zero on
+    any single dimension collapses the overall score — a 90 % gap on 2 cases
+    should not produce high confidence.
+    """
+    import math
+
+    evidence_gap = max(0.0, min(1.0, (fail_signal - fail_control) / 1.0))
+    n_min = min(n_signal, n_control) if n_control > 0 else n_signal
+    sample_adequacy = min(1.0, n_min / _ADEQUACY_SATURATION)
+    control_cleanliness = 1.0 - fail_control
+
+    dims = {
+        "evidence_gap": round(evidence_gap, 3),
+        "sample_adequacy": round(sample_adequacy, 3),
+        "control_cleanliness": round(control_cleanliness, 3),
+    }
+    # Geometric mean: penalises any dimension being near zero
+    product = evidence_gap * sample_adequacy * control_cleanliness
+    confidence = round(product ** (1.0 / 3.0), 3) if product > 0 else 0.0
+    return confidence, dims
 
 
 def _extract_per_case_signals(results: dict[str, "Result"]) -> dict[str, bool]:
@@ -255,6 +304,10 @@ class SurgeryAgent:
             "fail_rate_control": round(fail_control, 3),
         }
 
+        confidence, dims = _compute_confidence(
+            fail_signal, fail_control, len(with_signal), len(without_signal)
+        )
+
         if fail_signal > fail_control + 0.10:
             status = HypothesisStatus.SUPPORTED
             fixed  = fail_signal >= 1.0 and fail_control == 0.0
@@ -275,6 +328,8 @@ class SurgeryAgent:
             fixed=fixed,
             evidence=evidence,
             new_data=new_data,
+            confidence_score=confidence,
+            evidence_dimensions=dims,
         )
 
     def _execute_experiment(

@@ -255,6 +255,8 @@ class AutoDiagnoseLoop:
         prior_cycles: list[dict[str, Any]] = []
         outstanding_modes: list[str] = []
         completed_cycles = 0
+        # Per-cycle max confidence scores: detect flat progress early
+        _confidence_history: list[float] = []
 
         for cycle in range(start_cycle, self.max_cycles):
             completed_cycles = cycle + 1
@@ -297,9 +299,11 @@ class AutoDiagnoseLoop:
 
             # ── M4: surgery ──────────────────────────────────────────────
             outstanding_modes = []
+            cycle_max_confidence = 0.0
             for h in diag.hypotheses:
                 iv = self.surgery_agent.operate(h, self.model, probe_results, data)
                 h.status = iv.status
+                cycle_max_confidence = max(cycle_max_confidence, iv.confidence_score)
                 if self.run_logger:
                     self.run_logger.log_surgery(cycle, h, iv)
                 if iv.fixed:
@@ -319,6 +323,19 @@ class AutoDiagnoseLoop:
                     outstanding_modes.append(h.predicted_failure_mode)
                 if iv.new_data is not None and len(iv.new_data) > 0:
                     data = iv.new_data
+
+            # Track confidence per cycle and stop early when progress stalls:
+            # if the last 2 cycles both show confidence < 0.1 the hypotheses
+            # are not gaining traction — continuing burns budget without insight.
+            _confidence_history.append(cycle_max_confidence)
+            if len(_confidence_history) >= 2 and all(
+                c < 0.1 for c in _confidence_history[-2:]
+            ):
+                logger.info(
+                    "Stopping early: confidence flat at %.3f for 2 consecutive cycles",
+                    cycle_max_confidence,
+                )
+                break
 
             # Record cycle for M3 context
             prior_cycles.append({
