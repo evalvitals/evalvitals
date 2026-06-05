@@ -43,8 +43,9 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -87,7 +88,12 @@ class RunLogger:
             loop.run(cases)
     """
 
-    def __init__(self, run_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        run_dir: str | Path | None = None,
+        *,
+        trace_id: str | None = None,
+    ) -> None:
         if run_dir is None:
             run_dir = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_dir = Path(run_dir)
@@ -95,6 +101,12 @@ class RunLogger:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.artifact_dir.mkdir(exist_ok=True)
         self.log_path = self.run_dir / "run_log.jsonl"
+
+        # trace_id ties all events from a single AutoDiagnoseLoop.run() call
+        # together — including events from any recursive or nested sub-loops.
+        # Callers may supply their own ID (e.g. to correlate with an outer
+        # pipeline) or let RunLogger generate a fresh UUID.
+        self.trace_id: str = trace_id or str(uuid.uuid4())
 
         self.logger = logging.getLogger(f"evalvitals.run.{self.run_dir.name}")
         self.logger.setLevel(logging.DEBUG)
@@ -111,42 +123,51 @@ class RunLogger:
     def log_probe(self, cycle: int, results: dict[str, "Result"]) -> None:
         """M1: log findings (JSON) and persist heavy artifacts to disk."""
         artifact_paths = self._save_probe_artifacts(cycle, results)
-        self._log({
-            "event": "probe",
-            "cycle": cycle,
-            "analyzers": list(results),
-            "findings": {name: r.findings for name, r in results.items()},
-            "artifact_paths": artifact_paths,
-        })
+        self._log(
+            {
+                "event": "probe",
+                "cycle": cycle,
+                "analyzers": list(results),
+                "findings": {name: r.findings for name, r in results.items()},
+                "artifact_paths": artifact_paths,
+            },
+            span_id=f"c{cycle}.m1",
+        )
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""
-        self._log({
-            "event": "analysis",
-            "cycle": cycle,
-            "severity": report.severity,
-            "n_findings": len(report.findings),
-            "findings": [str(f) for f in report.findings],
-            "narrative": report.narrative,
-        })
+        self._log(
+            {
+                "event": "analysis",
+                "cycle": cycle,
+                "severity": report.severity,
+                "n_findings": len(report.findings),
+                "findings": [str(f) for f in report.findings],
+                "narrative": report.narrative,
+            },
+            span_id=f"c{cycle}.m2",
+        )
 
     def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:
         """M3: log raw LLM output and every parsed hypothesis."""
-        self._log({
-            "event": "diagnosis",
-            "cycle": cycle,
-            "model_name": diag.model_name,
-            "n_hypotheses": len(diag.hypotheses),
-            "hypotheses": [
-                {
-                    "statement": h.statement,
-                    "failure_mode": h.predicted_failure_mode,
-                    "status": h.status.value if h.status else None,
-                }
-                for h in diag.hypotheses
-            ],
-            "raw_judge_output": diag.raw_judge_output,
-        })
+        self._log(
+            {
+                "event": "diagnosis",
+                "cycle": cycle,
+                "model_name": diag.model_name,
+                "n_hypotheses": len(diag.hypotheses),
+                "hypotheses": [
+                    {
+                        "statement": h.statement,
+                        "failure_mode": h.predicted_failure_mode,
+                        "status": h.status.value if h.status else None,
+                    }
+                    for h in diag.hypotheses
+                ],
+                "raw_judge_output": diag.raw_judge_output,
+            },
+            span_id=f"c{cycle}.m3",
+        )
 
     def log_surgery(
         self,
@@ -155,33 +176,40 @@ class RunLogger:
         iv: "InterventionResult",
     ) -> None:
         """M4: log intervention outcome for one hypothesis."""
-        self._log({
-            "event": "surgery",
-            "cycle": cycle,
-            "hypothesis": hypothesis.statement,
-            "failure_mode": hypothesis.predicted_failure_mode,
-            "status": iv.status.value,
-            "fixed": iv.fixed,
-            "evidence": iv.evidence,
-            "n_refocused_cases": len(iv.new_data) if iv.new_data else None,
-        })
+        self._log(
+            {
+                "event": "surgery",
+                "cycle": cycle,
+                "hypothesis": hypothesis.statement,
+                "failure_mode": hypothesis.predicted_failure_mode,
+                "status": iv.status.value,
+                "fixed": iv.fixed,
+                "confidence_score": iv.confidence_score,
+                "evidence_dimensions": iv.evidence_dimensions,
+                "evidence": iv.evidence,
+                "n_refocused_cases": len(iv.new_data) if iv.new_data else None,
+            },
+            span_id=f"c{cycle}.m4",
+        )
 
     def log_loop_end(self, report: "AutoDiagnoseReport") -> None:
         """Final summary entry — written and file closed when the loop exits."""
-        self._log({
-            "event": "loop_end",
-            "cycles": report.cycles,
-            "resolved": report.resolved,
-            "n_hypotheses": len(report.final_hypotheses),
-            "final_hypotheses": [
-                {
-                    "statement": h.statement,
-                    "failure_mode": h.predicted_failure_mode,
-                    "status": h.status.value if h.status else None,
-                }
-                for h in report.final_hypotheses
-            ],
-        })
+        self._log(
+            {
+                "event": "loop_end",
+                "cycles": report.cycles,
+                "resolved": report.resolved,
+                "n_hypotheses": len(report.final_hypotheses),
+                "final_hypotheses": [
+                    {
+                        "statement": h.statement,
+                        "failure_mode": h.predicted_failure_mode,
+                        "status": h.status.value if h.status else None,
+                    }
+                    for h in report.final_hypotheses
+                ],
+            },
+        )
         self.close()
 
     # ------------------------------------------------------------------
@@ -207,8 +235,11 @@ class RunLogger:
     # Internals
     # ------------------------------------------------------------------
 
-    def _log(self, entry: dict[str, Any]) -> None:
-        entry["ts"] = datetime.now().isoformat()
+    def _log(self, entry: dict[str, Any], *, span_id: str | None = None) -> None:
+        entry["ts"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        entry["trace_id"] = self.trace_id
+        if span_id is not None:
+            entry["span_id"] = span_id
         self.logger.info("run_event", extra={"_payload": entry})
 
     def _save_probe_artifacts(
