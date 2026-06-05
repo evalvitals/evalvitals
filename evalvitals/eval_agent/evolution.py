@@ -315,19 +315,30 @@ class EvolutionStore:
         *,
         max_lessons: int = 5,
         context_keywords: list[str] | None = None,
+        caller_run_id: str = "",
     ) -> str:
         """Generate a prompt overlay string for a given M1–M4 *category*.
 
         Returns an empty string when no relevant lessons qualify.
         The overlay is formatted for direct injection into LLM prompts.
 
+        Side-effect: each call is appended to ``injection_log.jsonl`` so
+        there is an immutable audit trail of which lessons were injected
+        into which runs.  This makes it possible to bisect a regression
+        back to the specific lesson that changed agent behaviour.
+
         Args:
-            context_keywords: Extra terms from the current run (e.g. failure
-                mode tags, narrative keywords) used to boost relevance scoring.
+            context_keywords: Extra terms from the current run used to boost
+                relevance scoring (failure mode tags, narrative snippets, etc.).
+            caller_run_id:    Identifier of the run requesting the overlay —
+                used to link the injection record back to the loop run.
         """
         lessons = self.query_for_category(
             category, max_lessons=max_lessons, context_keywords=context_keywords
         )
+
+        self._record_injection(category, lessons, caller_run_id)
+
         if not lessons:
             return ""
 
@@ -338,6 +349,42 @@ class EvolutionStore:
             )
             lines.append(f"{i}. {icon} {lesson.description}")
         return "\n".join(lines)
+
+    def _record_injection(
+        self,
+        category: str,
+        lessons: list[LessonEntry],
+        caller_run_id: str,
+    ) -> None:
+        """Append one record to ``injection_log.jsonl`` (non-blocking).
+
+        Each record captures which lessons were injected, when, into which
+        run, and for which category.  The log is append-only so it acts as
+        a provenance chain — a given mutation in agent behaviour can be
+        traced back to the exact lesson that was active at the time.
+        """
+        log_path = self._dir / "injection_log.jsonl"
+        record = {
+            "ts": _utcnow_iso(),
+            "caller_run_id": caller_run_id,
+            "category": category,
+            "n_lessons": len(lessons),
+            "lessons": [
+                {
+                    "run_id": l.run_id,
+                    "cycle": l.cycle,
+                    "severity": l.severity,
+                    "description": l.description[:120],
+                    "timestamp": l.timestamp,
+                }
+                for l in lessons
+            ],
+        }
+        try:
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except OSError as exc:
+            logger.debug("EvolutionStore: could not write injection log: %s", exc)
 
     def count(self) -> int:
         """Return total number of lessons stored."""
