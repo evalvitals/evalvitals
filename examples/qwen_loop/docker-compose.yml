@@ -10,7 +10,10 @@ services:
     volumes:
       - ${HF_HOME:-~/.cache/huggingface}:/hf_cache
       - ./outputs:/app/example/outputs        # checkpoint + evolution log persisted
-      # Mount the host codex binary into the container (no install needed).
+      # Mount the host agy (antigravity) binary into the container (no install needed).
+      # Before running: export AGY_PATH=$(which agy)
+      - ${AGY_PATH:-/usr/local/bin/agy}:/usr/local/bin/agy:ro
+      # Mount the host codex binary as fallback.
       # Before running: export CODEX_PATH=$(which codex)
       - ${CODEX_PATH:-/usr/local/bin/codex}:/usr/local/bin/codex:ro
     deploy:

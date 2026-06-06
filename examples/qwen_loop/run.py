@@ -203,15 +203,26 @@ def main() -> None:
         diagnosis_agent = DiagnosisAgent(judge=model)
         print("  M3 DiagnosisAgent : Qwen (same model, text-only prompt)")
 
-    # ── M4 SurgeryAgent — codex CLI writes the diagnostic script ─────────────
+    # ── M4 SurgeryAgent — CLI agent writes the diagnostic script ─────────────
     surgery_agent = None
     if diagnosis_agent is not None:
         import shutil
 
         from evalvitals.eval_agent import CliAgentConfig, ExperimentWriterConfig, SurgeryAgent
 
+        # Prefer antigravity (agy), fall back to codex, then LLM path.
+        agy_bin = shutil.which("agy")
         codex_bin = shutil.which("codex")
-        if codex_bin:
+        if agy_bin:
+            writer_cfg = ExperimentWriterConfig(
+                cli_agent=CliAgentConfig(
+                    provider="antigravity",
+                    timeout_sec=120,
+                ),
+                exec_fix_timeout_sec=60,
+            )
+            print(f"  M4 SurgeryAgent   : antigravity CLI ({agy_bin})")
+        elif codex_bin:
             writer_cfg = ExperimentWriterConfig(
                 cli_agent=CliAgentConfig(
                     provider="codex",
@@ -221,9 +232,9 @@ def main() -> None:
             )
             print(f"  M4 SurgeryAgent   : codex CLI ({codex_bin})")
         else:
-            # codex not on PATH — fall back to LLM path using Qwen as writer judge
+            # No CLI agent on PATH — fall back to LLM path using Qwen as writer
             writer_cfg = ExperimentWriterConfig(exec_fix_timeout_sec=60)
-            print("  M4 SurgeryAgent   : LLM path (Qwen, codex not found on PATH)")
+            print("  M4 SurgeryAgent   : LLM path (agy/codex not found on PATH)")
         surgery_agent = SurgeryAgent(judge=model, writer_config=writer_cfg)
 
     # ── Run directory + verbose logger ────────────────────────────────────────

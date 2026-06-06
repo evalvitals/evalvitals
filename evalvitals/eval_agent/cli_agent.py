@@ -6,11 +6,12 @@ Supported providers:
 
     ``"llm"``         — single-pass LLM (default; handled by ExperimentWriter,
                         not by this module)
-    ``"claude_code"`` — Claude Code CLI  (``claude -p``)
-    ``"codex"``       — OpenAI Codex CLI  (``codex exec``)
-    ``"opencode"``    — OpenCode CLI      (``opencode run``)
-    ``"gemini_cli"``  — Gemini CLI        (``gemini -p``)
-    ``"kimi_cli"``    — Kimi CLI          (``kimi chat``)
+    ``"claude_code"``  — Claude Code CLI   (``claude -p``)
+    ``"codex"``        — OpenAI Codex CLI  (``codex exec``)
+    ``"opencode"``     — OpenCode CLI      (``opencode run``)
+    ``"gemini_cli"``   — Gemini CLI        (``gemini -p``)
+    ``"kimi_cli"``     — Kimi CLI          (``kimi chat``)
+    ``"antigravity"``  — Antigravity CLI   (``agy -p``)
 
 Usage::
 
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _VALID_PROVIDERS = frozenset(
-    {"llm", "claude_code", "codex", "opencode", "gemini_cli", "kimi_cli"}
+    {"llm", "claude_code", "codex", "opencode", "gemini_cli", "kimi_cli", "antigravity"}
 )
 
 _BINARY_DEFAULTS: dict[str, str] = {
@@ -51,6 +52,7 @@ _BINARY_DEFAULTS: dict[str, str] = {
     "opencode":    "opencode",
     "gemini_cli":  "gemini",
     "kimi_cli":    "kimi",
+    "antigravity": "agy",
 }
 
 
@@ -385,6 +387,26 @@ class KimiCliAgent(_CliAgentBase):
         return cmd
 
 
+class AntigravityAgent(_CliAgentBase):
+    """Antigravity CLI backend (``agy -p``).
+
+    Requires the ``agy`` binary installed.
+    """
+
+    _provider_name = "antigravity"
+
+    def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        cmd = [
+            self._binary, "-p", prompt,
+            "--dangerously-skip-permissions",
+            "--add-dir", str(workdir),
+        ]
+        if self._model:
+            cmd += ["--model", self._model]
+        cmd.extend(self._extra_args)
+        return cmd
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -395,6 +417,7 @@ _PROVIDER_CLASSES: dict[str, type[_CliAgentBase]] = {
     "opencode":    OpenCodeAgent,
     "gemini_cli":  GeminiCliAgent,
     "kimi_cli":    KimiCliAgent,
+    "antigravity": AntigravityAgent,
 }
 
 
