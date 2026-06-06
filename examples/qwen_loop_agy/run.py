@@ -260,7 +260,7 @@ def main() -> None:
         ),
         target_modalities=frozenset({"text", "image"}),
     )
-    print(f"\nExperimentProtocol:")
+    print("\nExperimentProtocol:")
     print(f"  task_domain : {protocol.task_domain}")
     print(f"  description : {protocol.description[:80]}...")
 
