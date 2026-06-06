@@ -217,7 +217,6 @@ def main() -> None:
     parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR))
     args = parser.parse_args()
 
-    import shutil
 
     import evalvitals
     from evalvitals.eval_agent import (

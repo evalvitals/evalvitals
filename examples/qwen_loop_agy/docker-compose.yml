@@ -21,8 +21,9 @@ services:
       # agy binary — mount from host so no install is needed inside the image.
       # Set AGY_PATH before running: export AGY_PATH=$(which agy)
       - ${AGY_PATH:-~/.local/bin/agy}:/usr/local/bin/agy:ro
-      # agy OAuth token — required for agy to authenticate without an API key.
-      - ~/.gemini:/home/user/.gemini:ro
+      # agy auth + project state — must be read-write so agy can create
+      # project config files when starting a new conversation.
+      - ~/.gemini:/home/user/.gemini
       # agy cache — read/write so the container can reuse cached responses.
       - ~/.cache/antigravity:/home/user/.cache/antigravity
     deploy:

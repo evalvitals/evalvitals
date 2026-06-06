@@ -370,15 +370,20 @@ class ProbeAgent:
         if match:
             try:
                 data = json.loads(match.group())
-                names = [n for n in data.get("analyzers", []) if n in valid_names]
+                # Normalise to lowercase so the LLM can return "POPE" or "Pope"
+                names = [
+                    n.lower() for n in data.get("analyzers", [])
+                    if n.lower() in valid_names
+                ]
                 rationale = str(data.get("rationale", "LLM-selected"))
                 if names:
                     return names[:max_n], rationale
             except json.JSONDecodeError:
                 pass
 
-        # Soft parse: look for any known analyzer name mentioned in the response
-        found = [n for n in sorted(valid_names) if n in cleaned]
+        # Soft parse: case-insensitive scan for any known analyzer name
+        cleaned_lower = cleaned.lower()
+        found = [n for n in sorted(valid_names) if n in cleaned_lower]
         if found:
             logger.warning("ProbeAgent: LLM response not valid JSON — extracted names by text scan")
             return found[:max_n], "LLM-selected (text-extracted)"
