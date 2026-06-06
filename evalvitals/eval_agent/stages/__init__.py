@@ -8,10 +8,13 @@ Each module is a self-contained stage that can be injected into either loop:
 M1 — Probe (analyzer selection + execution)
   probe.py        StrategyProbe   detect model kind; rank analyzers by failure-mode hints
   probe_agent.py  ProbeAgent      execute ranked analyzers; route to Docker if needed;
-                                  protocol-guided via ExperimentProtocol.probe_hints()
+                                  protocol-guided via LLM analyzer selection
   protocol.py     ExperimentProtocol   user's NL description of what to investigate;
-                                       probe_hints() maps keywords → failure-mode tags
                   ProbingSchema        records which analyzers ran and why (M2/M5 trace)
+
+Data — Case discovery / labeling
+  case_discovery.py  CaseDiscoveryAgent  run candidate prompts through the model,
+                                         store observed outputs, and label PASS/FAIL
 
 M2 — Analysis (statistical interpretation)
   analysis.py     AnalysisModule       threshold rules + VLM derived metrics → AnalysisReport
