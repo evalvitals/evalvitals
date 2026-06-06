@@ -30,7 +30,7 @@ from evalvitals.eval_agent.hypothesis import Hypothesis
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import AnalysisReport
+    from evalvitals.eval_agent.stages.analysis import AnalysisReport
 
 
 _DIAGNOSE_PROMPT = """\
@@ -367,7 +367,7 @@ class DiagnosisAgent:
         Returns:
             :class:`DiagnosisResult` with zero or more hypotheses.
         """
-        from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
+        from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
 
         if not isinstance(analysis, AnalysisReport):
             # Backward compat: wrap raw results in a minimal AnalysisReport.
@@ -396,7 +396,7 @@ class DiagnosisAgent:
         # auto-generate one hypothesis per finding so M4 can still run.
         # This prevents self-diagnosis bias when the judge is the model under test.
         if not hypotheses and analysis.findings:
-            from evalvitals.eval_agent.analysis import _SEVERITY_ORDER
+            from evalvitals.eval_agent.stages.analysis import _SEVERITY_ORDER
             for finding in analysis.findings:
                 if _SEVERITY_ORDER.get(finding.severity, 0) >= 2:  # medium or high
                     hypotheses.append(Hypothesis(

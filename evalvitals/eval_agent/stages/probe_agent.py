@@ -50,14 +50,14 @@ from typing import TYPE_CHECKING, Any
 from evalvitals.core.capability import Capability
 from evalvitals.core.experiment import Experiment, ExperimentRunner
 from evalvitals.core.registry import registry
-from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
+from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 
 if TYPE_CHECKING:
     from evalvitals.core.analyzer import Analyzer
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.protocol import ExperimentProtocol, ProbingSchema
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 
 # Capabilities that a containerised (API-based) model can satisfy.
 _BLACKBOX_CAPS = frozenset({Capability.GENERATE, Capability.LOGPROBS, Capability.TOOL_CALLS})
@@ -224,7 +224,7 @@ class ProbeAgent:
         results = self.probe(model, data, hint_failure_modes=hint_failure_modes, protocol=protocol)
         schema = self.last_schema
         if schema is None:
-            from evalvitals.eval_agent.protocol import ProbingSchema
+            from evalvitals.eval_agent.stages.protocol import ProbingSchema
             schema = ProbingSchema(selected_analyzers=list(results), protocol=protocol)
         return results, schema
 
@@ -337,7 +337,7 @@ def _build_schema(
     protocol: "ExperimentProtocol | None",
 ) -> "ProbingSchema":
     """Build a ProbingSchema from a completed probe() call."""
-    from evalvitals.eval_agent.protocol import ProbingSchema
+    from evalvitals.eval_agent.stages.protocol import ProbingSchema
 
     rationale_parts: list[str] = []
     if hints:

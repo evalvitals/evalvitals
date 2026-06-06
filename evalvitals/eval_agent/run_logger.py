@@ -51,11 +51,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import AnalysisReport
-    from evalvitals.eval_agent.diagnosis import DiagnosisResult
     from evalvitals.eval_agent.hypothesis import Hypothesis
     from evalvitals.eval_agent.loop import AutoDiagnoseReport
-    from evalvitals.eval_agent.surgery import InterventionResult
+    from evalvitals.eval_agent.stages.analysis import AnalysisReport
+    from evalvitals.eval_agent.stages.diagnosis import DiagnosisResult
+    from evalvitals.eval_agent.stages.surgery import InterventionResult
 
 
 def _artifact_to_numpy(artifact: Any) -> "Any | None":

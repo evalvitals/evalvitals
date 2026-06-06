@@ -29,9 +29,9 @@ from evalvitals.eval_agent import (
     VLDiagnoseLoop,
     VLDiagnoseReport,
 )
-from evalvitals.eval_agent.analysis import AnalysisFinding
 from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-from evalvitals.eval_agent.protocol import ExperimentProtocol, ProbingSchema
+from evalvitals.eval_agent.stages.analysis import AnalysisFinding
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from tests.conftest import FakeModel
 
 
@@ -202,7 +202,7 @@ class TestStatsAnalysisAgent:
 
     def test_stats_report_is_analysis_report(self):
         # Backward compat: StatsAnalysisReport IS-A AnalysisReport
-        from evalvitals.eval_agent.analysis import AnalysisReport
+        from evalvitals.eval_agent.stages.analysis import AnalysisReport
         agent = StatsAnalysisAgent()
         report = agent.analyze({}, "m")
         assert isinstance(report, AnalysisReport)
@@ -528,7 +528,7 @@ class TestVLDiagnoseLoop:
             max_cycles=1,
         )
         report = loop.run(_labeled_batch())
-        from evalvitals.eval_agent.stats_agent import StatsAnalysisReport
+        from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
         assert isinstance(report.final_stats_report, StatsAnalysisReport)
 
     def test_stopped_by_max_cycles(self):
@@ -556,7 +556,7 @@ class TestVLDiagnoseLoop:
 
         # Make the attention analyzer return per-case signals on the failing cases
         from evalvitals.core.result import Result as R
-        from evalvitals.eval_agent.probe_agent import ProbeAgent
+        from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
 
         fail_ids = [cases[0].id, cases[1].id]
 
@@ -594,7 +594,7 @@ class TestVLDiagnoseLoop:
 
     def test_run_m4_operates_on_best_hypothesis(self):
         from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-        from evalvitals.eval_agent.hypothesis_tester import HypothesisTestResult
+        from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTestResult
 
         h = Hypothesis(
             statement="Model attends wrong.",

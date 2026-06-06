@@ -215,13 +215,14 @@ def main() -> None:
     import evalvitals
     from evalvitals.eval_agent import (
         DiagnosisAgent,
+        ExperimentProtocol,
+        HypothesisTester,
+        ModelKind,
+        ProbeAgent,
+        StatsAnalysisAgent,
+        StrategyProbe,
         VLDiagnoseLoop,
     )
-    from evalvitals.eval_agent.hypothesis_tester import HypothesisTester
-    from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
-    from evalvitals.eval_agent.probe_agent import ProbeAgent
-    from evalvitals.eval_agent.protocol import ExperimentProtocol
-    from evalvitals.eval_agent.stats_agent import StatsAnalysisAgent
 
     # ── Load model ────────────────────────────────────────────────────────────
     print(f"\nLoading {args.model!r} on {args.device} ({args.dtype}) …")

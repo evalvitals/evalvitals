@@ -24,7 +24,7 @@ from evalvitals.eval_agent import (
     ProbeAgent,
     SurgeryAgent,
 )
-from evalvitals.eval_agent.analysis import AnalysisFinding
+from evalvitals.eval_agent.stages.analysis import AnalysisFinding
 from evalvitals.eval_agent.hypothesis import Hypothesis
 from tests.conftest import FakeModel
 
@@ -224,7 +224,7 @@ def test_analysis_module_to_dict():
 
 def test_analysis_module_extra_rules():
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import _Rule
+    from evalvitals.eval_agent.stages.analysis import _Rule
 
     results = {
         "my_analyzer": Result(
@@ -240,7 +240,7 @@ def test_analysis_module_extra_rules():
 
 def test_analysis_module_sorts_high_severity_first():
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import _Rule
+    from evalvitals.eval_agent.stages.analysis import _Rule
 
     results = {
         "a1": Result(analyzer="a1", model="m", findings={"m1": 10.0}),

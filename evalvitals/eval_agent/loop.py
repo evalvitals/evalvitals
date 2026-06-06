@@ -57,7 +57,7 @@ Usage::
 
     # New VL-focused loop (Plan A)
     from evalvitals.eval_agent import VLDiagnoseLoop
-    from evalvitals.eval_agent.protocol import ExperimentProtocol
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
 
     protocol = ExperimentProtocol(
         description="QwenVL often confuses left/right positions in spatial tasks.",
@@ -87,17 +87,17 @@ if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
-    from evalvitals.eval_agent.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.evolution import EvolutionStore
     from evalvitals.eval_agent.git_manager import ExperimentGitManager
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisGenerator
-    from evalvitals.eval_agent.hypothesis_tester import HypothesisTester, HypothesisTestResult
-    from evalvitals.eval_agent.probe_agent import ProbeAgent
-    from evalvitals.eval_agent.protocol import ExperimentProtocol
     from evalvitals.eval_agent.run_logger import RunLogger
-    from evalvitals.eval_agent.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
-    from evalvitals.eval_agent.surgery import SurgeryAgent
+    from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
+    from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
+    from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
+    from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
+    from evalvitals.eval_agent.stages.surgery import SurgeryAgent
 
 logger = logging.getLogger(__name__)
 
@@ -214,9 +214,9 @@ class AutoDiagnoseLoop:
         token_budget: int = 0,
         _run_id_override: str | None = None,
     ) -> None:
-        from evalvitals.eval_agent.analysis import AnalysisModule
-        from evalvitals.eval_agent.probe_agent import ProbeAgent
-        from evalvitals.eval_agent.surgery import SurgeryAgent
+        from evalvitals.eval_agent.stages.analysis import AnalysisModule
+        from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+        from evalvitals.eval_agent.stages.surgery import SurgeryAgent
 
         self.model = model
         self.probe_agent = probe_agent or ProbeAgent()
@@ -667,10 +667,10 @@ class VLDiagnoseLoop:
         run_logger: "Any | None" = None,
         token_budget: int = 0,
     ) -> None:
-        from evalvitals.eval_agent.hypothesis_tester import HypothesisTester
-        from evalvitals.eval_agent.probe_agent import ProbeAgent
-        from evalvitals.eval_agent.stats_agent import StatsAnalysisAgent
-        from evalvitals.eval_agent.surgery import SurgeryAgent
+        from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
+        from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+        from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+        from evalvitals.eval_agent.stages.surgery import SurgeryAgent
 
         self.model = model
         self.protocol = protocol
@@ -715,7 +715,7 @@ class VLDiagnoseLoop:
         def _get_diagnosis_agent() -> "Any":
             if self.diagnosis_agent is not None:
                 return self.diagnosis_agent
-            from evalvitals.eval_agent.diagnosis import DiagnosisAgent
+            from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
             return DiagnosisAgent()
 
         for cycle in range(self.max_cycles):
@@ -888,7 +888,7 @@ class VLDiagnoseLoop:
 
 def _make_intervention_result_from_test(tr: "HypothesisTestResult") -> Any:
     """Wrap a HypothesisTestResult as a minimal InterventionResult."""
-    from evalvitals.eval_agent.surgery import InterventionResult
+    from evalvitals.eval_agent.stages.surgery import InterventionResult
 
     return InterventionResult(
         hypothesis=tr.hypothesis,

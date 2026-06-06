@@ -45,12 +45,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
+from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.protocol import ExperimentProtocol
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
 
 logger = logging.getLogger(__name__)
 

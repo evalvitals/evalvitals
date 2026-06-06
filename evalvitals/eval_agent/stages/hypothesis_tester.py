@@ -39,12 +39,12 @@ from typing import TYPE_CHECKING, Any
 
 from evalvitals.core.case import CaseBatch, Label
 from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-from evalvitals.eval_agent.surgery import _compute_confidence, _extract_per_case_signals
+from evalvitals.eval_agent.stages.surgery import _compute_confidence, _extract_per_case_signals
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.protocol import ExperimentProtocol
-    from evalvitals.eval_agent.stats_agent import StatsAnalysisReport
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
 
 logger = logging.getLogger(__name__)
 
