@@ -111,11 +111,15 @@ class StrategyProbe:
         self._priority = priority_override or _PRIORITY
 
     def detect_kind(self, model: "Model") -> ModelKind:
-        """Infer VLM / AGENT / LLM from the model's capabilities and modalities."""
-        if Capability.TOOL_CALLS in getattr(model, "capabilities", frozenset()):
-            return ModelKind.AGENT
+        """Infer VLM / AGENT / LLM from the model's capabilities and modalities.
+
+        Image modality takes priority over TOOL_CALLS so that VLMs that also
+        support tool use (e.g. Qwen3-VL) are treated as VLMs, not agents.
+        """
         if "image" in getattr(model, "modalities", frozenset({"text"})):
             return ModelKind.VLM
+        if Capability.TOOL_CALLS in getattr(model, "capabilities", frozenset()):
+            return ModelKind.AGENT
         return ModelKind.LLM
 
     def select(

@@ -355,8 +355,18 @@ class ProbeAgent:
         max_n: int,
         model: "Model",
     ) -> tuple[list[str], str]:
-        """Extract analyzer names and rationale from the LLM JSON response."""
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        """Extract analyzer names and rationale from the LLM JSON response.
+
+        Strips ``<think>…</think>`` blocks emitted by reasoning models (e.g.
+        Qwen3) before searching for the JSON payload so that greedy matching
+        does not swallow reasoning text as part of the JSON.
+        """
+        # Remove <think>…</think> reasoning blocks before JSON search
+        cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+        # Use a non-greedy search that stops at the first closing brace so we
+        # don't accidentally span multiple JSON objects.
+        match = re.search(r"\{[^{}]*\}", cleaned)
         if match:
             try:
                 data = json.loads(match.group())
@@ -368,7 +378,7 @@ class ProbeAgent:
                 pass
 
         # Soft parse: look for any known analyzer name mentioned in the response
-        found = [n for n in sorted(valid_names) if n in raw]
+        found = [n for n in sorted(valid_names) if n in cleaned]
         if found:
             logger.warning("ProbeAgent: LLM response not valid JSON — extracted names by text scan")
             return found[:max_n], "LLM-selected (text-extracted)"
