@@ -4,9 +4,13 @@ services:
       context: ../..
       dockerfile: examples/qwen_loop_agy/Dockerfile
     image: evalvitals-qwen-loop-agy
+    # Run as the host user so volume-mounted outputs/ is not root-owned.
+    # Requires: export UID GID  (or add to shell profile)
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}      # codex auth — inherited from host env
-      - CUDA_VISIBLE_DEVICES=3               # use GPU 3 (free)
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}  # override: export CUDA_VISIBLE_DEVICES=2
+      - HF_HOME=/hf_cache
     volumes:
       - ${HF_HOME:-~/.cache/huggingface}:/hf_cache
       - ./outputs:/app/example/outputs        # run logs persisted to host
@@ -27,5 +31,6 @@ services:
       python run.py
         --model qwen3-vl-4b-instruct
         --device cuda
+        --dtype bfloat16
         --max-cycles 2
         --max-analyzers 2

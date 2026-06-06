@@ -1,21 +1,23 @@
 """VLDiagnoseLoop on Qwen3-VL-4B: protocol-guided VL failure diagnosis.
 
-New pipeline (2026-06-05 architecture):
+Pipeline:
 
     ExperimentProtocol  ← user's NL description of what to investigate
          │
     M1  ProbeAgent           protocol-guided analyzer selection + execute
-    M2  StatsAnalysisAgent   protocol-aware stats analysis + evidence chain
+    M2  StatsAnalysisAgent   threshold rules + LLM-written evidence chain
     M3  DiagnosisAgent       Qwen as judge ("AI scientist" hypothesis gen)
-    M5  HypothesisTester     statistical + protocol consistency check
+    M5  HypothesisTester     statistical test + protocol consistency check
          │
-    loop ends when M5 finds a verified, protocol-consistent hypothesis
+    loop exits when M5 finds a verified, protocol-consistent hypothesis,
+    or after --max-cycles cycles
          │
     M4  SurgeryAgent         agy/codex writes + runs targeted fix script
                              (called separately AFTER the loop)
 
-Run infrastructure:
-    - run_dir=./outputs/  → checkpoint.json, heartbeat.json, evolution/lessons.jsonl
+Outputs written to --run-dir (default: ./outputs/):
+    logs/run_log.jsonl          ← one JSON line per M1/M2/M3/M5 event
+    logs/artifacts/             ← per-cycle analyzer artifacts (.npy / .json)
 
 Usage (via Docker — preferred):
     docker compose up
@@ -23,7 +25,8 @@ Usage (via Docker — preferred):
 Usage (direct):
     python run.py
     python run.py --model qwen2.5-vl-7b-instruct --device cuda:0
-    python run.py --analysis-only   # M1+M2 only, skip M3/M4/M5
+    python run.py --analysis-only   # M1+M2 only, skip M3/M5/M4
+    python run.py --max-cycles 3 --max-analyzers 3
 """
 
 from __future__ import annotations
@@ -320,8 +323,8 @@ def main() -> None:
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nOutput directory: {run_dir.resolve()}")
-    print("  checkpoint.json          ← not used by VLDiagnoseLoop (stateless loop)")
-    print("  evolution/lessons.jsonl  ← not used by VLDiagnoseLoop (future)")
+    print("  logs/run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
+    print("  logs/artifacts/      ← per-cycle analyzer artifacts (.npy / .json)")
 
     logger = VerboseRunLogger(run_dir=run_dir / "logs")
 
