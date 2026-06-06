@@ -12,7 +12,7 @@ COPY . /evalvitals
 RUN pip install --no-cache-dir "/evalvitals[local,gemini,data,viz]"
 
 WORKDIR /app/example
-COPY examples/qwen_loop/ .
+COPY examples/qwen_loop_agy/ .
 
 ENV PYTHONUNBUFFERED=1
 

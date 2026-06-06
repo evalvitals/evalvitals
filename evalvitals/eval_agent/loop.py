@@ -1,7 +1,12 @@
-"""SelfEvolveLoop and AutoDiagnoseLoop — closed-loop failure-discovery controllers.
+"""Loop controllers for the self-evolving failure-analysis agent.
 
-``SelfEvolveLoop`` is the original Stage-1 skeleton (kept for backward compat).
-``AutoDiagnoseLoop`` is the concrete M1→M2→M3→M4 implementation:
+Three controllers are provided:
+
+``SelfEvolveLoop``
+    Original Stage-1 skeleton — kept for backward compatibility.
+
+``AutoDiagnoseLoop``
+    Concrete M1→M2→M3→M4 implementation (original architecture):
 
     ┌───────────────────────────────────────────────────────────────────┐
     │ M1 · ProbeAgent      select analyzers + execute (direct / Docker) │
@@ -10,6 +15,24 @@
     │ M4 · SurgeryAgent    operate + verify; stop or refocus data       │
     └───────────────────────────────────────────────────────────────────┘
                             ↑__________________________│  (repeat)
+
+``VLDiagnoseLoop``
+    New architecture (2026-06-05 meeting) focused on VL tasks:
+    M4 is intentionally removed from the inner loop and kept as a
+    separate post-loop fix-proposal step (Plan A).
+
+    ┌──────────────────────────────────────────────────────────────────────┐
+    │ M1 · ProbeAgent         protocol-guided analyzer selection + execute │
+    │ M2 · StatsAnalysisAgent protocol-aware stats analysis                │
+    │ M3 · DiagnosisAgent     "AI scientist" hypothesis generation         │
+    │ M5 · HypothesisTester   stats test + protocol consistency check      │
+    └──────────────────────────────────────────────────────────────────────┘
+                            ↑_________________________________│
+             stop when M5 finds a verified, protocol-consistent hypothesis
+
+    M4 (SurgeryAgent) runs separately via ``VLDiagnoseLoop.run_m4()`` once
+    the loop stops — propose a fix for the best verified hypothesis (Plan A),
+    or propose + execute a fix (Plan B).
 
 Run-directory infrastructure (mirrors AutoResearchClaw):
 
@@ -31,6 +54,19 @@ Usage::
 
     # Resume an interrupted run
     report = AutoDiagnoseLoop.resume(Path("./runs"), model=my_model, data=cases)
+
+    # New VL-focused loop (Plan A)
+    from evalvitals.eval_agent import VLDiagnoseLoop
+    from evalvitals.eval_agent.protocol import ExperimentProtocol
+
+    protocol = ExperimentProtocol(
+        description="QwenVL often confuses left/right positions in spatial tasks.",
+        task_domain="spatial reasoning",
+        target_modalities=frozenset({"text", "image"}),
+    )
+    loop   = VLDiagnoseLoop(model=vlm, protocol=protocol)
+    report = loop.run(failure_cases)
+    fix    = loop.run_m4(report, failure_cases)   # separate fix-proposal step
 """
 
 from __future__ import annotations
@@ -56,8 +92,11 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.evolution import EvolutionStore
     from evalvitals.eval_agent.git_manager import ExperimentGitManager
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisGenerator
+    from evalvitals.eval_agent.hypothesis_tester import HypothesisTester, HypothesisTestResult
     from evalvitals.eval_agent.probe_agent import ProbeAgent
+    from evalvitals.eval_agent.protocol import ExperimentProtocol
     from evalvitals.eval_agent.run_logger import RunLogger
+    from evalvitals.eval_agent.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
     from evalvitals.eval_agent.surgery import SurgeryAgent
 
 logger = logging.getLogger(__name__)
@@ -531,3 +570,337 @@ class AutoDiagnoseLoop:
             return json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# VLDiagnoseLoop — M1 → M2 → M3 → M5  (Plan A, 2026-06-05 architecture)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_STOPPED_BY_CRITERIA  = "criteria_met"
+_STOPPED_BY_MAX       = "max_cycles"
+_STOPPED_BY_BUDGET    = "budget"
+_STOPPED_BY_NO_HYPS   = "no_hypotheses"
+_STOPPED_BY_NO_PROBE  = "no_probe_results"
+
+
+@dataclass
+class VLDiagnoseReport:
+    """Summary returned by :class:`VLDiagnoseLoop.run`.
+
+    Attributes:
+        cycles:               Number of M1→M5 cycles executed.
+        stopped_by:           Why the loop stopped: ``"criteria_met"``,
+                              ``"max_cycles"``, ``"budget"``,
+                              ``"no_hypotheses"``, or ``"no_probe_results"``.
+        verified_hypotheses:  Statistically supported, protocol-consistent
+                              test results from M5 — sorted highest confidence
+                              first.  Feed into :meth:`VLDiagnoseLoop.run_m4`.
+        all_hypotheses:       All M3 proposals across every cycle.
+        all_test_results:     All M5 test results across every cycle.
+        final_stats_report:   M2 report from the last cycle.
+        fix_proposal:         Populated by :meth:`VLDiagnoseLoop.run_m4`
+                              when called after :meth:`VLDiagnoseLoop.run`.
+        store:                Accumulated results and hypotheses.
+    """
+
+    cycles: int
+    stopped_by: str
+    verified_hypotheses: "list[HypothesisTestResult]" = field(default_factory=list)
+    all_hypotheses: "list[Any]" = field(default_factory=list)
+    all_test_results: "list[HypothesisTestResult]" = field(default_factory=list)
+    final_stats_report: "StatsAnalysisReport | None" = None
+    fix_proposal: "Any | None" = None
+    store: Store = field(default_factory=InMemoryStore)
+    _run_id: str = field(default="", repr=False)
+
+
+class VLDiagnoseLoop:
+    """M1→M2→M3→M5 failure-analysis loop for VL tasks (Plan A architecture).
+
+    M4 (**SurgeryAgent**) is intentionally excluded from the inner loop.
+    Call :meth:`run_m4` on the returned :class:`VLDiagnoseReport` to obtain
+    a fix proposal based on the best verified hypothesis candidates.
+
+    Inner loop::
+
+        for cycle in range(max_cycles):
+            probe_results  = M1.probe(model, data, protocol)   # guided by protocol
+            stats_report   = M2.analyze(probe_results, protocol)
+            diag           = M3.diagnose(stats_report)
+            test_results   = M5.test(diag.hypotheses, stats_report, data, protocol)
+            if M5.stopping_criteria_met(test_results, protocol): break
+
+    Stopping criteria: at least one M5-verified hypothesis that is also
+    consistent with the user's experiment protocol.
+
+    Args:
+        model:              The model under evaluation.
+        protocol:           Experiment protocol — the human prior that guides
+                            M1 analyzer selection, M2 narrative, and M5
+                            consistency checks.
+        probe_agent:        M1.  Defaults to ``ProbeAgent()``.
+        stats_agent:        M2.  Defaults to ``StatsAnalysisAgent()``.
+        diagnosis_agent:    M3.  Defaults to ``DiagnosisAgent()`` (Gemini
+                            when ``GEMINI_API_KEY`` is set).
+                            Pass ``None`` to run in analysis-only mode (M1+M2).
+        hypothesis_tester:  M5.  Defaults to ``HypothesisTester()``.
+        surgery_agent:      M4 — used only by :meth:`run_m4`, never inside
+                            the main loop.  Defaults to ``SurgeryAgent()``.
+        store:              Persistent memory.
+        max_cycles:         Hard cap on M1→M5 iterations.
+        run_logger:         Optional :class:`~evalvitals.eval_agent.run_logger.RunLogger`.
+        token_budget:       Stop early when accumulated token usage reaches
+                            this limit (0 = unlimited).
+    """
+
+    def __init__(
+        self,
+        model: "Model",
+        protocol: "ExperimentProtocol",
+        probe_agent: "Any | None" = None,
+        stats_agent: "StatsAnalysisAgent | None" = None,
+        diagnosis_agent: "Any | None" = None,
+        hypothesis_tester: "HypothesisTester | None" = None,
+        surgery_agent: "Any | None" = None,
+        store: Store | None = None,
+        max_cycles: int = 5,
+        run_logger: "Any | None" = None,
+        token_budget: int = 0,
+    ) -> None:
+        from evalvitals.eval_agent.hypothesis_tester import HypothesisTester
+        from evalvitals.eval_agent.probe_agent import ProbeAgent
+        from evalvitals.eval_agent.stats_agent import StatsAnalysisAgent
+        from evalvitals.eval_agent.surgery import SurgeryAgent
+
+        self.model = model
+        self.protocol = protocol
+        self.probe_agent = probe_agent or ProbeAgent()
+        self.stats_agent = stats_agent or StatsAnalysisAgent()
+        self.diagnosis_agent = diagnosis_agent  # None = lazy default on first call
+        self.hypothesis_tester = hypothesis_tester or HypothesisTester()
+        self.surgery_agent = surgery_agent or SurgeryAgent()
+        self.store = store or InMemoryStore()
+        self.max_cycles = max_cycles
+        self.run_logger = run_logger
+        self.token_budget = token_budget
+        self._tokens_used: int = 0
+        self._run_id: str = ""
+
+    # ──────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────
+
+    def run(self, data: "CaseBatch") -> VLDiagnoseReport:
+        """Drive the M1→M2→M3→M5 loop to convergence.
+
+        Args:
+            data: Cases to analyse (should carry :class:`~evalvitals.core.case.Label`
+                  values for the M5 statistical tests to work).
+
+        Returns:
+            :class:`VLDiagnoseReport` with the final state.
+            Call :meth:`run_m4` on this to get a fix proposal (Plan A).
+        """
+        all_hypotheses: list[Any] = []
+        all_test_results: list[Any] = []
+        final_stats_report = None
+        stopped_by = _STOPPED_BY_MAX
+        prior_cycles: list[dict[str, Any]] = []
+        self._tokens_used = 0
+
+        # Resolve M3 lazily so the default Gemini fallback is consistent with
+        # AutoDiagnoseLoop — a DiagnosisAgent() created here would raise
+        # immediately if GEMINI_API_KEY is absent, even if the caller
+        # passes diagnosis_agent=None intentionally.
+        def _get_diagnosis_agent() -> "Any":
+            if self.diagnosis_agent is not None:
+                return self.diagnosis_agent
+            from evalvitals.eval_agent.diagnosis import DiagnosisAgent
+            return DiagnosisAgent()
+
+        for cycle in range(self.max_cycles):
+            if self.token_budget > 0 and self._tokens_used >= self.token_budget:
+                logger.warning(
+                    "Token budget %d exhausted after %d cycles", self.token_budget, cycle
+                )
+                stopped_by = _STOPPED_BY_BUDGET
+                break
+
+            # ── M1: protocol-guided probing ──────────────────────────
+            probe_results = self.probe_agent.probe(
+                self.model,
+                data,
+                hint_failure_modes=self.protocol.probe_hints() or None,
+            )
+            if not probe_results:
+                logger.info("M1 produced no probe results — stopping.")
+                stopped_by = _STOPPED_BY_NO_PROBE
+                break
+            for r in probe_results.values():
+                self.store.add_result(r)
+            if self.run_logger:
+                self.run_logger.log_probe(cycle, probe_results)
+
+            # ── M2: protocol-aware stats analysis ────────────────────
+            stats_report = self.stats_agent.analyze(
+                probe_results,
+                model_name=repr(self.model),
+                protocol=self.protocol,
+            )
+            final_stats_report = stats_report
+            if self.run_logger:
+                self.run_logger.log_analysis(cycle, stats_report)
+
+            if self.diagnosis_agent is None and not hasattr(self, "_diag_instance"):
+                # analysis-only mode: no M3/M5
+                stopped_by = _STOPPED_BY_NO_HYPS
+                break
+
+            # ── M3: hypothesis generation ("AI scientist") ────────────
+            try:
+                diag_agent = _get_diagnosis_agent()
+            except Exception as exc:
+                logger.warning("Could not resolve DiagnosisAgent: %s", exc)
+                stopped_by = _STOPPED_BY_NO_HYPS
+                break
+
+            diag = diag_agent.diagnose(stats_report, prior_cycles=prior_cycles or None)
+
+            # Track token usage
+            _tok = getattr(diag, "tokens_used", None)
+            if _tok is None:
+                _tok = max(1, len(diag.raw_judge_output) // 4)
+            self._tokens_used += _tok
+
+            if self.run_logger:
+                self.run_logger.log_diagnosis(cycle, diag)
+
+            if not diag.hypotheses:
+                logger.info("M3 produced no hypotheses at cycle %d.", cycle)
+                stopped_by = _STOPPED_BY_NO_HYPS
+                break
+
+            for h in diag.hypotheses:
+                self.store.add_hypothesis(h)
+            all_hypotheses.extend(diag.hypotheses)
+
+            # ── M5: hypothesis testing (stats + protocol consistency) ─
+            test_results = self.hypothesis_tester.test(
+                diag.hypotheses,
+                stats_report,
+                data,
+                protocol=self.protocol,
+            )
+            all_test_results.extend(test_results)
+            for tr in test_results:
+                tr.hypothesis.status = tr.status
+
+            if self.run_logger:
+                # Reuse the surgery log slot for M5 results (backward compat)
+                for tr in test_results:
+                    _iv = _make_intervention_result_from_test(tr)
+                    self.run_logger.log_surgery(cycle, tr.hypothesis, _iv)
+
+            # ── Stopping criteria ────────────────────────────────────
+            if self.hypothesis_tester.stopping_criteria_met(test_results, self.protocol):
+                logger.info(
+                    "Stopping criteria met at cycle %d: verified, protocol-consistent "
+                    "hypothesis found.",
+                    cycle,
+                )
+                stopped_by = _STOPPED_BY_CRITERIA
+                break
+
+            # Build prior-cycles context for next M3 call
+            prior_cycles.append({
+                "cycle": cycle,
+                "severity": stats_report.severity,
+                "hypotheses": [
+                    {
+                        "statement": h.statement,
+                        "failure_mode": h.predicted_failure_mode,
+                        "status": h.status.value if h.status else "pending",
+                    }
+                    for h in diag.hypotheses
+                ],
+            })
+
+        # Collect best verified hypotheses (sorted by confidence)
+        verified = self.hypothesis_tester.best_hypotheses(all_test_results)
+
+        report = VLDiagnoseReport(
+            cycles=cycle + 1 if self.max_cycles > 0 else 0,  # type: ignore[possibly-undefined]
+            stopped_by=stopped_by,
+            verified_hypotheses=verified,
+            all_hypotheses=all_hypotheses,
+            all_test_results=all_test_results,
+            final_stats_report=final_stats_report,
+            store=self.store,
+            _run_id=self._run_id,
+        )
+        if self.run_logger:
+            self.run_logger.log_loop_end(report)
+        return report
+
+    def run_m4(
+        self,
+        report: VLDiagnoseReport,
+        data: "CaseBatch",
+    ) -> "Any | None":
+        """Plan A: propose a fix for the best verified hypothesis (post-loop M4).
+
+        Called *after* :meth:`run` to avoid polluting the inner loop with
+        fix-execution noise.  Operates on the highest-confidence verified
+        hypothesis from :attr:`VLDiagnoseReport.verified_hypotheses`.
+
+        Args:
+            report: Returned by :meth:`run`.
+            data:   Original case batch (needed by the surgery agent).
+
+        Returns:
+            :class:`~evalvitals.eval_agent.surgery.InterventionResult` or
+            ``None`` if there are no verified hypotheses to fix.
+        """
+        if not report.verified_hypotheses:
+            logger.info("run_m4: no verified hypotheses to act on.")
+            return None
+
+        best_tr = report.verified_hypotheses[0]
+        results: dict[str, Any] = (
+            report.final_stats_report.raw_results
+            if report.final_stats_report is not None
+            else {}
+        )
+        iv = self.surgery_agent.operate(
+            best_tr.hypothesis,
+            self.model,
+            results,
+            data,
+        )
+        report.fix_proposal = iv
+        return iv
+
+
+# ---------------------------------------------------------------------------
+# Internal adapter: convert HypothesisTestResult → InterventionResult-like
+# object for RunLogger.log_surgery (which expects an InterventionResult).
+# ---------------------------------------------------------------------------
+
+def _make_intervention_result_from_test(tr: "HypothesisTestResult") -> Any:
+    """Wrap a HypothesisTestResult as a minimal InterventionResult."""
+    from evalvitals.eval_agent.surgery import InterventionResult
+
+    return InterventionResult(
+        hypothesis=tr.hypothesis,
+        status=tr.status,
+        fixed=False,
+        evidence={
+            "m5_test_name": tr.test_name,
+            "m5_effect_size": tr.effect_size,
+            "m5_confidence": tr.confidence,
+            "m5_protocol_consistent": tr.is_consistent_with_protocol,
+            "m5_verdict": tr.verdict,
+            **tr.evidence,
+        },
+        confidence_score=tr.confidence,
+    )

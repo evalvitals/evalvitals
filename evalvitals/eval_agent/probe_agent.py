@@ -8,6 +8,18 @@ Direct mode (default)::
     agent = ProbeAgent(max_analyzers=4)
     results = agent.probe(model, data)   # {analyzer_name: Result}
 
+Protocol-guided mode (new — :class:`~evalvitals.eval_agent.protocol.ExperimentProtocol`)::
+
+    agent = ProbeAgent()
+    results, schema = agent.probe_with_schema(model, data, protocol=protocol)
+    print(schema.rationale)   # why these analyzers were selected
+
+The protocol is converted to failure-mode hints via
+:meth:`~evalvitals.eval_agent.protocol.ExperimentProtocol.probe_hints` and
+forwarded to :class:`~evalvitals.eval_agent.probe.StrategyProbe` for
+priority-boosting.  The returned :class:`~evalvitals.eval_agent.protocol.ProbingSchema`
+records which analyzers ran and why (feeds M2/M5 for traceable reasoning).
+
 Docker mode::
 
     agent = ProbeAgent(use_docker=True, docker_image="evalvitals:latest")
@@ -45,6 +57,7 @@ if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
+    from evalvitals.eval_agent.protocol import ExperimentProtocol, ProbingSchema
 
 # Capabilities that a containerised (API-based) model can satisfy.
 _BLACKBOX_CAPS = frozenset({Capability.GENERATE, Capability.LOGPROBS, Capability.TOOL_CALLS})
@@ -95,6 +108,9 @@ class ProbeAgent:
         self.docker_image = docker_image
         self.docker_timeout = docker_timeout
         self.model_env_var = model_env_var
+        # Set by probe() / probe_with_schema() so callers can inspect why
+        # each analyzer was chosen without changing the return type of probe().
+        self.last_schema: "ProbingSchema | None" = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -105,6 +121,7 @@ class ProbeAgent:
         model: "Model",
         data: "CaseBatch",
         hint_failure_modes: list[str] | None = None,
+        protocol: "ExperimentProtocol | None" = None,
     ) -> dict[str, "Result"]:
         """Select analyzers and run each one, returning a ``{name: Result}`` dict.
 
@@ -119,17 +136,31 @@ class ProbeAgent:
         launch is an independent subprocess so the wall-clock time for N
         Docker analyzers is ≈ max(individual times), not their sum.
 
+        Sets :attr:`last_schema` with the selection rationale so callers can
+        inspect which analyzers ran and why without changing the return type.
+
         Args:
             model:              The model to probe.
             data:               Cases to run analyzers on.
             hint_failure_modes: Failure-mode tags from M3 — used to boost
                                 analyzers that are relevant to outstanding
                                 hypotheses (cycle 2+ focused probing).
+            protocol:           Optional experiment protocol.  When supplied,
+                                its :meth:`~evalvitals.eval_agent.protocol.ExperimentProtocol.probe_hints`
+                                are merged into *hint_failure_modes* so the
+                                selection is shaped by the user's prior.
         """
+        # Merge protocol hints with any explicitly passed failure-mode hints.
+        effective_hints = list(hint_failure_modes or [])
+        if protocol is not None:
+            for h in protocol.probe_hints():
+                if h not in effective_hints:
+                    effective_hints.append(h)
+
         names = self.selector.select(
             model,
             max_analyzers=self.max_analyzers,
-            hint_failure_modes=hint_failure_modes,
+            hint_failure_modes=effective_hints or None,
         )
 
         # Build (name, analyzer) pairs up front — _make_analyzer is cheap and
@@ -141,6 +172,7 @@ class ProbeAgent:
                 tasks.append((name, analyzer))
 
         if not tasks:
+            self.last_schema = _build_schema([], effective_hints, protocol)
             return {}
 
         results: dict[str, "Result"] = {}
@@ -170,7 +202,31 @@ class ProbeAgent:
                         stacklevel=2,
                     )
 
+        self.last_schema = _build_schema([t[0] for t in tasks], effective_hints, protocol)
         return results
+
+    def probe_with_schema(
+        self,
+        model: "Model",
+        data: "CaseBatch",
+        hint_failure_modes: list[str] | None = None,
+        protocol: "ExperimentProtocol | None" = None,
+    ) -> "tuple[dict[str, Result], ProbingSchema]":
+        """Like :meth:`probe`, but also returns the :class:`~evalvitals.eval_agent.protocol.ProbingSchema`.
+
+        The schema records which analyzers were selected and why — useful for
+        M2/M5 to understand the M1 reasoning without re-running selection.
+
+        Returns:
+            ``(results_dict, schema)`` — the same dict as :meth:`probe` plus a
+            :class:`~evalvitals.eval_agent.protocol.ProbingSchema`.
+        """
+        results = self.probe(model, data, hint_failure_modes=hint_failure_modes, protocol=protocol)
+        schema = self.last_schema
+        if schema is None:
+            from evalvitals.eval_agent.protocol import ProbingSchema
+            schema = ProbingSchema(selected_analyzers=list(results), protocol=protocol)
+        return results, schema
 
     # ------------------------------------------------------------------
     # Execution strategies
@@ -273,6 +329,31 @@ class ProbeAgent:
     def detect_kind(self, model: "Model") -> ModelKind:
         """Delegate to the inner :class:`~evalvitals.eval_agent.probe.StrategyProbe`."""
         return self.selector.detect_kind(model)
+
+
+def _build_schema(
+    selected: list[str],
+    hints: list[str],
+    protocol: "ExperimentProtocol | None",
+) -> "ProbingSchema":
+    """Build a ProbingSchema from a completed probe() call."""
+    from evalvitals.eval_agent.protocol import ProbingSchema
+
+    rationale_parts: list[str] = []
+    if hints:
+        rationale_parts.append(f"failure-mode hints: {', '.join(hints)}")
+    if protocol and protocol.task_domain:
+        rationale_parts.append(f"task domain: {protocol.task_domain}")
+    rationale = (
+        f"Selected {len(selected)} analyzer(s) ({', '.join(selected)}) "
+        + ("guided by " + " + ".join(rationale_parts) if rationale_parts else "by capability matching")
+        + "."
+    )
+    return ProbingSchema(
+        selected_analyzers=selected,
+        rationale=rationale,
+        protocol=protocol,
+    )
 
 
 def _serialize_cases(data: "CaseBatch") -> list[dict[str, Any]]:

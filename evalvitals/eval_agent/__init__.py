@@ -40,7 +40,14 @@ from evalvitals.eval_agent.hypothesis import (
     hypothesis_from_dict,
     hypothesis_to_dict,
 )
-from evalvitals.eval_agent.loop import AutoDiagnoseLoop, AutoDiagnoseReport, SelfEvolveLoop
+from evalvitals.eval_agent.hypothesis_tester import HypothesisTester, HypothesisTestResult
+from evalvitals.eval_agent.loop import (
+    AutoDiagnoseLoop,
+    AutoDiagnoseReport,
+    SelfEvolveLoop,
+    VLDiagnoseLoop,
+    VLDiagnoseReport,
+)
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
     DataSplit,
@@ -50,6 +57,7 @@ from evalvitals.eval_agent.preregister import (
 )
 from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.probe_agent import ProbeAgent
+from evalvitals.eval_agent.protocol import ExperimentProtocol, ProbingSchema
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_logger import RunLogger
 from evalvitals.eval_agent.sandbox import (
@@ -60,6 +68,7 @@ from evalvitals.eval_agent.sandbox import (
     validate_entry_point,
     validate_entry_point_resolved,
 )
+from evalvitals.eval_agent.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 from evalvitals.eval_agent.surgery import InterventionResult, SurgeryAgent
 
@@ -81,6 +90,17 @@ __all__ = [
     "AutoDiagnoseLoop",
     "AutoDiagnoseReport",
     "SelfEvolveLoop",
+    "VLDiagnoseLoop",
+    "VLDiagnoseReport",
+    # Protocol
+    "ExperimentProtocol",
+    "ProbingSchema",
+    # M2 stats agent
+    "StatsAnalysisAgent",
+    "StatsAnalysisReport",
+    # M5 hypothesis tester
+    "HypothesisTester",
+    "HypothesisTestResult",
     # Shared
     "EvalOrchestrator",
     "Hypothesis",
