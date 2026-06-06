@@ -37,10 +37,11 @@ import textwrap
 import urllib.request
 from pathlib import Path
 
-_SAMPLE_URL = (
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/"
-    "Bikesingapore.jpg/320px-Bikesingapore.jpg"
-)
+# A stable, public sample photo (real objects/colours/layout for the VQA task).
+# NOTE: the old Wikimedia thumbnail URL stopped working — it now 403s on the
+# default urllib User-Agent, 400s on disallowed thumbnail sizes, and the file
+# itself was removed (404). This raw GitHub asset needs no special headers.
+_SAMPLE_URL = "https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg"
 _OUTPUTS_DIR = Path(__file__).parent / "outputs"
 
 
@@ -139,7 +140,13 @@ class VerboseRunLogger:
 def _get_image():
     from PIL import Image
     try:
-        with urllib.request.urlopen(_SAMPLE_URL, timeout=10) as resp:
+        # Wikimedia rejects the default urllib User-Agent with HTTP 403,
+        # so send a descriptive UA as their policy requires.
+        req = urllib.request.Request(
+            _SAMPLE_URL,
+            headers={"User-Agent": "evalvitals-example/1.0 (https://example.com; contact@example.com)"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = resp.read()
         img = Image.open(io.BytesIO(data)).convert("RGB")
         print(f"  Downloaded image: {img.size} px")
@@ -217,6 +224,7 @@ def main() -> None:
     parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR))
     args = parser.parse_args()
 
+    import shutil
 
     import evalvitals
     from evalvitals.eval_agent import (
