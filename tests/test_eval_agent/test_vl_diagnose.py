@@ -1,8 +1,9 @@
 """Tests for the VL-focused self-evolving agent (2026-06-05 architecture).
 
 Covers:
-  - ExperimentProtocol (probe_hints, to_dict)
+  - ExperimentProtocol (pure data container, to_dict)
   - ProbingSchema / ProbeAgent.probe_with_schema
+  - ProbeAgent LLM-guided selection (judge= path)
   - StatsAnalysisAgent + StatsAnalysisReport (backward compat with AnalysisReport)
   - HypothesisTester (statistical test, protocol consistency, stopping criteria)
   - VLDiagnoseLoop (M1→M2→M3→M5, stopping, run_m4)
@@ -62,9 +63,12 @@ def _labeled_batch(n_fail: int = 2, n_pass: int = 2) -> CaseBatch:
 
 def _spatial_protocol() -> ExperimentProtocol:
     return ExperimentProtocol(
-        description="QwenVL frequently confuses left-right positions of objects in images.",
+        description=(
+            "QwenVL frequently confuses left-right positions of objects in images. "
+            "Attention to spatial regions appears incorrect."
+        ),
         task_domain="spatial reasoning",
-        failure_patterns="left-right reversal, position confusion",
+        failure_patterns="position confusion and wrong spatial attention",
         target_modalities=frozenset({"text", "image"}),
     )
 
@@ -99,37 +103,6 @@ class ScriptedModel(FakeModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestExperimentProtocol:
-    def test_probe_hints_spatial(self):
-        p = _spatial_protocol()
-        hints = p.probe_hints()
-        assert "attention" in hints, "spatial keywords should map to attention"
-
-    def test_probe_hints_hallucination(self):
-        p = ExperimentProtocol(
-            description="The model hallucinated objects that are not in the image.",
-            failure_patterns="fabricated object names",
-        )
-        hints = p.probe_hints()
-        assert "hallucination" in hints
-
-    def test_probe_hints_loop(self):
-        p = ExperimentProtocol(description="Agent gets stuck in an infinite loop.")
-        hints = p.probe_hints()
-        assert "loop" in hints
-
-    def test_probe_hints_dedup(self):
-        p = ExperimentProtocol(
-            description="attention and attend to image",
-            failure_patterns="attention sink",
-        )
-        hints = p.probe_hints()
-        # No duplicate failure modes
-        assert len(hints) == len(set(hints))
-
-    def test_probe_hints_empty_description(self):
-        p = ExperimentProtocol(description="")
-        assert p.probe_hints() == []
-
     def test_to_dict_round_trip(self):
         p = _spatial_protocol()
         d = p.to_dict()
@@ -137,6 +110,35 @@ class TestExperimentProtocol:
         assert d["task_domain"] == "spatial reasoning"
         assert "text" in d["target_modalities"]
         assert "image" in d["target_modalities"]
+
+    def test_stores_all_fields(self):
+        p = ExperimentProtocol(
+            description="model confuses left and right",
+            task_domain="spatial reasoning",
+            success_criteria="positions must be correct",
+            failure_patterns="observed wrong directions",
+            target_modalities=frozenset({"text", "image"}),
+            metadata={"dataset": "test"},
+        )
+        assert p.description == "model confuses left and right"
+        assert p.task_domain == "spatial reasoning"
+        assert p.success_criteria == "positions must be correct"
+        assert p.failure_patterns == "observed wrong directions"
+        assert "image" in p.target_modalities
+        assert p.metadata["dataset"] == "test"
+
+    def test_failure_patterns_optional(self):
+        p = ExperimentProtocol(description="model fails on colour questions")
+        assert p.failure_patterns == ""
+        d = p.to_dict()
+        assert d["failure_patterns"] == ""
+
+    def test_no_probe_hints_method(self):
+        p = _spatial_protocol()
+        assert not hasattr(p, "probe_hints"), (
+            "ExperimentProtocol is a pure data container — "
+            "probe_hints() was removed; analyzer selection is LLM-driven"
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -157,7 +159,7 @@ class TestProbingSchema:
         _, schema = agent.probe_with_schema(_vlm(), data)
         assert len(schema.selected_analyzers) > 0
 
-    def test_schema_rationale_mentions_hints(self):
+    def test_schema_protocol_attached(self):
         agent = ProbeAgent()
         data = _labeled_batch()
         protocol = _spatial_protocol()
@@ -172,17 +174,41 @@ class TestProbingSchema:
         assert agent.last_schema is not None
         assert isinstance(agent.last_schema, ProbingSchema)
 
-    def test_protocol_hints_merged_into_selection(self):
-        protocol = ExperimentProtocol(
-            description="The model hallucinated objects.",
-            failure_patterns="hallucination",
-        )
+    def test_static_path_uses_hint_failure_modes(self):
+        # No judge → static StrategyProbe path; hint_failure_modes boosts
+        # analyzers that map to the flagged failure mode.
         agent = ProbeAgent()
         data = _labeled_batch()
+        _, schema = agent.probe_with_schema(
+            _vlm(), data, hint_failure_modes=["low_consistency"]
+        )
+        assert isinstance(schema, ProbingSchema)
+        assert len(schema.selected_analyzers) >= 0
+
+    def test_llm_guided_selection(self):
+        # judge returns a well-formed JSON response → LLM-selected names used.
+        judge = ScriptedModel(
+            answers=['{"analyzers": ["attention"], "rationale": "attention measures visual focus"}'],
+            capabilities={Capability.GENERATE},
+        )
+        protocol = _spatial_protocol()
+        agent = ProbeAgent(judge=judge, max_analyzers=2)
+        data = _labeled_batch()
         _, schema = agent.probe_with_schema(_vlm(), data, protocol=protocol)
-        # "hallucination" hint should have boosted pope/chair to the front
-        # (exact order depends on compatibility, but rationale should mention it)
-        assert "hallucination" in schema.rationale or len(schema.selected_analyzers) >= 0
+        assert "attention" in schema.selected_analyzers
+        assert "visual focus" in schema.rationale
+
+    def test_llm_guided_falls_back_on_bad_json(self):
+        # judge returns garbage → agent falls back to static selection silently.
+        judge = ScriptedModel(
+            answers=["I cannot decide."],
+            capabilities={Capability.GENERATE},
+        )
+        protocol = _spatial_protocol()
+        agent = ProbeAgent(judge=judge, max_analyzers=2)
+        data = _labeled_batch()
+        results, schema = agent.probe_with_schema(_vlm(), data, protocol=protocol)
+        assert isinstance(schema, ProbingSchema)  # schema always returned
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -411,11 +437,15 @@ class TestHypothesisTester:
         results = tester.test([self._hyp()], report, data, protocol=None)
         assert results[0].is_consistent_with_protocol is True
 
-    def test_heuristic_consistency_spatial_attention(self):
+    def test_heuristic_consistency_word_overlap(self):
+        # Protocol and hypothesis share the word "ignores" → consistent.
         tester = HypothesisTester()
-        protocol = _spatial_protocol()  # has "attention" in hints
+        protocol = ExperimentProtocol(
+            description="The model ignores image regions and gives wrong positions.",
+            task_domain="spatial reasoning",
+        )
         h = Hypothesis(
-            statement="Model ignores spatial tokens.",
+            statement="Model ignores visual context.",
             target_model="vlm",
             predicted_failure_mode="attention",
         )
@@ -424,13 +454,16 @@ class TestHypothesisTester:
 
     def test_heuristic_inconsistency_unrelated_mode(self):
         tester = HypothesisTester()
-        protocol = _spatial_protocol()
+        protocol = ExperimentProtocol(
+            description="The model ignores image regions and gives wrong spatial positions.",
+            task_domain="spatial reasoning",
+        )
         h = Hypothesis(
             statement="Model is too slow.",
             target_model="vlm",
             predicted_failure_mode="latency",
         )
-        # "latency" has nothing to do with spatial attention keywords
+        # "latency" and "slow" share no 4+ char words with the protocol text
         consistent = tester._heuristic_consistency_check(h, protocol)
         assert consistent is False
 
@@ -628,23 +661,24 @@ class TestVLDiagnoseLoop:
         # fix_proposal is set on report
         assert report.fix_proposal is iv
 
-    def test_protocol_hints_flow_to_m1(self):
-        """Protocol hints should propagate through to ProbeAgent.probe()."""
-        received_hints: list[Any] = []
+    def test_protocol_flows_to_m1(self):
+        """Protocol should be passed directly to ProbeAgent.probe()."""
+        received_protocol: list[Any] = []
 
         class CapturingProbe(ProbeAgent):
-            def probe(self, model, data, hint_failure_modes=None, **kw):
-                received_hints.extend(hint_failure_modes or [])
+            def probe(self, model, data, *, protocol=None, **kw):
+                received_protocol.append(protocol)
                 return {}
 
+        proto = _spatial_protocol()
         loop = VLDiagnoseLoop(
             model=_vlm(),
-            protocol=_spatial_protocol(),  # has "attention" hint
+            protocol=proto,
             probe_agent=CapturingProbe(),
             max_cycles=1,
         )
         loop.run(_labeled_batch())
-        assert "attention" in received_hints
+        assert received_protocol and received_protocol[0] is proto
 
     def test_no_diagnosis_agent_stops_early(self):
         loop = VLDiagnoseLoop(

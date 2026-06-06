@@ -74,6 +74,31 @@ _PRIORITY: dict[str, list[str]] = {
 }
 
 
+def get_analyzer_catalog(model: "Model") -> dict[str, str]:
+    """Return ``{name: description}`` for all analyzers compatible with *model*.
+
+    Descriptions come from each analyzer class's ``description`` attribute or,
+    if absent, the first non-empty line of its docstring.  Used by
+    :class:`~evalvitals.eval_agent.probe_agent.ProbeAgent` to build the LLM
+    selection prompt so the judge understands what each analyzer measures.
+    """
+    compatible = set(registry.analyzers.names_compatible_with(model))
+    catalog: dict[str, str] = {}
+    for name in sorted(compatible):
+        cls = registry.analyzers.get(name)
+        if cls is None:
+            continue
+        desc: str | None = getattr(cls, "description", None)
+        if not desc and cls.__doc__:
+            for line in cls.__doc__.strip().splitlines():
+                line = line.strip()
+                if line:
+                    desc = line
+                    break
+        catalog[name] = desc or name
+    return catalog
+
+
 class StrategyProbe:
     """Selects analyzers appropriate for a given model.
 

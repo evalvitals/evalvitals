@@ -3,22 +3,21 @@
 Combines tool selection (which analyzers to run for this model kind) with
 execution (running each analyzer directly or inside a Docker container).
 
-Direct mode (default)::
+Direct mode (default, static selection)::
 
     agent = ProbeAgent(max_analyzers=4)
     results = agent.probe(model, data)   # {analyzer_name: Result}
 
-Protocol-guided mode (new — :class:`~evalvitals.eval_agent.protocol.ExperimentProtocol`)::
+LLM-guided mode — pass a judge model and a protocol::
 
-    agent = ProbeAgent()
+    agent = ProbeAgent(judge=model, max_analyzers=4)
     results, schema = agent.probe_with_schema(model, data, protocol=protocol)
-    print(schema.rationale)   # why these analyzers were selected
+    print(schema.rationale)   # why these analyzers were chosen
 
-The protocol is converted to failure-mode hints via
-:meth:`~evalvitals.eval_agent.protocol.ExperimentProtocol.probe_hints` and
-forwarded to :class:`~evalvitals.eval_agent.probe.StrategyProbe` for
-priority-boosting.  The returned :class:`~evalvitals.eval_agent.protocol.ProbingSchema`
-records which analyzers ran and why (feeds M2/M5 for traceable reasoning).
+When both *judge* and *protocol* are present the judge LLM reads the protocol
+description and the catalog of available analyzers, then selects the most
+relevant ones.  If the LLM call fails the agent falls back to
+:class:`~evalvitals.eval_agent.probe.StrategyProbe` automatically.
 
 Docker mode::
 
@@ -41,7 +40,10 @@ and writes the analyzer findings as JSON to stdout.
 
 from __future__ import annotations
 
+import inspect
 import json
+import logging
+import re
 import subprocess
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -50,7 +52,7 @@ from typing import TYPE_CHECKING, Any
 from evalvitals.core.capability import Capability
 from evalvitals.core.experiment import Experiment, ExperimentRunner
 from evalvitals.core.registry import registry
-from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
+from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe, get_analyzer_catalog
 
 if TYPE_CHECKING:
     from evalvitals.core.analyzer import Analyzer
@@ -59,8 +61,29 @@ if TYPE_CHECKING:
     from evalvitals.core.result import Result
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 
+logger = logging.getLogger(__name__)
+
 # Capabilities that a containerised (API-based) model can satisfy.
 _BLACKBOX_CAPS = frozenset({Capability.GENERATE, Capability.LOGPROBS, Capability.TOOL_CALLS})
+
+_SELECTION_PROMPT_TMPL = """\
+You are selecting diagnostic analyzers for a model evaluation experiment.
+Choose the analyzers that would surface the most useful evidence given the \
+researcher's description.
+
+EXPERIMENT DESCRIPTION:
+{description}
+{task_domain_section}
+{success_criteria_section}
+{failure_patterns_section}
+MODEL TYPE: {model_kind}
+
+AVAILABLE ANALYZERS ({n_available} compatible with this model):
+{analyzer_list}
+{prior_hypotheses_section}
+Select up to {max_n} analyzers. Return ONLY a JSON object, no other text:
+{{"analyzers": ["name1", "name2", ...], "rationale": "one sentence explaining the selection"}}
+"""
 
 
 def _is_blackbox_compatible(analyzer_cls: type) -> bool:
@@ -72,12 +95,16 @@ class ProbeAgent:
     """M1: select analyzers and execute them (directly or via Docker).
 
     Args:
-        probe:             Selects and ranks analyzers.  Defaults to
-                           ``StrategyProbe()``.
+        probe:             Static selector — used when *judge* is absent or the
+                           LLM call fails.  Defaults to ``StrategyProbe()``.
+        judge:             Any :class:`~evalvitals.core.model.Model` with
+                           ``Capability.GENERATE``.  When set **and** a
+                           protocol is supplied to :meth:`probe`, the judge LLM
+                           reads the protocol description and available analyzer
+                           catalog to select analyzers dynamically.
         runner:            Executes direct (non-Docker) runs.  Defaults to a
                            fresh ``ExperimentRunner()``.
-        max_analyzers:     Cap on analyzers per cycle passed to
-                           :meth:`StrategyProbe.select`.
+        max_analyzers:     Cap on analyzers per cycle.
         analyzer_overrides: Pre-instantiated analyzers for those requiring
                            mandatory constructor arguments.
         use_docker:        When ``True``, black-box-compatible analyzers are
@@ -85,13 +112,13 @@ class ProbeAgent:
         docker_image:      Docker image to use when *use_docker* is ``True``.
         docker_timeout:    Seconds before a Docker run is killed.
         model_env_var:     Name of the env var inside Docker that carries the
-                           API key for the containerised model (e.g.
-                           ``"GEMINI_API_KEY"`` or ``"OPENAI_API_KEY"``).
+                           API key for the containerised model.
     """
 
     def __init__(
         self,
         probe: StrategyProbe | None = None,
+        judge: "Model | None" = None,
         runner: ExperimentRunner | None = None,
         max_analyzers: int | None = None,
         analyzer_overrides: dict[str, "Analyzer"] | None = None,
@@ -101,6 +128,7 @@ class ProbeAgent:
         model_env_var: str = "GEMINI_API_KEY",
     ) -> None:
         self.selector = probe or StrategyProbe()
+        self.judge = judge
         self.runner = runner or ExperimentRunner()
         self.max_analyzers = max_analyzers
         self._overrides: dict[str, "Analyzer"] = analyzer_overrides or {}
@@ -120,48 +148,51 @@ class ProbeAgent:
         self,
         model: "Model",
         data: "CaseBatch",
-        hint_failure_modes: list[str] | None = None,
+        *,
         protocol: "ExperimentProtocol | None" = None,
+        prior_hypotheses: list[Any] | None = None,
+        hint_failure_modes: list[str] | None = None,
     ) -> dict[str, "Result"]:
         """Select analyzers and run each one, returning a ``{name: Result}`` dict.
 
-        Analyzers are executed in parallel using a ``ThreadPoolExecutor`` so
-        that independent analyzers (e.g. self_consistency and attention both
-        probing the same model) do not wait on each other.  Each analyzer
-        still runs in its own thread; the GIL is released for I/O-heavy
-        analyzers (API calls, file reads) giving near-linear speedup for
-        black-box / API-based analyzers.
+        Analyzer selection strategy (in priority order):
 
-        Docker-dispatched analyzers are also parallelised — each container
-        launch is an independent subprocess so the wall-clock time for N
-        Docker analyzers is ≈ max(individual times), not their sum.
+        1. **LLM-guided** — when a *judge* model and a *protocol* are both
+           present, the judge reads the protocol description plus an
+           auto-generated catalog of available analyzers and picks the most
+           relevant ones.  Any *prior_hypotheses* from M3 are included as
+           additional context for cycle 2+ focused probing.
+        2. **Static fallback** — when no judge or no protocol, uses
+           :class:`~evalvitals.eval_agent.probe.StrategyProbe` with the
+           optional *hint_failure_modes* list for priority-boosting (used by
+           :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`).
+
+        Analyzers are executed in parallel using a ``ThreadPoolExecutor`` so
+        that independent analyzers do not wait on each other.
 
         Sets :attr:`last_schema` with the selection rationale so callers can
         inspect which analyzers ran and why without changing the return type.
 
         Args:
-            model:              The model to probe.
-            data:               Cases to run analyzers on.
-            hint_failure_modes: Failure-mode tags from M3 — used to boost
-                                analyzers that are relevant to outstanding
-                                hypotheses (cycle 2+ focused probing).
-            protocol:           Optional experiment protocol.  When supplied,
-                                its :meth:`~evalvitals.eval_agent.protocol.ExperimentProtocol.probe_hints`
-                                are merged into *hint_failure_modes* so the
-                                selection is shaped by the user's prior.
+            model:               The model to probe.
+            data:                Cases to run analyzers on.
+            protocol:            Experiment protocol — enables LLM-guided
+                                 selection when a judge is also configured.
+            prior_hypotheses:    Hypotheses from M3 in prior cycles.  Passed to
+                                 the judge as context for focused follow-up.
+            hint_failure_modes:  Failure-mode tags for the static fallback path
+                                 (e.g. from :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`).
         """
-        # Merge protocol hints with any explicitly passed failure-mode hints.
-        effective_hints = list(hint_failure_modes or [])
-        if protocol is not None:
-            for h in protocol.probe_hints():
-                if h not in effective_hints:
-                    effective_hints.append(h)
-
-        names = self.selector.select(
-            model,
-            max_analyzers=self.max_analyzers,
-            hint_failure_modes=effective_hints or None,
-        )
+        rationale: str
+        if self.judge is not None and protocol is not None:
+            names, rationale = self._llm_select(protocol, model, prior_hypotheses)
+        else:
+            names = self.selector.select(
+                model,
+                max_analyzers=self.max_analyzers,
+                hint_failure_modes=hint_failure_modes or None,
+            )
+            rationale = _static_rationale(names, hint_failure_modes)
 
         # Build (name, analyzer) pairs up front — _make_analyzer is cheap and
         # not thread-safe to call concurrently.
@@ -172,7 +203,7 @@ class ProbeAgent:
                 tasks.append((name, analyzer))
 
         if not tasks:
-            self.last_schema = _build_schema([], effective_hints, protocol)
+            self.last_schema = _build_schema([], rationale, protocol)
             return {}
 
         results: dict[str, "Result"] = {}
@@ -183,7 +214,6 @@ class ProbeAgent:
                 return name, self._run_in_docker(name, analyzer, data)
             return name, self._run_direct(analyzer, model, data)
 
-        # Use min(len(tasks), 8) workers so we don't over-subscribe small runs
         max_workers = min(len(tasks), 8)
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {
@@ -202,15 +232,17 @@ class ProbeAgent:
                         stacklevel=2,
                     )
 
-        self.last_schema = _build_schema([t[0] for t in tasks], effective_hints, protocol)
+        self.last_schema = _build_schema([t[0] for t in tasks], rationale, protocol)
         return results
 
     def probe_with_schema(
         self,
         model: "Model",
         data: "CaseBatch",
-        hint_failure_modes: list[str] | None = None,
+        *,
         protocol: "ExperimentProtocol | None" = None,
+        prior_hypotheses: list[Any] | None = None,
+        hint_failure_modes: list[str] | None = None,
     ) -> "tuple[dict[str, Result], ProbingSchema]":
         """Like :meth:`probe`, but also returns the :class:`~evalvitals.eval_agent.protocol.ProbingSchema`.
 
@@ -221,12 +253,131 @@ class ProbeAgent:
             ``(results_dict, schema)`` — the same dict as :meth:`probe` plus a
             :class:`~evalvitals.eval_agent.protocol.ProbingSchema`.
         """
-        results = self.probe(model, data, hint_failure_modes=hint_failure_modes, protocol=protocol)
+        results = self.probe(
+            model, data,
+            protocol=protocol,
+            prior_hypotheses=prior_hypotheses,
+            hint_failure_modes=hint_failure_modes,
+        )
         schema = self.last_schema
         if schema is None:
             from evalvitals.eval_agent.stages.protocol import ProbingSchema
             schema = ProbingSchema(selected_analyzers=list(results), protocol=protocol)
         return results, schema
+
+    # ------------------------------------------------------------------
+    # LLM-guided selection
+    # ------------------------------------------------------------------
+
+    def _llm_select(
+        self,
+        protocol: "ExperimentProtocol",
+        model: "Model",
+        prior_hypotheses: list[Any] | None,
+    ) -> tuple[list[str], str]:
+        """Ask the judge LLM to choose analyzers from the available catalog.
+
+        Returns ``(selected_names, rationale_string)``.  Falls back to static
+        selection on any error.
+        """
+        assert self.judge is not None  # caller guarantees this
+
+        kind = self.selector.detect_kind(model)
+        catalog = get_analyzer_catalog(model)
+        if not catalog:
+            return self._static_fallback(model), "no analyzers available"
+
+        max_n = self.max_analyzers or len(catalog)
+
+        analyzer_lines = "\n".join(
+            f"  - {name}: {desc}" for name, desc in catalog.items()
+        )
+
+        task_domain_section = (
+            f"\nTASK DOMAIN: {protocol.task_domain}\n" if protocol.task_domain else ""
+        )
+        success_criteria_section = (
+            f"\nSUCCESS CRITERIA: {protocol.success_criteria}\n"
+            if protocol.success_criteria
+            else ""
+        )
+        failure_patterns_section = (
+            f"\nADDITIONAL OBSERVATIONS: {protocol.failure_patterns}\n"
+            if protocol.failure_patterns
+            else ""
+        )
+
+        prior_section = ""
+        if prior_hypotheses:
+            lines = []
+            for h in prior_hypotheses:
+                stmt = getattr(h, "statement", str(h))
+                status = ""
+                s = getattr(h, "status", None)
+                if s is not None:
+                    status = f" [{getattr(s, 'value', str(s))}]"
+                lines.append(f"  - {stmt}{status}")
+            prior_section = (
+                "\nPRIOR HYPOTHESES FROM THIS INVESTIGATION "
+                "(select analyzers that help verify or refute these):\n"
+                + "\n".join(lines)
+                + "\n"
+            )
+
+        prompt = _SELECTION_PROMPT_TMPL.format(
+            description=protocol.description,
+            task_domain_section=task_domain_section,
+            success_criteria_section=success_criteria_section,
+            failure_patterns_section=failure_patterns_section,
+            model_kind=kind.value,
+            n_available=len(catalog),
+            analyzer_list=analyzer_lines,
+            prior_hypotheses_section=prior_section,
+            max_n=max_n,
+        )
+
+        try:
+            sig = inspect.signature(self.judge.generate)
+            if "temperature" in sig.parameters:
+                raw = self.judge.generate(prompt, temperature=0)
+            else:
+                raw = self.judge.generate(prompt)
+        except Exception as exc:
+            logger.warning("ProbeAgent LLM selection failed (%s) — using static fallback", exc)
+            return self._static_fallback(model), "static fallback (LLM call failed)"
+
+        return self._parse_llm_response(str(raw), set(catalog), max_n, model)
+
+    def _parse_llm_response(
+        self,
+        raw: str,
+        valid_names: set[str],
+        max_n: int,
+        model: "Model",
+    ) -> tuple[list[str], str]:
+        """Extract analyzer names and rationale from the LLM JSON response."""
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+                names = [n for n in data.get("analyzers", []) if n in valid_names]
+                rationale = str(data.get("rationale", "LLM-selected"))
+                if names:
+                    return names[:max_n], rationale
+            except json.JSONDecodeError:
+                pass
+
+        # Soft parse: look for any known analyzer name mentioned in the response
+        found = [n for n in sorted(valid_names) if n in raw]
+        if found:
+            logger.warning("ProbeAgent: LLM response not valid JSON — extracted names by text scan")
+            return found[:max_n], "LLM-selected (text-extracted)"
+
+        logger.warning("ProbeAgent: could not parse LLM response — using static fallback")
+        return self._static_fallback(model), "static fallback (LLM parse failed)"
+
+    def _static_fallback(self, model: "Model") -> list[str]:
+        return self.selector.select(model, max_analyzers=self.max_analyzers)
 
     # ------------------------------------------------------------------
     # Execution strategies
@@ -331,24 +482,23 @@ class ProbeAgent:
         return self.selector.detect_kind(model)
 
 
-def _build_schema(
-    selected: list[str],
-    hints: list[str],
-    protocol: "ExperimentProtocol | None",
-) -> "ProbingSchema":
-    """Build a ProbingSchema from a completed probe() call."""
-    from evalvitals.eval_agent.stages.protocol import ProbingSchema
-
-    rationale_parts: list[str] = []
+def _static_rationale(names: list[str], hints: list[str] | None) -> str:
+    parts = []
     if hints:
-        rationale_parts.append(f"failure-mode hints: {', '.join(hints)}")
-    if protocol and protocol.task_domain:
-        rationale_parts.append(f"task domain: {protocol.task_domain}")
-    rationale = (
-        f"Selected {len(selected)} analyzer(s) ({', '.join(selected)}) "
-        + ("guided by " + " + ".join(rationale_parts) if rationale_parts else "by capability matching")
+        parts.append(f"failure-mode hints: {', '.join(hints)}")
+    return (
+        f"Selected {len(names)} analyzer(s) ({', '.join(names)}) "
+        + ("guided by " + " + ".join(parts) if parts else "by capability matching")
         + "."
     )
+
+
+def _build_schema(
+    selected: list[str],
+    rationale: str,
+    protocol: "ExperimentProtocol | None",
+) -> "ProbingSchema":
+    from evalvitals.eval_agent.stages.protocol import ProbingSchema
     return ProbingSchema(
         selected_analyzers=selected,
         rationale=rationale,

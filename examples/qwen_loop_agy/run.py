@@ -220,10 +220,8 @@ def main() -> None:
         DiagnosisAgent,
         ExperimentProtocol,
         HypothesisTester,
-        ModelKind,
         ProbeAgent,
         StatsAnalysisAgent,
-        StrategyProbe,
         VLDiagnoseLoop,
     )
 
@@ -248,28 +246,26 @@ def main() -> None:
     # ── Experiment protocol (the human prior) ─────────────────────────────────
     protocol = ExperimentProtocol(
         description=(
-            "We evaluate a VLM on image understanding tasks: object counting, "
-            "colour recognition, and spatial layout description. "
-            "The model is suspected to ignore visual tokens and rely primarily "
-            "on text priors, leading to hallucinated or spatially incorrect answers."
+            "We evaluate a vision-language model on basic image understanding: "
+            "counting objects, naming their colours, and describing their spatial "
+            "arrangement. The model frequently gives wrong answers — it counts "
+            "incorrectly, misnames colours, and confuses left/right positions. "
+            "We want to know whether the model is actually using the image or "
+            "just guessing from language patterns."
         ),
         task_domain="visual question answering",
-        failure_patterns=(
-            "visual token attention low, image ignored, spatial confusion, "
-            "hallucinated objects"
+        success_criteria=(
+            "Object counts, colour names, and position descriptions must match "
+            "what is visible in the image."
         ),
         target_modalities=frozenset({"text", "image"}),
     )
-    hints = protocol.probe_hints()
     print(f"\nExperimentProtocol:")
-    print(f"  task_domain    : {protocol.task_domain}")
-    print(f"  probe_hints()  : {hints}")
+    print(f"  task_domain : {protocol.task_domain}")
+    print(f"  description : {protocol.description[:80]}...")
 
-    # ── M1: ProbeAgent (VLM priority: attention → mm_shap) ───────────────────
-    vlm_probe = StrategyProbe(priority_override={
-        ModelKind.VLM: ["attention", "mm_shap"],
-    })
-    probe_agent = ProbeAgent(probe=vlm_probe, max_analyzers=args.max_analyzers)
+    # ── M1: ProbeAgent — judge=model enables LLM-driven analyzer selection ────
+    probe_agent = ProbeAgent(judge=model, max_analyzers=args.max_analyzers)
 
     # ── M2: StatsAnalysisAgent ────────────────────────────────────────────────
     # With judge=model the analysis generates an LLM-written conclusion;

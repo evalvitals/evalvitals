@@ -306,28 +306,24 @@ class HypothesisTester:
         hypothesis: Hypothesis,
         protocol: "ExperimentProtocol",
     ) -> bool:
-        """Keyword overlap between protocol hints and hypothesis failure mode."""
-        hints = set(protocol.probe_hints())
-        if not hints:
-            # Protocol has no extractable hints → treat as consistent.
-            return True
-
-        mode = hypothesis.predicted_failure_mode.lower().replace(" ", "_")
-        statement_lower = hypothesis.statement.lower()
-
-        for hint in hints:
-            hint_lower = hint.lower().replace(" ", "_")
-            # Direct match or prefix/substring of the failure mode tag.
-            if hint_lower in mode or mode.startswith(hint_lower):
-                return True
-            # Keyword present anywhere in the hypothesis statement.
-            if hint_lower.replace("_", " ") in statement_lower:
-                return True
-
-        # No overlap found — check protocol text itself against statement.
+        """Text overlap between protocol description and hypothesis."""
         proto_text = (protocol.description + " " + protocol.failure_patterns).lower()
-        for word in mode.replace("_", " ").split():
-            if len(word) >= 4 and word in proto_text:
+        if not proto_text.strip():
+            return True  # no prior to compare against
+
+        hyp_text = (
+            hypothesis.statement + " "
+            + hypothesis.predicted_failure_mode.replace("_", " ")
+        ).lower()
+
+        # Any significant word (6+ chars) from hypothesis in protocol text?
+        for word in hyp_text.split():
+            if len(word) >= 6 and word in proto_text:
+                return True
+
+        # Any significant word (6+ chars) from protocol in hypothesis text?
+        for word in proto_text.split():
+            if len(word) >= 6 and word in hyp_text:
                 return True
 
         return False

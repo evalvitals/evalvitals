@@ -727,10 +727,18 @@ class VLDiagnoseLoop:
                 break
 
             # ── M1: protocol-guided probing ──────────────────────────
+            # Extract failure modes from prior M3 hypotheses for the static
+            # fallback path (used when ProbeAgent has no judge model).
+            prior_modes = list(dict.fromkeys(
+                h.predicted_failure_mode for h in all_hypotheses
+                if getattr(h, "predicted_failure_mode", None)
+            ))
             probe_results = self.probe_agent.probe(
                 self.model,
                 data,
-                hint_failure_modes=self.protocol.probe_hints() or None,
+                protocol=self.protocol,
+                prior_hypotheses=all_hypotheses or None,
+                hint_failure_modes=prior_modes or None,
             )
             if not probe_results:
                 logger.info("M1 produced no probe results — stopping.")

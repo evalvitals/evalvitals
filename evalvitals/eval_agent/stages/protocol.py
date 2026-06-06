@@ -2,49 +2,35 @@
 
 The protocol is the human prior that anchors the self-evolving loop:
 
-- **M1** uses :meth:`ExperimentProtocol.probe_hints` to guide analyzer selection.
+- **M1** passes the protocol to :class:`~evalvitals.eval_agent.probe_agent.ProbeAgent`,
+  which uses an LLM judge to select analyzers from the description.
 - **M2** uses the protocol to frame its statistical narrative.
 - **M5** uses it to verify that a hypothesis is consistent with what the user
   actually set out to investigate.
+
+The description should be written in plain researcher language describing the
+*task* and *observed behaviour*.  No failure-mode tags or internal jargon are
+needed — the judge LLM interprets the text and selects relevant analyzers.
 
 Usage::
 
     protocol = ExperimentProtocol(
         description=(
-            "We test QwenVL on spatial reasoning: given an image with two "
-            "objects, the model often confuses their relative positions."
+            "We test QwenVL on spatial reasoning. Given an image with two "
+            "objects, the model frequently gives wrong left/right and "
+            "above/below positions, and sometimes names objects not visible "
+            "in the image at all."
         ),
         task_domain="spatial reasoning",
-        failure_patterns="left-right reversal, above-below confusion",
+        success_criteria="Positions and object names must match what is visible.",
         target_modalities=frozenset({"text", "image"}),
     )
-    hints = protocol.probe_hints()   # ["attention", "hallucination"]
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-
-# ---------------------------------------------------------------------------
-# Keyword → failure-mode mapping used by probe_hints()
-# ---------------------------------------------------------------------------
-
-# Each entry: (tuple-of-keywords, failure-mode-tag).
-# Keyword matching is case-insensitive substring search over
-# description + failure_patterns.
-_KEYWORD_TO_MODE: list[tuple[tuple[str, ...], str]] = [
-    (("hallucin", "confabul", "invent", "made up", "fabricat"), "hallucination"),
-    (("attention sink", "sink token"), "attention_sink"),
-    (("attend", "attention", "look at", "focus", "visual focus", "ignor image",
-      "spatial", "position", "left", "right", "above", "below", "location"),
-     "attention"),
-    (("loop", "repeat", "stuck", "cycle", "infinite"), "loop"),
-    (("inconsist", "unstable", "vary", "unreliable", "differ"), "low_consistency"),
-    (("confident", "certainty", "overconfid", "underconfid", "calibr"), "miscalibrated_confidence"),
-    (("entropy", "uncertain", "hesitat"), "entropy"),
-    (("tool", "action", "agent", "navigate", "execution"), "loop"),
-]
 
 
 @dataclass
@@ -60,8 +46,9 @@ class ExperimentProtocol:
         task_domain:        Short label, e.g. ``"spatial reasoning"``,
                             ``"GUI navigation"``.
         success_criteria:   What counts as a pass (used by M5 verifier).
-        failure_patterns:   Known or suspected failure modes — feeds M1 hints
-                            and M5 consistency checks.
+        failure_patterns:   Optional free-text observations about what the
+                            researcher has already noticed — passed verbatim
+                            to the LLM judge as additional context.
         target_modalities:  ``{"text", "image"}`` for VLMs;
                             ``{"text"}`` for text-only LLMs.
         metadata:           Free-form extras (dataset names, hyperparams …).
@@ -75,23 +62,6 @@ class ExperimentProtocol:
         default_factory=lambda: frozenset({"text"})
     )
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def probe_hints(self) -> list[str]:
-        """Derive failure-mode hint tags for M1's :class:`~evalvitals.eval_agent.probe.StrategyProbe`.
-
-        Scans ``description`` and ``failure_patterns`` for keywords and maps
-        them to the failure-mode tags used by :data:`~evalvitals.eval_agent.probe._FAILURE_MODE_TO_ANALYZERS`.
-
-        Returns a deduplicated list in keyword-match order.
-        """
-        text = (self.description + " " + self.failure_patterns).lower()
-        seen: set[str] = set()
-        hints: list[str] = []
-        for keywords, mode in _KEYWORD_TO_MODE:
-            if mode not in seen and any(kw in text for kw in keywords):
-                hints.append(mode)
-                seen.add(mode)
-        return hints
 
     def to_dict(self) -> dict[str, Any]:
         return {
