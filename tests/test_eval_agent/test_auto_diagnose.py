@@ -24,8 +24,8 @@ from evalvitals.eval_agent import (
     ProbeAgent,
     SurgeryAgent,
 )
-from evalvitals.eval_agent.stages.analysis import AnalysisFinding
 from evalvitals.eval_agent.hypothesis import Hypothesis
+from evalvitals.eval_agent.stages.analysis import AnalysisFinding
 from tests.conftest import FakeModel
 
 # ── helpers ────────────────────────────────────────────────────────────────────

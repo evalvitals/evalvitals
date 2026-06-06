@@ -93,7 +93,10 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.run_logger import RunLogger
     from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
-    from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
+    from evalvitals.eval_agent.stages.hypothesis_tester import (
+        HypothesisTester,
+        HypothesisTestResult,
+    )
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport

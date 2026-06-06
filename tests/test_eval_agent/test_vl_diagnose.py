@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from evalvitals.core.capability import Capability
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
 from evalvitals.core.result import Result
@@ -23,7 +21,6 @@ from evalvitals.eval_agent import (
     DiagnosisAgent,
     HypothesisTester,
     HypothesisTestResult,
-    ModelKind,
     ProbeAgent,
     StatsAnalysisAgent,
     StatsAnalysisReport,
@@ -31,10 +28,8 @@ from evalvitals.eval_agent import (
     VLDiagnoseReport,
 )
 from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-from evalvitals.eval_agent.stages.analysis import AnalysisFinding
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from tests.conftest import FakeModel
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
