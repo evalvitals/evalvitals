@@ -1,21 +1,46 @@
 """Self-evolving evaluation agent — automated failure discovery and diagnosis.
 
-Layout:
-  probe_agent.py       M1 — ProbeAgent: select + execute analyzers (direct or Docker)
-  analysis.py          M2 — AnalysisModule: interpret results → AnalysisReport
-  diagnosis.py         M3 — DiagnosisAgent: Gemini reads report → hypotheses
-  surgery.py           M4 — SurgeryAgent: operate + verify; correlate or sweep
-  loop.py              AutoDiagnoseLoop (M1→M4) + SelfEvolveLoop (original skeleton)
-  probe.py             StrategyProbe (tool-selection component used by ProbeAgent)
-  hypothesis.py        Hypothesis + HypothesisGenerator + serialization helpers
-  store.py             persistent memory (Store / InMemoryStore / JsonlStore)
+Two loops are available:
+
+  AutoDiagnoseLoop   M1 → M2 → M3 → M4 (legacy, four-stage sweep)
+  VLDiagnoseLoop     M1 → M2 → M3 → M5 inner loop, M4 called post-loop (Plan A)
+                     Stops when M5 finds a statistically supported,
+                     protocol-consistent hypothesis.
+
+Stage modules live in ``stages/``; shared infrastructure stays at the top level.
+
+Top-level (shared / orchestration):
+  loop.py              AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
+  run_logger.py        RunLogger — per-cycle JSONL log + artifact sink
+  hypothesis.py        Hypothesis, HypothesisStatus, serialization helpers
+  cli_agent.py         CliAgentConfig, create_cli_agent — shared CLI coding agent
+                         (agy / codex); any stage can use this to launch experiments
+  store.py             Store / InMemoryStore / JsonlStore — persistent memory
   orchestrator.py      thin facade over the loop (pre-registered A/B)
   ab_runner.py         A/B execution across prompting strategies
-  report.py            diagnostic conclusions
-  git_manager.py       git-native experiment versioning (eval/{run_id} branches)
-  evolution.py         JSONL lesson store with 30-day half-life time decay
+  report.py            DiagnosticReport — final diagnostic conclusions
+  evolution.py         EvolutionStore — JSONL lesson store, 30-day half-life decay
+  preregister.py       pre-registration helpers (DataSplit, PreregisteredHypothesis)
+  sandbox.py           ExperimentSandbox, SandboxProtocol
   factory.py           sandbox factory (subprocess / docker backends)
+  git_manager.py       git-native experiment versioning (eval/{run_id} branches)
   experiment_harness.py immutable evaluation harness injected into projects
+
+stages/ (M1–M5 implementation):
+  probe.py             M1 — StrategyProbe: model-kind detection + analyzer ranking
+  probe_agent.py       M1 — ProbeAgent: execute ranked analyzers (direct or Docker);
+                              protocol-guided via ExperimentProtocol.probe_hints()
+  protocol.py          M1 — ExperimentProtocol (NL description → probe hints);
+                              ProbingSchema (records M1 selection rationale)
+  analysis.py          M2 — AnalysisModule: threshold rules → AnalysisReport
+  stats_agent.py       M2 — StatsAnalysisAgent: extends AnalysisModule with LLM-guided
+                              conclusion + evidence chain (StatsAnalysisReport)
+  diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
+  surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
+                              → InterventionResult (SUPPORTED / REFUTED / INCONCLUSIVE)
+  experiment_writer.py M4 — multi-phase LLM/CLI agent writes + executes fix scripts
+  hypothesis_tester.py M5 — HypothesisTester: statistical test + protocol consistency;
+                              stopping_criteria_met() drives the VLDiagnoseLoop exit
 """
 
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner

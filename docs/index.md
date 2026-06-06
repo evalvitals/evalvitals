@@ -74,15 +74,29 @@ report = loop.run(failure_cases)
 EvalVitals is currently an alpha package. The core contracts, spec/backend
 composition, capability matching, public `wrap()` on-ramp, 26 registered
 analyzers, statistics layer, and the full automated diagnosis pipeline are
-implemented and covered by 554 unit tests (no GPU required).  VLM forward capture
+implemented and covered by 599 unit tests (no GPU required).  VLM forward capture
 (image-token mask + spatial layout) is implemented for all models in the spec
 registry. Several analyzers are Stage-2 stubs that intentionally raise
 `NotImplementedError`; see the [Roadmap](roadmap.md) for details.
 
-The automated diagnosis pipeline (`AutoDiagnoseLoop`) now ships with production-grade
-operational infrastructure: atomic checkpoints with `resume()`, heartbeat liveness,
+Two diagnosis loops are available:
+
+**`AutoDiagnoseLoop`** (M1→M4) ships with production-grade operational
+infrastructure: atomic checkpoints with `resume()`, heartbeat liveness,
 git-native run versioning (`ExperimentGitManager`), cross-run lesson accumulation
 (`EvolutionStore` with 30-day half-life decay), a durable `JsonlStore`, multi-phase
 `ExperimentWriter` (blueprint → sequential → hard-validate → exec-fix → tree-search →
-review), CLI agent backends (codex, claude_code, opencode …), and a VLM
+review), CLI agent backends (codex, claude_code, opencode, agy …), and a VLM
 image-attention analysis rule that closes the M1→M4 loop for vision models.
+
+**`VLDiagnoseLoop`** (M1→M2→M3→M5, M4 post-loop) adds protocol-guided diagnosis:
+the user supplies an `ExperimentProtocol` (a natural-language description of what
+to investigate), which drives analyzer prioritization in M1 and protocol-consistency
+checking in M5.  `StatsAnalysisAgent` (M2) generates an LLM-written evidence chain
+alongside the threshold-based findings.  `HypothesisTester` (M5) applies a
+statistical fail-rate test and verifies protocol consistency; the loop stops as soon
+as a supported, consistent hypothesis is found.
+
+The M1–M5 stage implementations live in `evalvitals/eval_agent/stages/`; shared
+infrastructure (loop orchestration, logging, hypothesis types, CLI agent) lives at
+the `eval_agent/` top level.  The public API at `evalvitals.eval_agent` is unchanged.
