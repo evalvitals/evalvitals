@@ -58,8 +58,10 @@ class VerboseRunLogger:
     def __getattr__(self, name):
         return getattr(self._rl, name)
 
-    def log_probe(self, cycle: int, results: dict) -> None:
+    def log_probe(self, cycle: int, results: dict, schema=None) -> None:
         print(f"\n[M1] cycle={cycle}  analyzers={list(results.keys())}", flush=True)
+        if schema is not None and getattr(schema, "rationale", ""):
+            print(f"     rationale  : {schema.rationale}", flush=True)
         for name, r in results.items():
             scalars = {
                 k: round(v, 4)
@@ -67,7 +69,7 @@ class VerboseRunLogger:
                 if isinstance(v, (int, float))
             }
             print(f"     {name}: {dict(list(scalars.items())[:6])}", flush=True)
-        self._rl.log_probe(cycle, results)
+        self._rl.log_probe(cycle, results, schema=schema)
 
     def log_analysis(self, cycle: int, analysis) -> None:
         print(f"\n[M2] cycle={cycle}  severity={analysis.severity}", flush=True)

@@ -211,19 +211,24 @@ class RunLogger:
     # Event hooks — called by AutoDiagnoseLoop at each stage
     # ------------------------------------------------------------------
 
-    def log_probe(self, cycle: int, results: dict[str, "Result"]) -> None:
+    def log_probe(
+        self,
+        cycle: int,
+        results: dict[str, "Result"],
+        schema: "Any | None" = None,
+    ) -> None:
         """M1: log findings (JSON) and persist heavy artifacts to disk."""
         artifact_paths = self._save_probe_artifacts(cycle, results)
-        self._log(
-            {
-                "event": "probe",
-                "cycle": cycle,
-                "analyzers": list(results),
-                "findings": {name: r.findings for name, r in results.items()},
-                "artifact_paths": artifact_paths,
-            },
-            span_id=f"c{cycle}.m1",
-        )
+        entry: dict[str, Any] = {
+            "event": "probe",
+            "cycle": cycle,
+            "analyzers": list(results),
+            "findings": {name: r.findings for name, r in results.items()},
+            "artifact_paths": artifact_paths,
+        }
+        if schema is not None:
+            entry["selection_rationale"] = getattr(schema, "rationale", "")
+        self._log(entry, span_id=f"c{cycle}.m1")
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""

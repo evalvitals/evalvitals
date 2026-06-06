@@ -331,7 +331,9 @@ class AutoDiagnoseLoop:
             for r in probe_results.values():
                 self.store.add_result(r)
             if self.run_logger:
-                self.run_logger.log_probe(cycle, probe_results)
+                self.run_logger.log_probe(
+                    cycle, probe_results, schema=self.probe_agent.last_schema
+                )
 
             # ── M2: analyze ─────────────────────────────────────────────
             analysis = self.analysis_module.analyze(probe_results, repr(self.model))
@@ -750,7 +752,9 @@ class VLDiagnoseLoop:
             for r in probe_results.values():
                 self.store.add_result(r)
             if self.run_logger:
-                self.run_logger.log_probe(cycle, probe_results)
+                self.run_logger.log_probe(
+                    cycle, probe_results, schema=self.probe_agent.last_schema
+                )
 
             # ── M2: protocol-aware stats analysis ────────────────────
             stats_report = self.stats_agent.analyze(
