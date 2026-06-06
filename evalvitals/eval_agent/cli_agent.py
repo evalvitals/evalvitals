@@ -421,6 +421,86 @@ _PROVIDER_CLASSES: dict[str, type[_CliAgentBase]] = {
 }
 
 
+class AgyModel:
+    """agy CLI wrapped as a judge model — no API key required.
+
+    Implements the minimal ``Model`` protocol (``generate() → str``) by
+    running ``agy -p <prompt>`` in a subprocess and returning stdout.
+    Any ``<think>…</think>`` reasoning blocks emitted by the underlying
+    model are stripped so callers receive only the final answer.
+
+    Usage::
+
+        from evalvitals.eval_agent import AgyModel
+
+        judge = AgyModel()
+        diagnosis_agent = DiagnosisAgent(judge=judge)
+        hypothesis_tester = HypothesisTester(judge=judge)
+
+    Args:
+        binary_path: Explicit path to the ``agy`` binary.  Auto-detected
+                     via :func:`shutil.which` when empty.
+        timeout_sec: Hard wall-clock limit per call (default 120 s).
+        model:       Model identifier forwarded via ``--model`` (optional).
+    """
+
+    key = "agy"
+
+    def __init__(
+        self,
+        binary_path: str = "",
+        timeout_sec: int = 120,
+        model: str = "",
+    ) -> None:
+        import os
+
+        from evalvitals.core.capability import Capability
+
+        binary = binary_path or shutil.which("agy") or ""
+        if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+            raise RuntimeError(
+                "AgyModel: 'agy' binary not found or not executable. "
+                "Set AGY_PATH=$(which agy) and re-run, or pass binary_path= explicitly."
+            )
+        self._binary = binary
+        self._timeout_sec = timeout_sec
+        self._model = model
+        self.capabilities = frozenset({Capability.GENERATE})
+        self.modalities = frozenset({"text"})
+
+    def generate(self, inputs: object, **kwargs: object) -> str:
+        """Run ``agy -p <inputs>`` and return the text response."""
+        import re as _re
+
+        cmd = [self._binary, "-p", str(inputs), "--dangerously-skip-permissions"]
+        if self._model:
+            cmd += ["--model", self._model]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=self._timeout_sec,
+                text=True,
+                env={**os.environ},
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"AgyModel: agy timed out after {self._timeout_sec}s"
+            ) from exc
+
+        output = proc.stdout.strip()
+        if proc.returncode != 0 and not output:
+            raise RuntimeError(
+                f"AgyModel: agy exited {proc.returncode}: {proc.stderr[:300]}"
+            )
+        # Strip <think>…</think> reasoning blocks
+        output = _re.sub(r"<think>.*?</think>", "", output, flags=_re.DOTALL).strip()
+        return output
+
+    def __repr__(self) -> str:
+        return f"AgyModel(binary={self._binary!r})"
+
+
 def create_cli_agent(config: CliAgentConfig) -> _CliAgentBase:
     """Instantiate the appropriate CLI agent for *config*.
 

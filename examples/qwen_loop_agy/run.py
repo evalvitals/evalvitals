@@ -217,13 +217,19 @@ def main() -> None:
     parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR))
     args = parser.parse_args()
 
+    import shutil
+
     import evalvitals
     from evalvitals.eval_agent import (
+        AgyModel,
+        CliAgentConfig,
         DiagnosisAgent,
         ExperimentProtocol,
+        ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
         StatsAnalysisAgent,
+        SurgeryAgent,
         VLDiagnoseLoop,
     )
 
@@ -238,6 +244,24 @@ def main() -> None:
     )
     print(f"  capabilities : {sorted(str(c.name) for c in model.capabilities)}")
     print(f"  modalities   : {sorted(model.modalities)}")
+
+    # ── Judge: agy CLI preferred; falls back to the loaded model ─────────────
+    # agy requires no API key — it uses the user's existing OAuth token.
+    # If the binary is not properly mounted, the loaded VLM acts as judge
+    # (a warning is printed and the rationale will reflect this).
+    try:
+        judge = AgyModel()
+        print(f"\n  judge : antigravity CLI ({judge._binary})  [M1–M5, no API key]")
+    except RuntimeError as _agy_err:
+        import warnings as _w
+        _w.warn(
+            f"agy not available ({_agy_err}). "
+            "Falling back to the loaded model as judge. "
+            "To use agy: export AGY_PATH=$(which agy) before docker compose up.",
+            stacklevel=2,
+        )
+        judge = model
+        print(f"\n  judge : {args.model} (agy unavailable — using evaluated model as fallback)")
 
     # ── Image + cases ─────────────────────────────────────────────────────────
     print("\nPreparing image …")
@@ -266,56 +290,32 @@ def main() -> None:
     print(f"  task_domain : {protocol.task_domain}")
     print(f"  description : {protocol.description[:80]}...")
 
-    # ── M1: ProbeAgent — judge=model enables LLM-driven analyzer selection ────
-    probe_agent = ProbeAgent(judge=model, max_analyzers=args.max_analyzers)
+    # ── M1: ProbeAgent — agy selects analyzers from the protocol ─────────────
+    probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
 
-    # ── M2: StatsAnalysisAgent ────────────────────────────────────────────────
-    # With judge=model the analysis generates an LLM-written conclusion;
-    # in analysis-only mode we skip the LLM call.
+    # ── M2: StatsAnalysisAgent — agy writes the evidence narrative ───────────
     stats_agent = StatsAnalysisAgent(
-        judge=None if args.analysis_only else model,
+        judge=None if args.analysis_only else judge,
     )
 
-    # ── M3: DiagnosisAgent ────────────────────────────────────────────────────
+    # ── M3: DiagnosisAgent — agy proposes hypotheses ─────────────────────────
     diagnosis_agent = None
     if not args.analysis_only:
-        diagnosis_agent = DiagnosisAgent(judge=model)
-        print("  M3 DiagnosisAgent : Qwen (same model, text-only prompt)")
+        diagnosis_agent = DiagnosisAgent(judge=judge)
 
-    # ── M5: HypothesisTester ─────────────────────────────────────────────────
+    # ── M5: HypothesisTester — agy checks protocol consistency ───────────────
     hypothesis_tester = None
     if not args.analysis_only:
-        hypothesis_tester = HypothesisTester(
-            judge=model,   # Qwen checks protocol consistency
-            min_effect=0.05,
-        )
-        print("  M5 HypothesisTester : Qwen (protocol consistency check)")
+        hypothesis_tester = HypothesisTester(judge=judge, min_effect=0.05)
 
-    # ── M4: SurgeryAgent (post-loop fix proposal) ─────────────────────────────
+    # ── M4: SurgeryAgent — agy writes and runs the fix script ────────────────
     surgery_agent = None
     if not args.analysis_only:
-        import shutil
-
-        from evalvitals.eval_agent import CliAgentConfig, ExperimentWriterConfig, SurgeryAgent
-
-        agy_bin = shutil.which("agy")
-        codex_bin = shutil.which("codex")
-        if agy_bin:
-            writer_cfg = ExperimentWriterConfig(
-                cli_agent=CliAgentConfig(provider="antigravity", timeout_sec=120),
-                exec_fix_timeout_sec=60,
-            )
-            print(f"  M4 SurgeryAgent   : antigravity CLI ({agy_bin})")
-        elif codex_bin:
-            writer_cfg = ExperimentWriterConfig(
-                cli_agent=CliAgentConfig(provider="codex", timeout_sec=120),
-                exec_fix_timeout_sec=60,
-            )
-            print(f"  M4 SurgeryAgent   : codex CLI ({codex_bin})")
-        else:
-            writer_cfg = ExperimentWriterConfig(exec_fix_timeout_sec=60)
-            print("  M4 SurgeryAgent   : LLM path (agy/codex not found on PATH)")
-        surgery_agent = SurgeryAgent(judge=model, writer_config=writer_cfg)
+        writer_cfg = ExperimentWriterConfig(
+            cli_agent=CliAgentConfig(provider="antigravity", timeout_sec=120),
+            exec_fix_timeout_sec=60,
+        )
+        surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
 
     # ── Run directory + verbose logger ────────────────────────────────────────
     run_dir = Path(args.run_dir)

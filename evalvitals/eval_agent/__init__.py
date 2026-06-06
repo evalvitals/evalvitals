@@ -44,7 +44,12 @@ stages/ (M1–M5 implementation):
 """
 
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
-from evalvitals.eval_agent.cli_agent import CliAgentConfig, CliAgentResult, create_cli_agent
+from evalvitals.eval_agent.cli_agent import (
+    AgyModel,
+    CliAgentConfig,
+    CliAgentResult,
+    create_cli_agent,
+)
 from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
 from evalvitals.eval_agent.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
 from evalvitals.eval_agent.git_manager import ExperimentGitManager
@@ -98,6 +103,8 @@ from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgen
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 
 __all__ = [
+    # Judge
+    "AgyModel",
     # M1
     "ProbeAgent",
     "StrategyProbe",

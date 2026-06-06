@@ -295,18 +295,31 @@ def _validate_hypotheses(
 
 
 def _default_judge() -> "Model":
-    """Return a GeminiModel when GEMINI_API_KEY is available, else raise."""
+    """Return a judge model without requiring an explicit API key.
+
+    Resolution order:
+    1. ``agy`` CLI (antigravity) — if the binary is on PATH, no key needed.
+    2. Gemini — if ``GEMINI_API_KEY`` is set.
+    3. Raise with instructions.
+    """
     import os
+    import shutil
 
-    if not os.getenv("GEMINI_API_KEY"):
-        raise ValueError(
-            "DiagnosisAgent requires a judge model. "
-            "Either pass judge= explicitly, or set GEMINI_API_KEY to use the "
-            "Gemini default (install with: pip install 'evalvitals[gemini]')."
-        )
-    from evalvitals.models.blackbox.gemini import GeminiModel
+    if shutil.which("agy"):
+        from evalvitals.eval_agent.cli_agent import AgyModel
+        return AgyModel()
 
-    return GeminiModel()
+    if os.getenv("GEMINI_API_KEY"):
+        from evalvitals.models.blackbox.gemini import GeminiModel
+        return GeminiModel()
+
+    raise ValueError(
+        "DiagnosisAgent requires a judge model. "
+        "Options: install antigravity (agy) — no API key needed, "
+        "or set GEMINI_API_KEY to use Gemini "
+        "(install with: pip install 'evalvitals[gemini]'), "
+        "or pass judge= explicitly."
+    )
 
 
 class DiagnosisAgent:
