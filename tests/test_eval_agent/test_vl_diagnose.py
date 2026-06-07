@@ -25,6 +25,7 @@ from evalvitals.eval_agent import (
     ProbeAgent,
     StatsAnalysisAgent,
     StatsAnalysisReport,
+    StatsToolAgent,
     VLDiagnoseLoop,
     VLDiagnoseReport,
 )
@@ -204,6 +205,26 @@ class TestCaseDiscoveryAgent:
 
         assert result.status == HypothesisStatus.SUPPORTED
 
+    def test_structured_judge_scoring_records_reason(self):
+        model = ScriptedModel(["The answer is blue."], capabilities={Capability.GENERATE})
+        judge = ScriptedModel([
+            '{"label": "PASS", "reason": "The observed answer names blue."}'
+        ], capabilities={Capability.GENERATE})
+        candidates = CaseBatch([
+            FailureCase(
+                id="colour",
+                inputs=Inputs(prompt="Which color is lowest?"),
+                expected={"all_of": ["blue"]},
+            )
+        ])
+
+        report = CaseDiscoveryAgent(judge=judge).discover(model, candidates)
+
+        assert report.n_pass == 1
+        assert report.cases[0].metadata["discovery_reason"] == (
+            "The observed answer names blue."
+        )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ProbingSchema / ProbeAgent.probe_with_schema
@@ -273,6 +294,20 @@ class TestProbingSchema:
         data = _labeled_batch()
         results, schema = agent.probe_with_schema(_vlm(), data, protocol=protocol)
         assert isinstance(schema, ProbingSchema)  # schema always returned
+
+    def test_filters_pope_without_pope_labels(self):
+        judge = ScriptedModel(
+            answers=['{"analyzers": ["pope"], "rationale": "check hallucination"}'],
+            capabilities={Capability.GENERATE},
+        )
+        protocol = _spatial_protocol()
+        agent = ProbeAgent(judge=judge, max_analyzers=1)
+        data = _labeled_batch()
+
+        _, schema = agent.probe_with_schema(_vlm(), data, protocol=protocol)
+
+        assert "pope" not in schema.selected_analyzers
+        assert schema.rationale.count("pope") == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -345,6 +380,66 @@ class TestStatsAnalysisAgent:
     def test_stats_tool_basic_path(self):
         report = StatsAnalysisAgent().analyze({})
         assert report.stats_tool == "threshold_rules"
+
+    def test_stats_tools_collect_scalar_metrics(self):
+        results = {"self_consistency": Result(
+            analyzer="self_consistency", model="m",
+            cases=CaseBatch([]),
+            findings={"consistency": 0.25, "n_samples": 4},
+        )}
+        report = StatsAnalysisAgent().analyze(results)
+
+        names = [tool["name"] for tool in report.stats_tool_results]
+        assert "scalar_summary" in names
+        assert report.visualizations
+        assert report.to_dict()["stats_tool_results"]
+
+    def test_stats_tools_compute_per_case_label_association(self):
+        cases = [
+            FailureCase(id="fail_1", inputs=Inputs(prompt="q1"), label=Label.FAIL),
+            FailureCase(id="pass_1", inputs=Inputs(prompt="q2"), label=Label.PASS),
+        ]
+        data = CaseBatch(cases)
+        results = {"attention": Result(
+            analyzer="attention",
+            model="m",
+            cases=data,
+            findings={"per_case": [{"sample_id": "fail_1", "has_issue": True}]},
+        )}
+
+        report = StatsAnalysisAgent().analyze(results)
+        tool = next(
+            t for t in report.stats_tool_results
+            if t["name"] == "per_case_signal_label_association"
+        )
+
+        assert tool["metrics"]["n_signal"] == 1
+        assert tool["metrics"]["n_no_signal"] == 1
+        assert tool["metrics"]["fail_rate_signal"] == 1.0
+        assert tool["metrics"]["fail_rate_control"] == 0.0
+
+    def test_stats_tool_agent_can_be_disabled(self):
+        results = {"self_consistency": Result(
+            analyzer="self_consistency", model="m",
+            cases=CaseBatch([]),
+            findings={"consistency": 0.25},
+        )}
+        report = StatsAnalysisAgent(enable_stats_tools=False).analyze(results)
+        assert report.stats_tool_results == []
+        assert report.visualizations == []
+
+    def test_stats_tool_agent_selects_expected_tools(self):
+        results = {"attention": Result(
+            analyzer="attention",
+            model="m",
+            cases=CaseBatch([]),
+            findings={
+                "mean_entropy": 0.5,
+                "per_case": [{"sample_id": "x", "has_issue": True}],
+            },
+        )}
+        selected = StatsToolAgent().select(results)
+        assert selected == ["scalar_summary", "per_case_signal_label_association"]
 
     def test_llm_guided_path_falls_back_on_failure(self):
         # A judge that raises should fall back to basic path silently
@@ -559,6 +654,36 @@ class TestHypothesisTester:
         # Should not raise — falls back to heuristic
         results = tester.test([self._hyp("attention")], report, data, protocol=protocol)
         assert len(results) == 1
+
+    def test_fallback_signal_uses_empty_outputs_not_labels(self):
+        cases = [
+            FailureCase(
+                id="fail_empty",
+                inputs=Inputs(prompt="q1"),
+                observed="",
+                label=Label.FAIL,
+                metadata={"discovery_observed": ""},
+            ),
+            FailureCase(
+                id="pass_text",
+                inputs=Inputs(prompt="q2"),
+                observed="valid answer",
+                label=Label.PASS,
+                metadata={"discovery_observed": "valid answer"},
+            ),
+        ]
+        data = CaseBatch(cases)
+        report = StatsAnalysisReport(model_name="m", raw_results={})
+        h = Hypothesis(
+            statement="The model's generation is empty.",
+            target_model="m",
+            predicted_failure_mode="empty_output",
+        )
+
+        result = HypothesisTester(min_effect=0.05).test([h], report, data, protocol=None)[0]
+
+        assert result.status == HypothesisStatus.SUPPORTED
+        assert result.evidence["signal_source"] == "case_metadata_fallback"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

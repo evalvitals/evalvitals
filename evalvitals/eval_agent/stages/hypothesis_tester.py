@@ -205,6 +205,10 @@ class HypothesisTester:
         """Test a single hypothesis."""
         # ── Statistical test ──────────────────────────────────────────
         signal = _extract_per_case_signals(stats_report.raw_results)
+        signal_source = "analyzer_per_case"
+        if not signal:
+            signal = _fallback_case_signals(data, hypothesis)
+            signal_source = "case_metadata_fallback"
 
         # Split cases into signal / no-signal groups with fail indicators.
         fail_signal: list[int] = []
@@ -223,7 +227,12 @@ class HypothesisTester:
             effect_size = None
             confidence = 0.0
             verdict = "Insufficient labeled data to test statistically."
-            evidence: dict[str, Any] = {"reason": verdict}
+            evidence: dict[str, Any] = {
+                "reason": verdict,
+                "signal_source": signal_source,
+                "n_signal": len(fail_signal),
+                "n_control": len(fail_control),
+            }
         else:
             rate_signal = sum(fail_signal) / len(fail_signal)
             rate_control = sum(fail_control) / len(fail_control)
@@ -258,6 +267,7 @@ class HypothesisTester:
                 "fail_rate_signal": round(rate_signal, 4),
                 "fail_rate_control": round(rate_control, 4),
                 "effect_size": effect_size,
+                "signal_source": signal_source,
                 "confidence_dims": dims,
             }
 
@@ -349,3 +359,32 @@ class HypothesisTester:
 
         first_line = str(raw).strip().splitlines()[0].upper()
         return first_line.startswith("YES")
+
+
+def _fallback_case_signals(data: CaseBatch, hypothesis: Hypothesis) -> dict[str, bool]:
+    """Non-label fallback signals when analyzers expose no per-case entries.
+
+    These are operational signals from discovery/generation, not PASS/FAIL
+    labels: empty outputs, discovery exceptions, or UNKNOWN scorer verdicts.
+    They keep M5 from becoming vacuous while avoiding label leakage.
+    """
+    hyp_text = (
+        hypothesis.statement + " " + hypothesis.predicted_failure_mode
+    ).lower()
+    wants_empty = any(k in hyp_text for k in ("empty", "whitespace", "special token"))
+    wants_parse = any(k in hyp_text for k in ("parse", "parser", "unparsed", "format"))
+
+    signal: dict[str, bool] = {}
+    for case in data:
+        meta = getattr(case, "metadata", {}) or {}
+        observed = str(getattr(case, "observed", "") or meta.get("discovery_observed", ""))
+        hit = False
+        if wants_empty and not observed.strip():
+            hit = True
+        if wants_parse and meta.get("discovery_label") == "unknown":
+            hit = True
+        if meta.get("discovery_error"):
+            hit = True
+        if hit:
+            signal[case.id] = True
+    return signal

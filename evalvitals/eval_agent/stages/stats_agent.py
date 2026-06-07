@@ -8,6 +8,8 @@ Extends :class:`~evalvitals.eval_agent.analysis.AnalysisModule` with:
   ``evidence_chain``, and ``qualitative_findings`` on top of the base
   :class:`~evalvitals.eval_agent.analysis.AnalysisReport` fields so M3
   (DiagnosisAgent) receives richer context.
+- **Stats-tool execution**: runs deterministic exploratory tools that produce
+  quantitative tables and JSON-safe visualization specs.
 - **LLM-guided path** (``judge=`` set): the LLM synthesizes a protocol-specific
   narrative from the raw findings.  The threshold-rules pass always runs first;
   the LLM *enriches*, not replaces, its output.
@@ -46,11 +48,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
+from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolAgent
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+    from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +76,9 @@ Analyzer summary:
 
 Raw per-analyzer findings (JSON):
 {findings_json}
+
+Exploratory stats-tool outputs (JSON):
+{stats_tool_json}
 
 Based on the protocol and the findings above, write:
 
@@ -142,6 +149,8 @@ class StatsAnalysisReport(AnalysisReport):
         evidence_chain:         Step-by-step derivation of the conclusion.
         qualitative_findings:   Patterns or anomalies noted in free text.
         stats_tool:             ``"threshold_rules"`` or ``"llm_guided"``.
+        stats_tool_results:     Deterministic exploratory stats-tool outputs.
+        visualizations:         JSON-safe visualization specs from stats tools.
         protocol:               The protocol that guided this analysis, if any.
     """
 
@@ -149,6 +158,8 @@ class StatsAnalysisReport(AnalysisReport):
     evidence_chain: list[str] = field(default_factory=list)
     qualitative_findings: list[str] = field(default_factory=list)
     stats_tool: Literal["threshold_rules", "llm_guided"] = "threshold_rules"
+    stats_tool_results: list[dict[str, Any]] = field(default_factory=list)
+    visualizations: list[dict[str, Any]] = field(default_factory=list)
     protocol: "ExperimentProtocol | None" = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,6 +169,8 @@ class StatsAnalysisReport(AnalysisReport):
             "evidence_chain": self.evidence_chain,
             "qualitative_findings": self.qualitative_findings,
             "stats_tool": self.stats_tool,
+            "stats_tool_results": self.stats_tool_results,
+            "visualizations": self.visualizations,
         })
         return d
 
@@ -176,15 +189,21 @@ class StatsAnalysisAgent:
                      threshold rules only.
         extra_rules: Additional ``{analyzer_name: [_Rule, …]}`` entries
                      merged with the built-in rules.
+        stats_tool_agent: Deterministic exploratory stats-tool runner.
+        enable_stats_tools: Disable to preserve a minimal report.
     """
 
     def __init__(
         self,
         judge: "Model | None" = None,
         extra_rules: dict | None = None,
+        stats_tool_agent: StatsToolAgent | None = None,
+        enable_stats_tools: bool = True,
     ) -> None:
         self._base = AnalysisModule(extra_rules)
         self._judge = judge
+        self._stats_tool_agent = stats_tool_agent or StatsToolAgent()
+        self._enable_stats_tools = enable_stats_tools
 
     def analyze(
         self,
@@ -205,14 +224,15 @@ class StatsAnalysisAgent:
             :class:`~evalvitals.eval_agent.analysis.AnalysisReport`.
         """
         base = self._base.analyze(results, model_name)
+        tool_results = self._run_stats_tools(results, protocol)
 
         if self._judge is not None and protocol is not None:
             try:
-                return self._analyze_llm_guided(base, results, protocol)
+                return self._analyze_llm_guided(base, results, protocol, tool_results)
             except Exception as exc:
                 logger.warning("LLM-guided M2 analysis failed, falling back: %s", exc)
 
-        return self._to_stats_report(base, protocol)
+        return self._to_stats_report(base, protocol, tool_results)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -222,6 +242,7 @@ class StatsAnalysisAgent:
         self,
         base: AnalysisReport,
         protocol: "ExperimentProtocol | None",
+        tool_results: "list[StatsToolResult] | None" = None,
     ) -> StatsAnalysisReport:
         """Basic path: wrap AnalysisReport into StatsAnalysisReport."""
         chain: list[str] = []
@@ -243,6 +264,11 @@ class StatsAnalysisAgent:
                 f"{len(base.raw_results)} analyzer(s)."
             )
 
+        tool_dicts, visualizations = _serialize_tool_results(tool_results or [])
+        for tr in tool_results or []:
+            if tr.conclusion:
+                chain.append(f"Stats tool {tr.name}: {tr.conclusion}")
+
         qualitative = [str(f) for f in base.findings]
         conclusion = _build_conclusion(base, protocol)
 
@@ -258,6 +284,8 @@ class StatsAnalysisAgent:
             evidence_chain=chain,
             qualitative_findings=qualitative,
             stats_tool="threshold_rules",
+            stats_tool_results=tool_dicts,
+            visualizations=visualizations,
             protocol=protocol,
         )
 
@@ -266,8 +294,14 @@ class StatsAnalysisAgent:
         base: AnalysisReport,
         results: "dict[str, Result]",
         protocol: "ExperimentProtocol",
+        tool_results: "list[StatsToolResult] | None" = None,
     ) -> StatsAnalysisReport:
         """LLM-guided path: judge synthesises protocol-specific insights."""
+        tool_context = json.dumps(
+            [tr.to_dict() for tr in (tool_results or [])],
+            indent=2,
+            default=str,
+        )
         findings_json = json.dumps(
             {r: res.findings for r, res in results.items()},
             indent=2,
@@ -278,19 +312,47 @@ class StatsAnalysisAgent:
             task_domain=protocol.task_domain or "general",
             narrative=base.narrative,
             findings_json=findings_json,
+            stats_tool_json=tool_context,
         )
         raw = self._judge.generate(prompt)  # type: ignore[union-attr]
         conclusion, evidence, qualitative = _parse_llm_analysis(str(raw), base)
 
-        report = self._to_stats_report(base, protocol)
+        report = self._to_stats_report(base, protocol, tool_results)
         if conclusion:
             report.conclusion = conclusion
         if evidence:
-            report.evidence_chain = evidence
+            report.evidence_chain = evidence + [
+                f"Stats tool {tr.name}: {tr.conclusion}"
+                for tr in (tool_results or [])
+                if tr.conclusion
+            ]
         if qualitative:
             report.qualitative_findings = qualitative
         report.stats_tool = "llm_guided"
         return report
+
+    def _run_stats_tools(
+        self,
+        results: "dict[str, Result]",
+        protocol: "ExperimentProtocol | None",
+    ) -> "list[StatsToolResult]":
+        if not self._enable_stats_tools:
+            return []
+        try:
+            return self._stats_tool_agent.analyze(results, protocol=protocol)
+        except Exception as exc:
+            logger.warning("M2 stats-tool analysis failed: %s", exc)
+            return []
+
+
+def _serialize_tool_results(
+    tool_results: "list[StatsToolResult]",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    payloads = [tr.to_dict() for tr in tool_results]
+    visualizations: list[dict[str, Any]] = []
+    for tr in tool_results:
+        visualizations.extend(tr.visualizations)
+    return payloads, visualizations
 
 
 def _build_conclusion(

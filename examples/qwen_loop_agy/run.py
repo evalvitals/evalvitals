@@ -24,6 +24,7 @@ Usage (via Docker — preferred):
 
 Usage (direct):
     python run.py
+    python run.py --smoke-test     # fast local wiring test, no Qwen/GPU/agy
     python run.py --model qwen2.5-vl-7b-instruct --device cuda:0
     python run.py --analysis-only   # M1+M2 only, skip M3/M5/M4
     python run.py --max-cycles 3 --max-analyzers 3
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import textwrap
 import urllib.request
 from pathlib import Path
@@ -81,6 +83,12 @@ class VerboseRunLogger:
         chain = getattr(analysis, "evidence_chain", [])
         for step in chain[:3]:
             print(f"     evidence   : {step}", flush=True)
+        tool_results = getattr(analysis, "stats_tool_results", [])
+        for tool in tool_results[:2]:
+            print(
+                f"     stats_tool : {tool.get('name')} - {tool.get('conclusion', '')}",
+                flush=True,
+            )
         if not conclusion:
             print(f"     {textwrap.fill(analysis.narrative, 72, subsequent_indent='     ')}",
                   flush=True)
@@ -214,7 +222,264 @@ def _build_candidate_cases(image):
             ),
             expected={"all_of": ["yes"], "none_of": ["no"]},
         ),
+        FailureCase(
+            id="q_bottom_colour",
+            inputs=Inputs(
+                prompt="Which colored rectangle is lowest in the image? Answer with one color.",
+                image=image,
+            ),
+            expected={"all_of": ["blue"]},
+        ),
+        FailureCase(
+            id="q_absent_yellow",
+            inputs=Inputs(
+                prompt="Is there a yellow rectangle in the image? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+        ),
+        FailureCase(
+            id="q_text_word",
+            inputs=Inputs(
+                prompt="What word appears immediately after 'synthetic' in the visible text?",
+                image=image,
+            ),
+            expected={"all_of": ["test"]},
+        ),
     ])
+
+
+# ---------------------------------------------------------------------------
+# Smoke-test path
+# ---------------------------------------------------------------------------
+
+class _SmokeVLM:
+    """Tiny deterministic VLM stand-in for testing this example's wiring."""
+
+    def __init__(self) -> None:
+        from evalvitals.core.capability import Capability
+
+        self.capabilities = frozenset({Capability.GENERATE, Capability.ATTENTION})
+        self.modalities = frozenset({"text", "image"})
+
+    def __repr__(self) -> str:
+        return "SmokeVLM()"
+
+    def generate(self, inputs, **kwargs) -> str:
+        prompt = str(getattr(inputs, "prompt", inputs)).lower()
+        if "snowy mountain" in prompt:
+            return "No."
+        if "phrase" in prompt:
+            return "Yes, the phrase is visible."
+        if "how many" in prompt:
+            return "I see two rectangles."
+        if "dominant rectangle colors" in prompt:
+            return "Red and green."
+        if "spatial layout" in prompt:
+            return "They are arranged in a row."
+        return "Unknown."
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError("SmokeVLM only supports generate().")
+
+
+class _SmokeProbe:
+    """M1 probe that emits per-case signals on discovered failures."""
+
+    last_schema = None
+
+    def probe(self, model, data, **kwargs):
+        from evalvitals.core.case import Label
+        from evalvitals.core.result import Result
+        from evalvitals.eval_agent import ProbingSchema
+
+        fail_ids = [case.id for case in data if case.label == Label.FAIL]
+        self.last_schema = ProbingSchema(
+            selected_analyzers=["attention"],
+            rationale="Smoke probe marks discovered failures as attention signals.",
+            protocol=kwargs.get("protocol"),
+        )
+        findings = {
+            "mean_entropy": 0.2,
+            "per_case": [
+                {"sample_id": cid, "attention_signal": True}
+                for cid in fail_ids
+            ],
+        }
+        return {
+            "attention": Result(
+                analyzer="attention",
+                model=repr(model),
+                cases=data,
+                findings=findings,
+            )
+        }
+
+
+class _SmokeDiagnosisAgent:
+    """M3 diagnosis stand-in with one protocol-consistent hypothesis."""
+
+    def diagnose(self, analysis, prior_cycles=None):
+        from evalvitals.eval_agent import DiagnosisResult, Hypothesis
+
+        h = Hypothesis(
+            statement=(
+                "The model counts incorrectly when the attention diagnostic "
+                "signal appears."
+            ),
+            target_model=analysis.model_name,
+            predicted_failure_mode="attention",
+        )
+        return DiagnosisResult(
+            model_name=analysis.model_name,
+            hypotheses=[h],
+            findings_summary={name: r.findings for name, r in analysis.raw_results.items()},
+            raw_judge_output=(
+                "HYPOTHESIS: The model counts incorrectly when the attention "
+                "diagnostic signal appears.\nFAILURE_MODE: attention"
+            ),
+        )
+
+
+def _build_protocol():
+    from evalvitals.eval_agent import ExperimentProtocol
+
+    return ExperimentProtocol(
+        description=(
+            "We evaluate a vision-language model on basic image understanding: "
+            "counting objects, naming their colours, and describing their spatial "
+            "arrangement. The model frequently gives wrong answers — it counts "
+            "incorrectly, misnames colours, and confuses left/right positions. "
+            "We want to know whether the model is actually using the image or "
+            "just guessing from language patterns."
+        ),
+        task_domain="visual question answering",
+        success_criteria=(
+            "Object counts, colour names, and position descriptions must match "
+            "what is visible in the image."
+        ),
+        target_modalities=frozenset({"text", "image"}),
+    )
+
+
+def _run_smoke_test(args) -> None:
+    from evalvitals.eval_agent import (
+        CaseDiscoveryAgent,
+        HypothesisTester,
+        StatsAnalysisAgent,
+        StatsToolAgent,
+        SurgeryAgent,
+        VLDiagnoseLoop,
+    )
+
+    model = _SmokeVLM()
+    image = _synthetic_image()
+    protocol = _build_protocol()
+    discovery = CaseDiscoveryAgent(include_unknown=False).discover(
+        model, _build_candidate_cases(image), protocol=protocol
+    )
+    cases = discovery.cases
+
+    print("\nSmoke test data:")
+    print(
+        f"  discovered {len(cases)} labeled cases "
+        f"(PASS={discovery.n_pass}, FAIL={discovery.n_fail}, UNKNOWN={discovery.n_unknown})"
+    )
+    if not discovery.has_m5_groups:
+        raise SystemExit("Smoke test requires both PASS and FAIL cases.")
+
+    run_dir = Path(args.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    logger = VerboseRunLogger(run_dir=run_dir / "logs")
+
+    loop = VLDiagnoseLoop(
+        model=model,
+        protocol=protocol,
+        probe_agent=_SmokeProbe(),
+        stats_agent=StatsAnalysisAgent(stats_tool_agent=StatsToolAgent(max_tools=3)),
+        diagnosis_agent=_SmokeDiagnosisAgent(),
+        hypothesis_tester=HypothesisTester(min_effect=0.05),
+        surgery_agent=SurgeryAgent(),
+        max_cycles=1,
+        run_logger=logger,
+    )
+    report = loop.run(cases)
+    _write_report_artifacts(run_dir, report, cases)
+
+    print("\nSmoke test result:")
+    print(f"  stopped_by={report.stopped_by} cycles={report.cycles}")
+    print(f"  verified={len(report.verified_hypotheses)}")
+    if report.stopped_by != "criteria_met" or not report.verified_hypotheses:
+        raise SystemExit("Smoke test failed: no verified hypothesis.")
+
+    fix = loop.run_m4(report, cases)
+    if fix is None or fix.status.value != "supported":
+        raise SystemExit("Smoke test failed: M4 did not support the verified hypothesis.")
+
+    print("  m4_status=supported")
+    print("Smoke test passed.")
+
+
+def _write_report_artifacts(run_dir: Path, report, cases) -> None:
+    """Write human-readable run artifacts alongside the JSONL event log."""
+    hypotheses = [
+        {
+            "statement": h.statement,
+            "failure_mode": h.predicted_failure_mode,
+            "status": h.status.value if h.status else None,
+        }
+        for h in getattr(report, "all_hypotheses", [])
+    ]
+    m5_results = [
+        {
+            "hypothesis": tr.hypothesis.statement,
+            "failure_mode": tr.hypothesis.predicted_failure_mode,
+            "status": tr.status.value,
+            "effect_size": tr.effect_size,
+            "confidence": tr.confidence,
+            "protocol_consistent": tr.is_consistent_with_protocol,
+            "verdict": tr.verdict,
+            "evidence": tr.evidence,
+        }
+        for tr in getattr(report, "all_test_results", [])
+    ]
+    summary = {
+        "cycles": report.cycles,
+        "stopped_by": report.stopped_by,
+        "n_cases": len(cases),
+        "n_hypotheses": len(hypotheses),
+        "n_m5_results": len(m5_results),
+        "n_verified": len(getattr(report, "verified_hypotheses", [])),
+    }
+    (run_dir / "hypotheses.json").write_text(
+        json.dumps(hypotheses, indent=2, default=str),
+        encoding="utf-8",
+    )
+    (run_dir / "m5_results.json").write_text(
+        json.dumps(m5_results, indent=2, default=str),
+        encoding="utf-8",
+    )
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, default=str),
+        encoding="utf-8",
+    )
+    lines = [
+        "# qwen_loop_agy Run Summary",
+        "",
+        f"- stopped_by: {report.stopped_by}",
+        f"- cycles: {report.cycles}",
+        f"- cases: {len(cases)}",
+        f"- hypotheses: {len(hypotheses)}",
+        f"- verified: {summary['n_verified']}",
+        "",
+        "## Hypotheses",
+    ]
+    if hypotheses:
+        for h in hypotheses:
+            lines.append(f"- [{h['status']}] {h['failure_mode']}: {h['statement']}")
+    else:
+        lines.append("- none")
+    (run_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +496,16 @@ def main() -> None:
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument(
+        "--smoke-test", action="store_true",
+        help="Run a fast local wiring test without loading Qwen, GPU, or agy.",
+    )
+    parser.add_argument(
         "--download-image", action="store_true",
         help="Use the demo Wikimedia image instead of the synthetic labeled image.",
+    )
+    parser.add_argument(
+        "--judge-discovery", action="store_true",
+        help="Use the judge model to label discovery outputs against expected rubrics.",
     )
     parser.add_argument(
         "--analysis-only", action="store_true",
@@ -241,6 +514,9 @@ def main() -> None:
     parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR))
     args = parser.parse_args()
 
+    if args.smoke_test:
+        _run_smoke_test(args)
+        return
 
     import evalvitals
     from evalvitals.eval_agent import (
@@ -253,6 +529,7 @@ def main() -> None:
         HypothesisTester,
         ProbeAgent,
         StatsAnalysisAgent,
+        StatsToolAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
     )
@@ -287,17 +564,40 @@ def main() -> None:
         judge = model
         print(f"\n  judge : {args.model} (agy unavailable — using evaluated model as fallback)")
 
+    protocol = _build_protocol()
+    run_dir = Path(args.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
     # ── Image + cases ─────────────────────────────────────────────────────────
     print("\nPreparing image …")
     image = _get_image(download=args.download_image)
     candidate_cases = _build_candidate_cases(image)
     discovery = CaseDiscoveryAgent(
-        include_unknown=False,
-    ).discover(model, candidate_cases)
+        judge=judge if args.judge_discovery else None,
+        include_unknown=True,
+    ).discover(model, candidate_cases, protocol=protocol)
     cases = discovery.cases
     print(
         f"  discovered {len(cases)} labeled cases "
         f"(PASS={discovery.n_pass}, FAIL={discovery.n_fail}, UNKNOWN={discovery.n_unknown})"
+    )
+    discovery_rows = []
+    for case in cases:
+        observed = str(case.observed)
+        discovery_rows.append({
+            "id": case.id,
+            "prompt": case.inputs.prompt,
+            "expected": case.expected,
+            "observed": observed,
+            "label": case.label.value,
+        })
+        print(
+            f"    [{case.label.value.upper()}] {case.id}: "
+            f"{textwrap.shorten(observed, width=110, placeholder='...')}"
+        )
+    (run_dir / "discovery_cases.json").write_text(
+        json.dumps(discovery_rows, indent=2, default=str),
+        encoding="utf-8",
     )
     if discovery.errors:
         print(f"  discovery errors: {len(discovery.errors)}")
@@ -308,22 +608,6 @@ def main() -> None:
         )
 
     # ── Experiment protocol (the human prior) ─────────────────────────────────
-    protocol = ExperimentProtocol(
-        description=(
-            "We evaluate a vision-language model on basic image understanding: "
-            "counting objects, naming their colours, and describing their spatial "
-            "arrangement. The model frequently gives wrong answers — it counts "
-            "incorrectly, misnames colours, and confuses left/right positions. "
-            "We want to know whether the model is actually using the image or "
-            "just guessing from language patterns."
-        ),
-        task_domain="visual question answering",
-        success_criteria=(
-            "Object counts, colour names, and position descriptions must match "
-            "what is visible in the image."
-        ),
-        target_modalities=frozenset({"text", "image"}),
-    )
     print("\nExperimentProtocol:")
     print(f"  task_domain : {protocol.task_domain}")
     print(f"  description : {protocol.description[:80]}...")
@@ -334,6 +618,7 @@ def main() -> None:
     # ── M2: StatsAnalysisAgent — agy writes the evidence narrative ───────────
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
+        stats_tool_agent=StatsToolAgent(max_tools=3),
     )
 
     # ── M3: DiagnosisAgent — agy proposes hypotheses ─────────────────────────
@@ -356,8 +641,6 @@ def main() -> None:
         surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
 
     # ── Run directory + verbose logger ────────────────────────────────────────
-    run_dir = Path(args.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nOutput directory: {run_dir.resolve()}")
     print("  logs/run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
     print("  logs/artifacts/      ← per-cycle analyzer artifacts (.npy / .json)")
@@ -383,6 +666,7 @@ def main() -> None:
     print(f"{'='*64}")
 
     report = loop.run(cases)
+    _write_report_artifacts(run_dir, report, cases)
 
     # ── Print verified hypotheses ─────────────────────────────────────────────
     print(f"\n{'='*64}")

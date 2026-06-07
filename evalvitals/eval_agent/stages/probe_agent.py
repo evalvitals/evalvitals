@@ -193,6 +193,9 @@ class ProbeAgent:
                 hint_failure_modes=hint_failure_modes or None,
             )
             rationale = _static_rationale(names, hint_failure_modes)
+        names, filtered = self._filter_applicable_names(names, model, data)
+        if filtered:
+            rationale += f" Filtered inapplicable analyzer(s): {', '.join(filtered)}."
 
         # Build (name, analyzer) pairs up front — _make_analyzer is cheap and
         # not thread-safe to call concurrently.
@@ -394,6 +397,46 @@ class ProbeAgent:
     def _static_fallback(self, model: "Model") -> list[str]:
         return self.selector.select(model, max_analyzers=self.max_analyzers)
 
+    def _filter_applicable_names(
+        self,
+        names: list[str],
+        model: "Model",
+        data: "CaseBatch",
+    ) -> tuple[list[str], list[str]]:
+        """Drop analyzers whose data preconditions are not met.
+
+        LLM selection can choose semantically plausible tools that require a
+        specific case shape.  Filtering here prevents invalid runs such as POPE
+        on open-ended VQA prompts without yes/no gold labels.
+        """
+        max_n = self.max_analyzers or len(names)
+        selected: list[str] = []
+        filtered: list[str] = []
+        filtered_seen: set[str] = set()
+
+        def _consider(candidate: str) -> None:
+            if candidate in selected:
+                return
+            if not _analyzer_data_preconditions_met(candidate, data):
+                if candidate not in filtered_seen:
+                    filtered.append(candidate)
+                    filtered_seen.add(candidate)
+                return
+            selected.append(candidate)
+
+        for name in names:
+            _consider(name)
+            if len(selected) >= max_n:
+                return selected, filtered
+
+        # Backfill from the static selector so one bad LLM choice does not leave
+        # M1 empty when other compatible analyzers can run.
+        for name in self.selector.select(model, max_analyzers=None):
+            _consider(name)
+            if len(selected) >= max_n:
+                break
+        return selected, filtered
+
     # ------------------------------------------------------------------
     # Execution strategies
     # ------------------------------------------------------------------
@@ -533,3 +576,18 @@ def _serialize_cases(data: "CaseBatch") -> list[dict[str, Any]]:
             "metadata": getattr(case, "metadata", {}),
         })
     return out
+
+
+def _analyzer_data_preconditions_met(name: str, data: "CaseBatch") -> bool:
+    if name == "pope":
+        return any(
+            str((getattr(case, "metadata", {}) or {}).get("pope_label", "")).lower()
+            in {"yes", "no"}
+            for case in data
+        )
+    if name == "chair":
+        return any(
+            bool((getattr(case, "metadata", {}) or {}).get("gt_objects"))
+            for case in data
+        )
+    return True

@@ -249,8 +249,12 @@ class HFLocalModel(Model):
 
         model, processor = self._loaded
         tok = getattr(processor, "tokenizer", processor)
-        prompt = self._as_prompt(inputs)
-        enc = self._encode(prompt)
+        if self.spec.is_vlm:
+            enc, _, _, _ = self._encode_vlm(inputs, model, processor)
+        else:
+            prompt = self._as_prompt(inputs)
+            enc = self._encode(prompt)
+        enc.pop("token_type_ids", None)  # some VLM processors emit this; generate() rejects it
         max_new = kwargs.pop("max_new_tokens", self.runtime.max_new_tokens)
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=max_new, **kwargs)

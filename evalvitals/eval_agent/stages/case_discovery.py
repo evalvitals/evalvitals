@@ -9,6 +9,7 @@ M5 receives the PASS/FAIL labels it needs for statistical testing.
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
@@ -40,8 +41,11 @@ Expected answer or rubric:
 Observed model answer:
 {observed}
 
-Return PASS, FAIL, or UNKNOWN on the first line. Use PASS only when the observed
-answer satisfies the expected answer/rubric under the success criteria."""
+Return a JSON object:
+{{"label": "PASS|FAIL|UNKNOWN", "reason": "one concise sentence"}}
+
+Use PASS only when the observed answer satisfies the expected answer/rubric under
+the success criteria."""
 
 
 @dataclass
@@ -100,16 +104,18 @@ class CaseDiscoveryAgent:
             try:
                 observed = model.generate(case.inputs, **self.generation_kwargs)
                 case.observed = observed
-                label = self._score(case, str(observed), protocol)
+                label, reason = self._score_with_reason(case, str(observed), protocol)
             except Exception as exc:  # noqa: BLE001 - discovery should continue
                 observed = ""
                 label = Label.UNKNOWN
+                reason = "model generation or scoring raised an exception"
                 errors.append(f"{case.id}: {exc}")
                 case.metadata["discovery_error"] = str(exc)
 
             case.label = label
             case.metadata["discovery_observed"] = str(observed)
             case.metadata["discovery_label"] = label.value
+            case.metadata["discovery_reason"] = reason
             counts[label] += 1
 
             if label != Label.UNKNOWN or self.include_unknown:
@@ -123,24 +129,30 @@ class CaseDiscoveryAgent:
             errors=errors,
         )
 
-    def _score(
+    def _score_with_reason(
         self,
         case: FailureCase,
         observed: str,
         protocol: "ExperimentProtocol | None",
-    ) -> Label:
+    ) -> tuple[Label, str]:
         if self.scorer is not None:
-            return _coerce_label(self.scorer(case, observed))
+            label = _coerce_label(self.scorer(case, observed))
+            return label, "scored by injected scorer"
         if self.judge is not None:
-            return self._judge_score(case, observed, protocol)
-        return _heuristic_score(case.expected, observed)
+            judged, reason = self._judge_score(case, observed, protocol)
+            if judged != Label.UNKNOWN:
+                return judged, reason
+            fallback = _heuristic_score(case.expected, observed)
+            return fallback, f"judge returned UNKNOWN; heuristic fallback produced {fallback.value}"
+        label = _heuristic_score(case.expected, observed)
+        return label, "scored by expected-answer heuristic"
 
     def _judge_score(
         self,
         case: FailureCase,
         observed: str,
         protocol: "ExperimentProtocol | None",
-    ) -> Label:
+    ) -> tuple[Label, str]:
         protocol_text = protocol.description if protocol is not None else ""
         success_criteria = protocol.success_criteria if protocol is not None else ""
         prompt = _JUDGE_PROMPT.format(
@@ -151,12 +163,21 @@ class CaseDiscoveryAgent:
             observed=observed,
         )
         raw = self.judge.generate(prompt)  # type: ignore[union-attr]
-        first = str(raw).strip().splitlines()[0].strip().upper()
+        text = str(raw).strip()
+        parsed = _parse_judge_json(text)
+        if parsed is not None:
+            return parsed
+        first_lines = "\n".join(text.splitlines()[:5]).upper()
+        if "PASS" in first_lines and "FAIL" not in first_lines:
+            return Label.PASS, "judge text contained PASS"
+        if "FAIL" in first_lines and "PASS" not in first_lines:
+            return Label.FAIL, "judge text contained FAIL"
+        first = text.splitlines()[0].strip().upper() if text else ""
         if first.startswith("PASS"):
-            return Label.PASS
+            return Label.PASS, "judge first line was PASS"
         if first.startswith("FAIL"):
-            return Label.FAIL
-        return Label.UNKNOWN
+            return Label.FAIL, "judge first line was FAIL"
+        return Label.UNKNOWN, "judge output did not contain a parseable label"
 
 
 def _coerce_label(value: Label | bool | str) -> Label:
@@ -170,6 +191,23 @@ def _coerce_label(value: Label | bool | str) -> Label:
     if text in {"fail", "failed", "false", "incorrect", "wrong"}:
         return Label.FAIL
     return Label.UNKNOWN
+
+
+def _parse_judge_json(text: str) -> tuple[Label, str] | None:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```\w*\n?", "", raw)
+        raw = re.sub(r"\n?```\s*$", "", raw)
+    match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group())
+    except json.JSONDecodeError:
+        return None
+    label = _coerce_label(payload.get("label", "unknown"))
+    reason = str(payload.get("reason", "judge returned structured label"))
+    return label, reason
 
 
 def _heuristic_score(expected: Any, observed: str) -> Label:

@@ -35,6 +35,7 @@ stages/ (M1–M5 implementation):
   analysis.py          M2 — AnalysisModule: threshold rules → AnalysisReport
   stats_agent.py       M2 — StatsAnalysisAgent: extends AnalysisModule with LLM-guided
                               conclusion + evidence chain (StatsAnalysisReport)
+  stats_tool_agent.py  M2 — deterministic exploratory stats tools
   diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
   case_discovery.py    Data — run candidate prompts and label PASS/FAIL cases
   surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
@@ -104,6 +105,7 @@ from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
+from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolAgent, StatsToolResult
 from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgent
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 
@@ -138,6 +140,8 @@ __all__ = [
     # M2 stats agent
     "StatsAnalysisAgent",
     "StatsAnalysisReport",
+    "StatsToolAgent",
+    "StatsToolResult",
     # M5 hypothesis tester
     "HypothesisTester",
     "HypothesisTestResult",

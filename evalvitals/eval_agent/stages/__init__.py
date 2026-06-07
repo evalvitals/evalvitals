@@ -22,6 +22,8 @@ M2 — Analysis (statistical interpretation)
                                        adds LLM-written conclusion + evidence chain
                   StatsAnalysisReport  AnalysisReport subclass — adds conclusion,
                                        evidence_chain, qualitative_findings, protocol
+  stats_tool_agent.py StatsToolAgent    selects/runs deterministic exploratory
+                                       stats tools and visualization specs
 
 M3 — Diagnosis (hypothesis generation)
   diagnosis.py    DiagnosisAgent   LLM judge reads AnalysisReport → Hypothesis list;

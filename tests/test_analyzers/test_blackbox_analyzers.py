@@ -50,6 +50,9 @@ def test_pope_metrics():
     f = res.findings
     assert f["n"] == 4 and f["accuracy"] == 0.5
     assert f["precision"] == 0.5 and f["recall"] == 0.5 and f["f1"] == 0.5
+    assert f["per_case"][0]["has_gold"] is True
+    assert f["per_case"][0]["unparsed"] is False
+    assert f["per_case"][0]["is_correct"] is True
 
 
 # ---------------- CHAIR ----------------

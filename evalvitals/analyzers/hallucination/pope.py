@@ -61,7 +61,15 @@ class POPEAnalyzer(Analyzer):
         for case in cases:
             gold = str(case.metadata.get(self.label_key, "")).strip().lower()
             pred = parse_yes_no(model.generate(case.inputs))
-            per_case.append({"id": case.id, "gold": gold, "pred": pred})
+            is_correct = pred == gold if gold in {"yes", "no"} and pred is not None else None
+            per_case.append({
+                "id": case.id,
+                "gold": gold,
+                "pred": pred,
+                "has_gold": gold in {"yes", "no"},
+                "unparsed": pred is None,
+                "is_correct": is_correct,
+            })
             if pred is None:
                 unparsed += 1
                 continue
@@ -87,5 +95,6 @@ class POPEAnalyzer(Analyzer):
                 "recall": round(recall, 4),
                 "f1": round(f1, 4),
                 "yes_rate": round((tp + fp) / n, 4) if n else None,  # >0.5 ⇒ over-affirmation (hallucination)
+                "per_case": per_case,
             },
         )
