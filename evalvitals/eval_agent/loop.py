@@ -645,9 +645,8 @@ class VLDiagnoseLoop:
                             consistency checks.
         probe_agent:        M1.  Defaults to ``ProbeAgent()``.
         stats_agent:        M2.  Defaults to ``StatsAnalysisAgent()``.
-        diagnosis_agent:    M3.  Defaults to ``DiagnosisAgent()`` (Gemini
-                            when ``GEMINI_API_KEY`` is set).
-                            Pass ``None`` to run in analysis-only mode (M1+M2).
+        diagnosis_agent:    M3.  ``None`` lazily resolves ``DiagnosisAgent()``
+                            on first use.
         hypothesis_tester:  M5.  Defaults to ``HypothesisTester()``.
         surgery_agent:      M4 — used only by :meth:`run_m4`, never inside
                             the main loop.  Defaults to ``SurgeryAgent()``.
@@ -656,6 +655,7 @@ class VLDiagnoseLoop:
         run_logger:         Optional :class:`~evalvitals.eval_agent.run_logger.RunLogger`.
         token_budget:       Stop early when accumulated token usage reaches
                             this limit (0 = unlimited).
+        analysis_only:      Run only M1→M2 and stop before hypothesis generation.
     """
 
     def __init__(
@@ -671,6 +671,7 @@ class VLDiagnoseLoop:
         max_cycles: int = 5,
         run_logger: "Any | None" = None,
         token_budget: int = 0,
+        analysis_only: bool = False,
     ) -> None:
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
         from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
@@ -688,6 +689,7 @@ class VLDiagnoseLoop:
         self.max_cycles = max_cycles
         self.run_logger = run_logger
         self.token_budget = token_budget
+        self.analysis_only = analysis_only
         self._tokens_used: int = 0
         self._run_id: str = ""
 
@@ -766,8 +768,7 @@ class VLDiagnoseLoop:
             if self.run_logger:
                 self.run_logger.log_analysis(cycle, stats_report)
 
-            if self.diagnosis_agent is None and not hasattr(self, "_diag_instance"):
-                # analysis-only mode: no M3/M5
+            if self.analysis_only:
                 stopped_by = _STOPPED_BY_NO_HYPS
                 break
 

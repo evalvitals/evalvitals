@@ -137,8 +137,10 @@ class VerboseRunLogger:
 # Image helpers
 # ---------------------------------------------------------------------------
 
-def _get_image():
+def _get_image(*, download: bool = False):
     from PIL import Image
+    if not download:
+        return _synthetic_image()
     try:
         # Wikimedia rejects the default urllib User-Agent with HTTP 403,
         # so send a descriptive UA as their policy requires.
@@ -174,32 +176,50 @@ def _synthetic_image():
 # Cases
 # ---------------------------------------------------------------------------
 
-def _build_cases(image):
-    from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
+def _build_candidate_cases(image):
+    """Human-prior candidate prompts; labels are assigned after model execution."""
+    from evalvitals.core.case import CaseBatch, FailureCase, Inputs
+
     return CaseBatch([
         FailureCase(
             id="q_count",
             inputs=Inputs(
-                prompt="How many distinct objects can you see in this image?",
+                prompt="How many colored rectangles are in this image? Answer with the number.",
                 image=image,
             ),
-            label=Label.FAIL,
+            expected={"any_of": ["3", "three"]},
         ),
         FailureCase(
             id="q_colour",
             inputs=Inputs(
-                prompt="What are the dominant colours in this image?",
+                prompt="What are the dominant rectangle colors in this image?",
                 image=image,
             ),
-            label=Label.FAIL,
+            expected={"all_of": ["red", "green", "blue"]},
         ),
         FailureCase(
             id="q_location",
             inputs=Inputs(
-                prompt="Describe the spatial layout of objects in this image.",
+                prompt="Describe the spatial layout of the colored rectangles.",
                 image=image,
             ),
-            label=Label.FAIL,
+            expected={"all_of": ["left", "right"], "any_of": ["bottom", "below", "lower"]},
+        ),
+        FailureCase(
+            id="q_weather",
+            inputs=Inputs(
+                prompt="Does this image show a snowy mountain landscape? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+        ),
+        FailureCase(
+            id="q_text",
+            inputs=Inputs(
+                prompt="Is the phrase 'synthetic test image' visible? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["yes"], "none_of": ["no"]},
         ),
     ])
 
@@ -218,6 +238,10 @@ def main() -> None:
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument(
+        "--download-image", action="store_true",
+        help="Use the demo Wikimedia image instead of the synthetic labeled image.",
+    )
+    parser.add_argument(
         "--analysis-only", action="store_true",
         help="Run M1+M2 only (skip M3/M5/M4)",
     )
@@ -229,6 +253,7 @@ def main() -> None:
     import evalvitals
     from evalvitals.eval_agent import (
         AgyModel,
+        CaseDiscoveryAgent,
         CliAgentConfig,
         DiagnosisAgent,
         ExperimentProtocol,
@@ -272,9 +297,23 @@ def main() -> None:
 
     # ── Image + cases ─────────────────────────────────────────────────────────
     print("\nPreparing image …")
-    image = _get_image()
-    cases = _build_cases(image)
-    print(f"  {len(cases)} failure cases")
+    image = _get_image(download=args.download_image)
+    candidate_cases = _build_candidate_cases(image)
+    discovery = CaseDiscoveryAgent(
+        include_unknown=False,
+    ).discover(model, candidate_cases)
+    cases = discovery.cases
+    print(
+        f"  discovered {len(cases)} labeled cases "
+        f"(PASS={discovery.n_pass}, FAIL={discovery.n_fail}, UNKNOWN={discovery.n_unknown})"
+    )
+    if discovery.errors:
+        print(f"  discovery errors: {len(discovery.errors)}")
+    if not discovery.has_m5_groups:
+        print(
+            "  WARNING: M5 needs both PASS and FAIL cases for fail-rate tests; "
+            "this run may stop without verified hypotheses."
+        )
 
     # ── Experiment protocol (the human prior) ─────────────────────────────────
     protocol = ExperimentProtocol(
@@ -344,6 +383,7 @@ def main() -> None:
         surgery_agent=surgery_agent,   # stored but NOT called inside run()
         max_cycles=args.max_cycles,
         run_logger=logger,
+        analysis_only=args.analysis_only,
     )
 
     print(f"\n{'='*64}")

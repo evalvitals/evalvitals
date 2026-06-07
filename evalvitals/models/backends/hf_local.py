@@ -111,9 +111,10 @@ class HFLocalModel(Model):
         caps = {
             Capability.GENERATE,
             Capability.LOGITS,
-            Capability.LOGPROBS,
             Capability.HIDDEN_STATES,
         }
+        if not spec.is_vlm:
+            caps.add(Capability.LOGPROBS)
         if spec.attn_semantics is not AttnSemantics.NONE:
             caps.add(Capability.ATTENTION)
         # TOOL_CALLS is a CONDITIONAL capability for local models: the backend

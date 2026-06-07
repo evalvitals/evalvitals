@@ -18,6 +18,7 @@ from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
 from evalvitals.core.result import Result
 from evalvitals.eval_agent import (
     AnalysisModule,
+    CaseDiscoveryAgent,
     DiagnosisAgent,
     HypothesisTester,
     HypothesisTestResult,
@@ -134,6 +135,74 @@ class TestExperimentProtocol:
             "ExperimentProtocol is a pure data container — "
             "probe_hints() was removed; analyzer selection is LLM-driven"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CaseDiscoveryAgent
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCaseDiscoveryAgent:
+    def test_discovers_observed_outputs_and_labels(self):
+        model = ScriptedModel(
+            ["There are three rectangles: red, green, and blue.", "No."],
+            capabilities={Capability.GENERATE},
+        )
+        candidates = CaseBatch([
+            FailureCase(
+                id="count",
+                inputs=Inputs(prompt="How many rectangles?"),
+                expected={"all_of": ["three", "red", "green", "blue"]},
+            ),
+            FailureCase(
+                id="weather",
+                inputs=Inputs(prompt="Is this a snowy mountain?"),
+                expected={"all_of": ["no"], "none_of": ["yes"]},
+            ),
+        ])
+
+        report = CaseDiscoveryAgent().discover(model, candidates)
+
+        assert report.n_pass == 2
+        assert report.n_fail == 0
+        assert report.cases[0].observed.startswith("There are three")
+        assert report.cases[0].label == Label.PASS
+        assert report.cases[0].metadata["discovery_label"] == "pass"
+
+    def test_discovers_pass_fail_groups_for_m5(self):
+        model = ScriptedModel(
+            ["wrong answer", "No."],
+            capabilities={Capability.GENERATE},
+        )
+        candidates = CaseBatch([
+            FailureCase(
+                id="count",
+                inputs=Inputs(prompt="How many rectangles?"),
+                expected={"any_of": ["3", "three"]},
+            ),
+            FailureCase(
+                id="weather",
+                inputs=Inputs(prompt="Is this a snowy mountain?"),
+                expected={"all_of": ["no"], "none_of": ["yes"]},
+            ),
+        ])
+
+        discovery = CaseDiscoveryAgent().discover(model, candidates)
+        assert discovery.has_m5_groups
+
+        fail_ids = [case.id for case in discovery.cases if case.label == Label.FAIL]
+        stats_report = _make_stats_report_with_signal(fail_ids)
+        result = HypothesisTester(min_effect=0.05).test(
+            [Hypothesis(
+                statement="Model fails on visual counting.",
+                target_model="fake",
+                predicted_failure_mode="attention",
+            )],
+            stats_report,
+            discovery.cases,
+            protocol=None,
+        )[0]
+
+        assert result.status == HypothesisStatus.SUPPORTED
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -674,6 +743,20 @@ class TestVLDiagnoseLoop:
         )
         loop.run(_labeled_batch())
         assert received_protocol and received_protocol[0] is proto
+
+    def test_analysis_only_stops_after_m2(self):
+        loop = VLDiagnoseLoop(
+            model=_vlm(),
+            protocol=_spatial_protocol(),
+            diagnosis_agent=_scripted_diagnosis_agent(),
+            max_cycles=3,
+            analysis_only=True,
+        )
+        report = loop.run(_labeled_batch())
+        assert report.cycles == 1
+        assert report.final_stats_report is not None
+        assert report.all_hypotheses == []
+        assert report.all_test_results == []
 
     def test_no_diagnosis_agent_stops_early(self):
         loop = VLDiagnoseLoop(

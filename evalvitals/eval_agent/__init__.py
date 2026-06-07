@@ -36,6 +36,7 @@ stages/ (M1–M5 implementation):
   stats_agent.py       M2 — StatsAnalysisAgent: extends AnalysisModule with LLM-guided
                               conclusion + evidence chain (StatsAnalysisReport)
   diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
+  case_discovery.py    Data — run candidate prompts and label PASS/FAIL cases
   surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
                               → InterventionResult (SUPPORTED / REFUTED / INCONCLUSIVE)
   experiment_writer.py M4 — multi-phase LLM/CLI agent writes + executes fix scripts
@@ -86,6 +87,10 @@ from evalvitals.eval_agent.sandbox import (
     validate_entry_point_resolved,
 )
 from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
+from evalvitals.eval_agent.stages.case_discovery import (
+    CaseDiscoveryAgent,
+    CaseDiscoveryReport,
+)
 from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent, DiagnosisResult
 from evalvitals.eval_agent.stages.experiment_writer import (
     ExperimentWriter,
@@ -115,6 +120,9 @@ __all__ = [
     # M3
     "DiagnosisAgent",
     "DiagnosisResult",
+    # Case discovery / labeling
+    "CaseDiscoveryAgent",
+    "CaseDiscoveryReport",
     # M4
     "SurgeryAgent",
     "InterventionResult",
