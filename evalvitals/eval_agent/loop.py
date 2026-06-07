@@ -763,6 +763,7 @@ class VLDiagnoseLoop:
                 probe_results,
                 model_name=repr(self.model),
                 protocol=self.protocol,
+                data=data,
             )
             final_stats_report = stats_report
             if self.run_logger:

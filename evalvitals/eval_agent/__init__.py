@@ -33,8 +33,13 @@ stages/ (M1–M5 implementation):
   protocol.py          M1 — ExperimentProtocol (NL description → probe hints);
                               ProbingSchema (records M1 selection rationale)
   analysis.py          M2 — AnalysisModule: threshold rules → AnalysisReport
-  stats_agent.py       M2 — StatsAnalysisAgent: extends AnalysisModule with LLM-guided
-                              conclusion + evidence chain (StatsAnalysisReport)
+  stats_agent.py       M2 — StatsAnalysisAgent: extends AnalysisModule with a
+                              statistical-tool layer (select tools from the catalog,
+                              run them, e-BH FDR-correct, plot) + LLM-guided
+                              conclusion/evidence chain (StatsAnalysisReport)
+  stats_tools.py       M2 — statistical tool catalog wrapping evalvitals.stats
+                              (signal/label association, McNemar+e-value, Friedman,
+                              single-rate e-value, rank corr) + StatsInput/fdr_correct
   diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
   case_discovery.py    Data — run candidate prompts and label PASS/FAIL cases
   surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
@@ -104,6 +109,15 @@ from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
+from evalvitals.eval_agent.stages.stats_tools import (
+    STATS_TOOL_CATALOG,
+    StatsInput,
+    StatsToolResult,
+    build_stats_input,
+    default_plan,
+    fdr_correct,
+    run_stats_tool,
+)
 from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgent
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 
@@ -138,6 +152,14 @@ __all__ = [
     # M2 stats agent
     "StatsAnalysisAgent",
     "StatsAnalysisReport",
+    # M2 stats tools
+    "StatsInput",
+    "StatsToolResult",
+    "STATS_TOOL_CATALOG",
+    "build_stats_input",
+    "default_plan",
+    "fdr_correct",
+    "run_stats_tool",
     # M5 hypothesis tester
     "HypothesisTester",
     "HypothesisTestResult",
