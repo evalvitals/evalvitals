@@ -40,6 +40,9 @@ stages/ (M1–M5 implementation):
   stats_tools.py       M2 — statistical tool catalog wrapping evalvitals.stats
                               (signal/label association, McNemar+e-value, Friedman,
                               single-rate e-value, rank corr) + StatsInput/fdr_correct
+  stats_tool_generator.py M2 tier(b) — StatsToolGenerator: LLM/CLI writes a new
+                              stats script, runs it in a sandbox, parses a
+                              STATS_RESULT_JSON contract (never mutates repo source)
   diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
   case_discovery.py    Data — run candidate prompts and label PASS/FAIL cases
   surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
@@ -109,6 +112,10 @@ from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
+from evalvitals.eval_agent.stages.stats_tool_generator import (
+    GeneratedStatsTool,
+    StatsToolGenerator,
+)
 from evalvitals.eval_agent.stages.stats_tools import (
     STATS_TOOL_CATALOG,
     StatsInput,
@@ -160,6 +167,9 @@ __all__ = [
     "default_plan",
     "fdr_correct",
     "run_stats_tool",
+    # M2 tier (b) code generation
+    "StatsToolGenerator",
+    "GeneratedStatsTool",
     # M5 hypothesis tester
     "HypothesisTester",
     "HypothesisTestResult",

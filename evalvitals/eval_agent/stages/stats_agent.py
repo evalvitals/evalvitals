@@ -65,7 +65,12 @@ if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
+    from evalvitals.eval_agent.cli_agent import CliAgentConfig
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+    from evalvitals.eval_agent.stages.stats_tool_generator import (
+        GeneratedStatsTool,
+        StatsToolGenerator,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -273,13 +278,21 @@ class StatsAnalysisAgent:
         figure_dir: "str | None" = None,
         max_signal_tools: int = 4,
         allow_codegen: bool = False,
+        codegen_config: "CliAgentConfig | None" = None,
+        tool_generator: "StatsToolGenerator | None" = None,
     ) -> None:
         self._base = AnalysisModule(extra_rules)
         self._judge = judge
         self._figure_dir = figure_dir
         self._max_signal_tools = max_signal_tools
-        # Placeholder for the deferred tier-(b) code-generation path.
+        # Tier (b): generate a bespoke stats tool in a sandbox when no catalog
+        # tool fits.  Disabled unless allow_codegen=True and a backend exists.
         self._allow_codegen = allow_codegen
+        self._codegen_config = codegen_config
+        self._tool_generator = tool_generator
+        # Tier (c): generated tools are cached here and re-run on later cycles
+        # without a second LLM call.
+        self._generated_tools: list[GeneratedStatsTool] = []
 
     def analyze(
         self,
@@ -357,6 +370,16 @@ class StatsAnalysisAgent:
             r.details.setdefault("rationale", rationale)
             stats_results.append(r)
 
+        stats_plan = [
+            {"tool": t, "config": c, "rationale": rat} for t, c, rat in plan
+        ]
+
+        # Tier (b)/(c): reuse previously generated tools, then generate a new one
+        # if the catalog produced nothing usable for this data.
+        gen_results, gen_plan = self._run_generated_tools(inp, protocol, stats_results)
+        stats_results.extend(gen_results)
+        stats_plan.extend(gen_plan)
+
         corrected = fdr_correct(stats_results)
 
         figures: list[str] = []
@@ -367,10 +390,66 @@ class StatsAnalysisAgent:
             if fig:
                 figures.append(fig)
 
-        stats_plan = [
-            {"tool": t, "config": c, "rationale": rat} for t, c, rat in plan
-        ]
         return stats_results, stats_plan, corrected, figures
+
+    def _run_generated_tools(
+        self,
+        inp: StatsInput,
+        protocol: "ExperimentProtocol | None",
+        catalog_results: list[StatsToolResult],
+    ) -> tuple[list[StatsToolResult], list[dict[str, Any]]]:
+        """Reuse cached generated tools (tier c) and generate a new one (tier b).
+
+        Generation fires only when ``allow_codegen`` is set, a backend exists,
+        and no catalog or cached tool produced a usable (``ok``) result.
+        """
+        if not self._allow_codegen:
+            return [], []
+        generator = self._get_generator()
+        if generator is None:
+            return [], []
+
+        results: list[StatsToolResult] = []
+        plan: list[dict[str, Any]] = []
+
+        # Tier (c): re-run cached generated tools on this cycle's data.
+        for tool in self._generated_tools:
+            r = generator.run_cached(tool, inp)
+            results.append(r)
+            plan.append({"tool": f"generated:{tool.name}", "config": {},
+                         "rationale": f"reuse generated tool ({tool.source})"})
+
+        usable = any(r.ok for r in catalog_results) or any(r.ok for r in results)
+        if usable:
+            return results, plan
+
+        # Tier (b): nothing fit — synthesise a new tool.
+        need = (
+            (protocol.description + " " if protocol else "")
+            + "No built-in statistical tool fit this data; write a test for "
+            "whether the analyzer signals predict case FAIL."
+        )
+        name = f"custom{len(self._generated_tools) + 1}"
+        result, tool = generator.generate(need, inp, name=name)
+        results.append(result)
+        plan.append({"tool": f"generated:{name}", "config": {},
+                     "rationale": "generated: no catalog tool fit the data"})
+        if tool is not None:
+            self._generated_tools.append(tool)
+        return results, plan
+
+    def _get_generator(self) -> "StatsToolGenerator | None":
+        """Lazily build the tool generator from the judge / codegen config."""
+        if self._tool_generator is not None:
+            return self._tool_generator
+        if self._judge is None and self._codegen_config is None:
+            return None
+        from evalvitals.eval_agent.stages.stats_tool_generator import StatsToolGenerator
+        gen = StatsToolGenerator(judge=self._judge, cli_config=self._codegen_config)
+        if not gen.available:
+            return None
+        self._tool_generator = gen
+        return gen
 
     def _select_plan(
         self,
@@ -449,7 +528,12 @@ class StatsAnalysisAgent:
 
         qualitative = [str(f) for f in base.findings]
         conclusion = _build_conclusion(base, protocol, stats_results)
-        stats_tool = "selected_tools" if stats_results else "threshold_rules"
+        if any(r.tool.startswith("generated:") for r in stats_results):
+            stats_tool = "generated"
+        elif stats_results:
+            stats_tool = "selected_tools"
+        else:
+            stats_tool = "threshold_rules"
 
         return StatsAnalysisReport(
             # AnalysisReport fields

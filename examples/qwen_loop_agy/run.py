@@ -252,6 +252,11 @@ def main() -> None:
         help="Use the demo Wikimedia image instead of the synthetic labeled image.",
     )
     parser.add_argument(
+        "--allow-codegen", action="store_true",
+        help="M2 tier(b): let the agent write+run a bespoke stats tool in a "
+             "sandbox when no built-in tool fits (uses antigravity to write code).",
+    )
+    parser.add_argument(
         "--analysis-only", action="store_true",
         help="Run M1+M2 only (skip M3/M5/M4)",
     )
@@ -356,6 +361,12 @@ def main() -> None:
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
         figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
+        allow_codegen=args.allow_codegen and not args.analysis_only,
+        codegen_config=(
+            CliAgentConfig(provider="antigravity", timeout_sec=120)
+            if args.allow_codegen and not args.analysis_only
+            else None
+        ),
     )
 
     # ── M3: DiagnosisAgent — agy proposes hypotheses ─────────────────────────
