@@ -83,6 +83,9 @@ AVAILABLE ANALYZERS ({n_available} compatible with this model):
 {prior_hypotheses_section}
 Select up to {max_n} analyzers. Return ONLY a JSON object, no other text:
 {{"analyzers": ["name1", "name2", ...], "rationale": "one sentence explaining the selection"}}
+
+If NONE of the available analyzers can probe the described failure, additionally
+include "need_custom": "<one line describing the probe to generate>" in the JSON.
 """
 
 
@@ -126,6 +129,9 @@ class ProbeAgent:
         docker_image: str = "evalvitals:latest",
         docker_timeout: int = 300,
         model_env_var: str = "GEMINI_API_KEY",
+        allow_codegen: bool = False,
+        codegen_config: "Any | None" = None,
+        probe_generator: "Any | None" = None,
     ) -> None:
         self.selector = probe or StrategyProbe()
         self.judge = judge
@@ -139,6 +145,15 @@ class ProbeAgent:
         # Set by probe() / probe_with_schema() so callers can inspect why
         # each analyzer was chosen without changing the return type of probe().
         self.last_schema: "ProbingSchema | None" = None
+        # Tier (b): generate a bespoke black-box probe in a sandbox when no
+        # catalog analyzer fits.  Disabled unless allow_codegen=True + a backend.
+        self.allow_codegen = allow_codegen
+        self._codegen_config = codegen_config
+        self._probe_generator = probe_generator
+        # Tier (c): generated probes are cached and re-run on later cycles.
+        self._generated_probes: list[Any] = []
+        # Optional "need_custom" hint extracted from the LLM selection response.
+        self._last_need_custom: str | None = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -184,6 +199,7 @@ class ProbeAgent:
                                  (e.g. from :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`).
         """
         rationale: str
+        self._last_need_custom = None
         if self.judge is not None and protocol is not None:
             names, rationale = self._llm_select(protocol, model, prior_hypotheses)
         else:
@@ -202,10 +218,6 @@ class ProbeAgent:
             if analyzer is not None:
                 tasks.append((name, analyzer))
 
-        if not tasks:
-            self.last_schema = _build_schema([], rationale, protocol)
-            return {}
-
         results: dict[str, "Result"] = {}
 
         def _run_one(name: str, analyzer: "Analyzer") -> tuple[str, "Result | None"]:
@@ -214,25 +226,31 @@ class ProbeAgent:
                 return name, self._run_in_docker(name, analyzer, data)
             return name, self._run_direct(analyzer, model, data)
 
-        max_workers = min(len(tasks), 8)
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(_run_one, name, analyzer): name
-                for name, analyzer in tasks
-            }
-            for future in as_completed(futures):
-                try:
-                    name, result = future.result()
-                    if result is not None:
-                        results[name] = result
-                except Exception as exc:
-                    name = futures[future]
-                    warnings.warn(
-                        f"Analyzer '{name}' raised in parallel run: {exc}",
-                        stacklevel=2,
-                    )
+        if tasks:
+            max_workers = min(len(tasks), 8)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_run_one, name, analyzer): name
+                    for name, analyzer in tasks
+                }
+                for future in as_completed(futures):
+                    try:
+                        name, result = future.result()
+                        if result is not None:
+                            results[name] = result
+                    except Exception as exc:
+                        name = futures[future]
+                        warnings.warn(
+                            f"Analyzer '{name}' raised in parallel run: {exc}",
+                            stacklevel=2,
+                        )
 
-        self.last_schema = _build_schema([t[0] for t in tasks], rationale, protocol)
+        selected = [t[0] for t in tasks]
+        # Tier (b)/(c): reuse + generate a bespoke probe when the catalog is thin.
+        if self.allow_codegen:
+            selected += self._maybe_generate(model, data, results)
+
+        self.last_schema = _build_schema(selected, rationale, protocol)
         return results
 
     def probe_with_schema(
@@ -376,6 +394,9 @@ class ProbeAgent:
                     if n.lower() in valid_names
                 ]
                 rationale = str(data.get("rationale", "LLM-selected"))
+                need = data.get("need_custom")
+                if isinstance(need, str) and need.strip():
+                    self._last_need_custom = need.strip()
                 if names:
                     return names[:max_n], rationale
             except json.JSONDecodeError:
@@ -393,6 +414,64 @@ class ProbeAgent:
 
     def _static_fallback(self, model: "Model") -> list[str]:
         return self.selector.select(model, max_analyzers=self.max_analyzers)
+
+    # ------------------------------------------------------------------
+    # Tier (b)/(c): probe generation
+    # ------------------------------------------------------------------
+
+    def _maybe_generate(
+        self,
+        model: "Model",
+        data: "CaseBatch",
+        results: "dict[str, Result]",
+    ) -> list[str]:
+        """Reuse cached generated probes, then generate one if the catalog is thin.
+
+        Mutates *results* in place (adds ``generated:<name>`` entries) and returns
+        the list of probe names added, for inclusion in the schema.
+        """
+        generator = self._get_generator()
+        if generator is None:
+            return []
+
+        added: list[str] = []
+
+        # Tier (c): re-run cached generated probes on this cycle's cases.
+        for probe in self._generated_probes:
+            r = generator.run_cached(probe, model, data)
+            if r is not None:
+                results[r.analyzer] = r
+                added.append(r.analyzer)
+
+        # Tier (b): generate a new probe when the judge asked for one (and we
+        # have not already generated it), or when nothing produced any output.
+        need = self._last_need_custom
+        should_generate = (bool(need) and not self._generated_probes) or not results
+        if not should_generate:
+            return added
+
+        goal = need or "Probe the model outputs for the failure described in the protocol."
+        name = f"probe{len(self._generated_probes) + 1}"
+        result, probe = generator.generate(goal, model, data, name=name)
+        if result is not None:
+            results[result.analyzer] = result
+            added.append(result.analyzer)
+        if probe is not None:
+            self._generated_probes.append(probe)
+        return added
+
+    def _get_generator(self) -> "Any | None":
+        """Lazily build the probe generator from the judge / codegen config."""
+        if self._probe_generator is not None:
+            return self._probe_generator
+        if self.judge is None and self._codegen_config is None:
+            return None
+        from evalvitals.eval_agent.stages.probe_generator import ProbeGenerator
+        gen = ProbeGenerator(judge=self.judge, cli_config=self._codegen_config)
+        if not gen.available:
+            return None
+        self._probe_generator = gen
+        return gen
 
     # ------------------------------------------------------------------
     # Execution strategies

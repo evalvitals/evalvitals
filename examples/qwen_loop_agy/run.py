@@ -350,7 +350,17 @@ def main() -> None:
     print(f"  description : {protocol.description[:80]}...")
 
     # ── M1: ProbeAgent — agy selects analyzers from the protocol ─────────────
-    probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
+    # With --allow-codegen, M1 also generates a bespoke black-box probe (run in a
+    # sandbox over the model's outputs) when no catalog analyzer fits the failure.
+    _m1_codegen = args.allow_codegen and not args.analysis_only
+    probe_agent = ProbeAgent(
+        judge=judge,
+        max_analyzers=args.max_analyzers,
+        allow_codegen=_m1_codegen,
+        codegen_config=(
+            CliAgentConfig(provider="antigravity", timeout_sec=120) if _m1_codegen else None
+        ),
+    )
 
     # ── M2: StatsAnalysisAgent — selects stats tools + agy writes narrative ──
     # M2 now runs a statistical-tool layer (signal/label association, McNemar +
