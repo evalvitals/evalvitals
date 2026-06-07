@@ -6,10 +6,8 @@ small: dataset loading and prompt generation can live outside this class, while
 M5 receives the PASS/FAIL labels it needs for statistical testing.
 """
 
-from __future__ import annotations
-
-import re
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 

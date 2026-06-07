@@ -8,7 +8,6 @@ curated ``load("qwen...")`` route uses.  (Real-weights parity lives behind ``--r
 from __future__ import annotations
 
 import warnings
-from types import SimpleNamespace
 
 import pytest
 import torch

@@ -213,6 +213,7 @@ def _build_candidate_cases(image):
                 image=image,
             ),
             expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "negative_absence"},
         ),
         FailureCase(
             id="q_text",
@@ -221,6 +222,7 @@ def _build_candidate_cases(image):
                 image=image,
             ),
             expected={"all_of": ["yes"], "none_of": ["no"]},
+            metadata={"pope_label": "yes", "case_family": "ocr_presence"},
         ),
         FailureCase(
             id="q_bottom_colour",
@@ -237,6 +239,7 @@ def _build_candidate_cases(image):
                 image=image,
             ),
             expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "negative_absence"},
         ),
         FailureCase(
             id="q_text_word",
@@ -245,6 +248,169 @@ def _build_candidate_cases(image):
                 image=image,
             ),
             expected={"all_of": ["test"]},
+        ),
+        FailureCase(
+            id="q_top_left_colour",
+            inputs=Inputs(
+                prompt="What color is the top-left rectangle? Answer with one color.",
+                image=image,
+            ),
+            expected={"all_of": ["red"], "none_of": ["green", "blue", "purple"]},
+            metadata={"case_family": "spatial_colour"},
+        ),
+        FailureCase(
+            id="q_top_right_colour",
+            inputs=Inputs(
+                prompt="What color is the top-right rectangle? Answer with one color.",
+                image=image,
+            ),
+            expected={"all_of": ["green"], "none_of": ["red", "blue", "purple"]},
+            metadata={"case_family": "spatial_colour"},
+        ),
+        FailureCase(
+            id="q_top_row_count",
+            inputs=Inputs(
+                prompt="How many rectangles are in the top row? Answer with the number.",
+                image=image,
+            ),
+            expected={"any_of": ["2", "two"]},
+            metadata={"case_family": "spatial_counting"},
+        ),
+        FailureCase(
+            id="q_bottom_row_count",
+            inputs=Inputs(
+                prompt="How many rectangles are in the bottom row? Answer with the number.",
+                image=image,
+            ),
+            expected={"any_of": ["1", "one"]},
+            metadata={"case_family": "spatial_counting"},
+        ),
+        FailureCase(
+            id="q_blue_position",
+            inputs=Inputs(
+                prompt="Where is the blue rectangle relative to the red and green rectangles?",
+                image=image,
+            ),
+            expected={
+                "all_of": ["below"],
+                "any_of": ["red", "green", "rectangles"],
+                "none_of": ["above"],
+            },
+            metadata={"case_family": "spatial_relation"},
+        ),
+        FailureCase(
+            id="q_red_left_of_green",
+            inputs=Inputs(
+                prompt="Is the red rectangle left of the green rectangle? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["yes"], "none_of": ["no"]},
+            metadata={"pope_label": "yes", "case_family": "spatial_relation"},
+        ),
+        FailureCase(
+            id="q_green_left_of_red",
+            inputs=Inputs(
+                prompt="Is the green rectangle left of the red rectangle? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "spatial_relation"},
+        ),
+        FailureCase(
+            id="q_has_circle",
+            inputs=Inputs(
+                prompt="Is there a circle in the image? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "negative_absence"},
+        ),
+        FailureCase(
+            id="q_has_black_background",
+            inputs=Inputs(
+                prompt="Does the image have a black background? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "negative_absence"},
+        ),
+        FailureCase(
+            id="q_exact_visible_phrase",
+            inputs=Inputs(
+                prompt="What exact phrase is written at the bottom of the image?",
+                image=image,
+            ),
+            expected={"all_of": ["synthetic", "test", "image"]},
+            metadata={"case_family": "ocr_exact"},
+        ),
+        FailureCase(
+            id="q_visible_text_word_count",
+            inputs=Inputs(
+                prompt="How many words are in the visible phrase at the bottom? Answer with the number.",
+                image=image,
+            ),
+            expected={"any_of": ["3", "three"]},
+            metadata={"case_family": "ocr_counting"},
+        ),
+        FailureCase(
+            id="q_largest_rectangle_colour",
+            inputs=Inputs(
+                prompt="What color is the largest rectangle? Answer with one color.",
+                image=image,
+            ),
+            expected={"all_of": ["blue"], "none_of": ["red", "green", "purple"]},
+            metadata={"case_family": "size_colour"},
+        ),
+        FailureCase(
+            id="q_all_colours_ordered",
+            inputs=Inputs(
+                prompt=(
+                    "List the rectangle colors in reading order: top-left, top-right, "
+                    "then bottom. Answer with only the three color names."
+                ),
+                image=image,
+            ),
+            expected={
+                "all_of": ["red", "green", "blue"],
+                "none_of": ["purple", "yellow"],
+            },
+            metadata={"case_family": "ordered_colour"},
+        ),
+        FailureCase(
+            id="q_has_purple_rectangle",
+            inputs=Inputs(
+                prompt="Is there a purple rectangle in the image? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "colour_absence"},
+        ),
+        FailureCase(
+            id="q_lowest_is_purple",
+            inputs=Inputs(
+                prompt="Is the lowest rectangle purple? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["no"], "none_of": ["yes"]},
+            metadata={"pope_label": "no", "case_family": "colour_absence"},
+        ),
+        FailureCase(
+            id="q_bottom_not_purple_colour",
+            inputs=Inputs(
+                prompt="The bottom rectangle is not purple. What color is it?",
+                image=image,
+            ),
+            expected={"all_of": ["blue"], "none_of": ["purple"]},
+            metadata={"case_family": "contrastive_colour"},
+        ),
+        FailureCase(
+            id="q_blue_vs_purple_choice",
+            inputs=Inputs(
+                prompt="Is the bottom rectangle blue or purple? Answer with one word.",
+                image=image,
+            ),
+            expected={"all_of": ["blue"], "none_of": ["purple"]},
+            metadata={"case_family": "forced_choice_colour"},
         ),
     ])
 
@@ -267,6 +433,40 @@ class _SmokeVLM:
 
     def generate(self, inputs, **kwargs) -> str:
         prompt = str(getattr(inputs, "prompt", inputs)).lower()
+        if "top-left rectangle" in prompt:
+            return "red"
+        if "top-right rectangle" in prompt:
+            return "green"
+        if "top row" in prompt:
+            return "2"
+        if "bottom row" in prompt:
+            return "2"
+        if "blue rectangle relative" in prompt:
+            return "It is above the red and green rectangles."
+        if "red rectangle left of the green" in prompt:
+            return "yes"
+        if "green rectangle left of the red" in prompt:
+            return "yes"
+        if "circle" in prompt:
+            return "no"
+        if "black background" in prompt:
+            return "no"
+        if "exact phrase" in prompt:
+            return "synthetic test image"
+        if "how many words" in prompt:
+            return "2"
+        if "largest rectangle" in prompt:
+            return "red"
+        if "reading order" in prompt:
+            return "red green purple"
+        if "purple rectangle" in prompt:
+            return "yes"
+        if "lowest rectangle purple" in prompt:
+            return "yes"
+        if "bottom rectangle is not purple" in prompt:
+            return "purple"
+        if "blue or purple" in prompt:
+            return "purple"
         if "snowy mountain" in prompt:
             return "No."
         if "phrase" in prompt:
