@@ -219,3 +219,6 @@ __marimo__/
 
 .claude/
 .antigravitycli/examples/qwen_loop/outputs/
+examples/qwen_loop_agy/*
+.docker/
+.geimini/

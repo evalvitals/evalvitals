@@ -253,6 +253,19 @@ class RunLogger:
         visualizations = getattr(report, "visualizations", None)
         if visualizations:
             entry["visualizations"] = list(visualizations)
+        # Statistical-tool layer: which tools ran, their verdicts, FDR, figures.
+        stats_plan = getattr(report, "stats_plan", None)
+        if stats_plan:
+            entry["stats_plan"] = stats_plan
+        stats_results = getattr(report, "stats_results", None)
+        if stats_results:
+            entry["stats_results"] = [r.to_dict() for r in stats_results]
+        corrected = getattr(report, "corrected_rejections", None)
+        if corrected:
+            entry["corrected_rejections"] = corrected
+        figures = getattr(report, "figures", None)
+        if figures:
+            entry["figures"] = list(figures)
         self._log(entry, span_id=f"c{cycle}.m2")
 
     def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:

@@ -5,7 +5,8 @@ Pipeline:
     ExperimentProtocol  ← user's NL description of what to investigate
          │
     M1  ProbeAgent           protocol-guided analyzer selection + execute
-    M2  StatsAnalysisAgent   threshold rules + LLM-written evidence chain
+    M2  StatsAnalysisAgent   select stats tools (evalvitals.stats) + run +
+                             e-BH FDR-correct + LLM-written evidence chain
     M3  DiagnosisAgent       Qwen as judge ("AI scientist" hypothesis gen)
     M5  HypothesisTester     statistical test + protocol consistency check
          │
@@ -39,10 +40,11 @@ import textwrap
 import urllib.request
 from pathlib import Path
 
-_SAMPLE_URL = (
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/"
-    "Bikesingapore.jpg/320px-Bikesingapore.jpg"
-)
+# A stable, public sample photo (real objects/colours/layout for the VQA task).
+# NOTE: the old Wikimedia thumbnail URL stopped working — it now 403s on the
+# default urllib User-Agent, 400s on disallowed thumbnail sizes, and the file
+# itself was removed (404). This raw GitHub asset needs no special headers.
+_SAMPLE_URL = "https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg"
 _OUTPUTS_DIR = Path(__file__).parent / "outputs"
 
 
@@ -83,12 +85,21 @@ class VerboseRunLogger:
         chain = getattr(analysis, "evidence_chain", [])
         for step in chain[:3]:
             print(f"     evidence   : {step}", flush=True)
+        # Stats-tool layer: show which tools ran and the FDR survivors.
+        plan = getattr(analysis, "stats_plan", []) or []
+        if plan:
+            print(f"     stats_tools: {[p['tool'] for p in plan]}", flush=True)
+        corrected = getattr(analysis, "corrected_rejections", {}) or {}
+        if corrected.get("rejected_tools"):
+            print(f"     fdr_survive: {corrected['rejected_tools']}", flush=True)
         tool_results = getattr(analysis, "stats_tool_results", [])
         for tool in tool_results[:2]:
             print(
                 f"     stats_tool : {tool.get('name')} - {tool.get('conclusion', '')}",
                 flush=True,
             )
+        for fig in getattr(analysis, "figures", []) or []:
+            print(f"     figure     : {fig}", flush=True)
         if not conclusion:
             print(f"     {textwrap.fill(analysis.narrative, 72, subsequent_indent='     ')}",
                   flush=True)
@@ -149,7 +160,13 @@ def _get_image(*, download: bool = False):
     if not download:
         return _synthetic_image()
     try:
-        with urllib.request.urlopen(_SAMPLE_URL, timeout=10) as resp:
+        # Wikimedia rejects the default urllib User-Agent with HTTP 403,
+        # so send a descriptive UA as their policy requires.
+        req = urllib.request.Request(
+            _SAMPLE_URL,
+            headers={"User-Agent": "evalvitals-example/1.0 (https://example.com; contact@example.com)"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = resp.read()
         img = Image.open(io.BytesIO(data)).convert("RGB")
         print(f"  Downloaded image: {img.size} px")
@@ -729,7 +746,6 @@ def main() -> None:
         HypothesisTester,
         ProbeAgent,
         StatsAnalysisAgent,
-        StatsToolAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
     )
@@ -815,10 +831,15 @@ def main() -> None:
     # ── M1: ProbeAgent — agy selects analyzers from the protocol ─────────────
     probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
 
-    # ── M2: StatsAnalysisAgent — agy writes the evidence narrative ───────────
+    # ── M2: StatsAnalysisAgent — selects stats tools + agy writes narrative ──
+    # M2 now runs a statistical-tool layer (signal/label association, McNemar +
+    # e-value, Friedman, single-rate e-value, rank corr) selected from the
+    # catalog, e-BH FDR-corrects across them, and (with figure_dir) saves a
+    # forest plot of effect sizes. The judge writes a conclusion grounded in
+    # those verdicts. Falls back to threshold rules when cases are unlabeled.
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
-        stats_tool_agent=StatsToolAgent(max_tools=3),
+        figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
     )
 
     # ── M3: DiagnosisAgent — agy proposes hypotheses ─────────────────────────
