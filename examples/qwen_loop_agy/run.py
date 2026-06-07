@@ -5,7 +5,8 @@ Pipeline:
     ExperimentProtocol  ← user's NL description of what to investigate
          │
     M1  ProbeAgent           protocol-guided analyzer selection + execute
-    M2  StatsAnalysisAgent   threshold rules + LLM-written evidence chain
+    M2  StatsAnalysisAgent   select stats tools (evalvitals.stats) + run +
+                             e-BH FDR-correct + LLM-written evidence chain
     M3  DiagnosisAgent       Qwen as judge ("AI scientist" hypothesis gen)
     M5  HypothesisTester     statistical test + protocol consistency check
          │
@@ -82,6 +83,15 @@ class VerboseRunLogger:
         chain = getattr(analysis, "evidence_chain", [])
         for step in chain[:3]:
             print(f"     evidence   : {step}", flush=True)
+        # Stats-tool layer: show which tools ran and the FDR survivors.
+        plan = getattr(analysis, "stats_plan", []) or []
+        if plan:
+            print(f"     stats_tools: {[p['tool'] for p in plan]}", flush=True)
+        corrected = getattr(analysis, "corrected_rejections", {}) or {}
+        if corrected.get("rejected_tools"):
+            print(f"     fdr_survive: {corrected['rejected_tools']}", flush=True)
+        for fig in getattr(analysis, "figures", []) or []:
+            print(f"     figure     : {fig}", flush=True)
         if not conclusion:
             print(f"     {textwrap.fill(analysis.narrative, 72, subsequent_indent='     ')}",
                   flush=True)
@@ -248,8 +258,6 @@ def main() -> None:
     parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR))
     args = parser.parse_args()
 
-    import shutil
-
     import evalvitals
     from evalvitals.eval_agent import (
         AgyModel,
@@ -339,9 +347,15 @@ def main() -> None:
     # ── M1: ProbeAgent — agy selects analyzers from the protocol ─────────────
     probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
 
-    # ── M2: StatsAnalysisAgent — agy writes the evidence narrative ───────────
+    # ── M2: StatsAnalysisAgent — selects stats tools + agy writes narrative ──
+    # M2 now runs a statistical-tool layer (signal/label association, McNemar +
+    # e-value, Friedman, single-rate e-value, rank corr) selected from the
+    # catalog, e-BH FDR-corrects across them, and (with figure_dir) saves a
+    # forest plot of effect sizes. The judge writes a conclusion grounded in
+    # those verdicts. Falls back to threshold rules when cases are unlabeled.
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
+        figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
     )
 
     # ── M3: DiagnosisAgent — agy proposes hypotheses ─────────────────────────
