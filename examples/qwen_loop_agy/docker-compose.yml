@@ -8,7 +8,7 @@ services:
     # Required before first run:
     #   export UID=$(id -u) GID=$(id -g)
     #   export AGY_PATH=$(which agy)
-    user: "${UID:-1000}:${GID:-1000}"
+    # user: "${UID:-1000}:${GID:-1000}"
     environment:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}  # override: export CUDA_VISIBLE_DEVICES=2
       - HF_HOME=/hf_cache
