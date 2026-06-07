@@ -213,11 +213,11 @@ class SurgeryAgent:
         self._writer = None
         self._sandbox = None
         if judge is not None:
-            from evalvitals.eval_agent.experiment_writer import (
+            from evalvitals.eval_agent.sandbox import ExperimentSandbox
+            from evalvitals.eval_agent.stages.experiment_writer import (
                 ExperimentWriter,
                 ExperimentWriterConfig,
             )
-            from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
             cfg = writer_config if isinstance(writer_config, ExperimentWriterConfig) \
                 else ExperimentWriterConfig()
@@ -346,7 +346,7 @@ class SurgeryAgent:
         3. ``verdict: 1.0`` → SUPPORTED; ``verdict: 0.0`` → REFUTED;
            no verdict or crash → INCONCLUSIVE.
         """
-        from evalvitals.eval_agent.experiment_writer import build_model_context
+        from evalvitals.eval_agent.stages.experiment_writer import build_model_context
 
         model_context = build_model_context(model)
         # Save images alongside cases.json so codex can load them

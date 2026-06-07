@@ -74,6 +74,31 @@ _PRIORITY: dict[str, list[str]] = {
 }
 
 
+def get_analyzer_catalog(model: "Model") -> dict[str, str]:
+    """Return ``{name: description}`` for all analyzers compatible with *model*.
+
+    Descriptions come from each analyzer class's ``description`` attribute or,
+    if absent, the first non-empty line of its docstring.  Used by
+    :class:`~evalvitals.eval_agent.probe_agent.ProbeAgent` to build the LLM
+    selection prompt so the judge understands what each analyzer measures.
+    """
+    compatible = set(registry.analyzers.names_compatible_with(model))
+    catalog: dict[str, str] = {}
+    for name in sorted(compatible):
+        cls = registry.analyzers.get(name)
+        if cls is None:
+            continue
+        desc: str | None = getattr(cls, "description", None)
+        if not desc and cls.__doc__:
+            for line in cls.__doc__.strip().splitlines():
+                line = line.strip()
+                if line:
+                    desc = line
+                    break
+        catalog[name] = desc or name
+    return catalog
+
+
 class StrategyProbe:
     """Selects analyzers appropriate for a given model.
 
@@ -86,11 +111,15 @@ class StrategyProbe:
         self._priority = priority_override or _PRIORITY
 
     def detect_kind(self, model: "Model") -> ModelKind:
-        """Infer VLM / AGENT / LLM from the model's capabilities and modalities."""
-        if Capability.TOOL_CALLS in getattr(model, "capabilities", frozenset()):
-            return ModelKind.AGENT
+        """Infer VLM / AGENT / LLM from the model's capabilities and modalities.
+
+        Image modality takes priority over TOOL_CALLS so that VLMs that also
+        support tool use (e.g. Qwen3-VL) are treated as VLMs, not agents.
+        """
         if "image" in getattr(model, "modalities", frozenset({"text"})):
             return ModelKind.VLM
+        if Capability.TOOL_CALLS in getattr(model, "capabilities", frozenset()):
+            return ModelKind.AGENT
         return ModelKind.LLM
 
     def select(

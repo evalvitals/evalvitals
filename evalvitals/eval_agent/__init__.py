@@ -1,35 +1,63 @@
 """Self-evolving evaluation agent — automated failure discovery and diagnosis.
 
-Layout:
-  probe_agent.py       M1 — ProbeAgent: select + execute analyzers (direct or Docker)
-  analysis.py          M2 — AnalysisModule: interpret results → AnalysisReport
-  diagnosis.py         M3 — DiagnosisAgent: Gemini reads report → hypotheses
-  surgery.py           M4 — SurgeryAgent: operate + verify; correlate or sweep
-  loop.py              AutoDiagnoseLoop (M1→M4) + SelfEvolveLoop (original skeleton)
-  probe.py             StrategyProbe (tool-selection component used by ProbeAgent)
-  hypothesis.py        Hypothesis + HypothesisGenerator + serialization helpers
-  store.py             persistent memory (Store / InMemoryStore / JsonlStore)
+Two loops are available:
+
+  AutoDiagnoseLoop   M1 → M2 → M3 → M4 (legacy, four-stage sweep)
+  VLDiagnoseLoop     M1 → M2 → M3 → M5 inner loop, M4 called post-loop (Plan A)
+                     Stops when M5 finds a statistically supported,
+                     protocol-consistent hypothesis.
+
+Stage modules live in ``stages/``; shared infrastructure stays at the top level.
+
+Top-level (shared / orchestration):
+  loop.py              AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
+  run_logger.py        RunLogger — per-cycle JSONL log + artifact sink
+  hypothesis.py        Hypothesis, HypothesisStatus, serialization helpers
+  cli_agent.py         CliAgentConfig, create_cli_agent — shared CLI coding agent
+                         (agy / codex); any stage can use this to launch experiments
+  store.py             Store / InMemoryStore / JsonlStore — persistent memory
   orchestrator.py      thin facade over the loop (pre-registered A/B)
   ab_runner.py         A/B execution across prompting strategies
-  report.py            diagnostic conclusions
-  git_manager.py       git-native experiment versioning (eval/{run_id} branches)
-  evolution.py         JSONL lesson store with 30-day half-life time decay
+  report.py            DiagnosticReport — final diagnostic conclusions
+  evolution.py         EvolutionStore — JSONL lesson store, 30-day half-life decay
+  preregister.py       pre-registration helpers (DataSplit, PreregisteredHypothesis)
+  sandbox.py           ExperimentSandbox, SandboxProtocol
   factory.py           sandbox factory (subprocess / docker backends)
+  git_manager.py       git-native experiment versioning (eval/{run_id} branches)
   experiment_harness.py immutable evaluation harness injected into projects
+
+stages/ (M1–M5 implementation):
+  probe.py             M1 — StrategyProbe: model-kind detection + analyzer ranking
+  probe_agent.py       M1 — ProbeAgent: execute ranked analyzers (direct or Docker);
+                              protocol-guided via ExperimentProtocol.probe_hints()
+  protocol.py          M1 — ExperimentProtocol (NL description → probe hints);
+                              ProbingSchema (records M1 selection rationale)
+  analysis.py          M2 — AnalysisModule: threshold rules → AnalysisReport
+  stats_agent.py       M2 — StatsAnalysisAgent: extends AnalysisModule with a
+                              statistical-tool layer (select tools from the catalog,
+                              run them, e-BH FDR-correct, plot) + LLM-guided
+                              conclusion/evidence chain (StatsAnalysisReport)
+  stats_tools.py       M2 — statistical tool catalog wrapping evalvitals.stats
+                              (signal/label association, McNemar+e-value, Friedman,
+                              single-rate e-value, rank corr) + StatsInput/fdr_correct
+  stats_tool_agent.py  M2 — legacy deterministic exploratory stats tools
+  diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
+  case_discovery.py    Data — run candidate prompts and label PASS/FAIL cases
+  surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
+                              → InterventionResult (SUPPORTED / REFUTED / INCONCLUSIVE)
+  experiment_writer.py M4 — multi-phase LLM/CLI agent writes + executes fix scripts
+  hypothesis_tester.py M5 — HypothesisTester: statistical test + protocol consistency;
+                              stopping_criteria_met() drives the VLDiagnoseLoop exit
 """
 
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
-from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
-from evalvitals.eval_agent.cli_agent import CliAgentConfig, CliAgentResult, create_cli_agent
-from evalvitals.eval_agent.diagnosis import DiagnosisAgent, DiagnosisResult
-from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
-from evalvitals.eval_agent.experiment_writer import (
-    ExperimentWriter,
-    ExperimentWriterConfig,
-    ExperimentWriterResult,
-    SolutionNode,
-    build_model_context,
+from evalvitals.eval_agent.cli_agent import (
+    AgyModel,
+    CliAgentConfig,
+    CliAgentResult,
+    create_cli_agent,
 )
+from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
 from evalvitals.eval_agent.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
 from evalvitals.eval_agent.git_manager import ExperimentGitManager
 from evalvitals.eval_agent.hypothesis import (
@@ -40,7 +68,13 @@ from evalvitals.eval_agent.hypothesis import (
     hypothesis_from_dict,
     hypothesis_to_dict,
 )
-from evalvitals.eval_agent.loop import AutoDiagnoseLoop, AutoDiagnoseReport, SelfEvolveLoop
+from evalvitals.eval_agent.loop import (
+    AutoDiagnoseLoop,
+    AutoDiagnoseReport,
+    SelfEvolveLoop,
+    VLDiagnoseLoop,
+    VLDiagnoseReport,
+)
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
     DataSplit,
@@ -48,8 +82,6 @@ from evalvitals.eval_agent.preregister import (
     PreregistrationLog,
     Split,
 )
-from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
-from evalvitals.eval_agent.probe_agent import ProbeAgent
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_logger import RunLogger
 from evalvitals.eval_agent.sandbox import (
@@ -60,10 +92,40 @@ from evalvitals.eval_agent.sandbox import (
     validate_entry_point,
     validate_entry_point_resolved,
 )
+from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
+from evalvitals.eval_agent.stages.case_discovery import (
+    CaseDiscoveryAgent,
+    CaseDiscoveryReport,
+)
+from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent, DiagnosisResult
+from evalvitals.eval_agent.stages.experiment_writer import (
+    ExperimentWriter,
+    ExperimentWriterConfig,
+    ExperimentWriterResult,
+    SolutionNode,
+    build_model_context,
+)
+from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
+from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
+from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
+from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
+from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolAgent
+from evalvitals.eval_agent.stages.stats_tools import (
+    STATS_TOOL_CATALOG,
+    StatsInput,
+    StatsToolResult,
+    build_stats_input,
+    default_plan,
+    fdr_correct,
+    run_stats_tool,
+)
+from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgent
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
-from evalvitals.eval_agent.surgery import InterventionResult, SurgeryAgent
 
 __all__ = [
+    # Judge
+    "AgyModel",
     # M1
     "ProbeAgent",
     "StrategyProbe",
@@ -74,6 +136,9 @@ __all__ = [
     # M3
     "DiagnosisAgent",
     "DiagnosisResult",
+    # Case discovery / labeling
+    "CaseDiscoveryAgent",
+    "CaseDiscoveryReport",
     # M4
     "SurgeryAgent",
     "InterventionResult",
@@ -81,6 +146,26 @@ __all__ = [
     "AutoDiagnoseLoop",
     "AutoDiagnoseReport",
     "SelfEvolveLoop",
+    "VLDiagnoseLoop",
+    "VLDiagnoseReport",
+    # Protocol
+    "ExperimentProtocol",
+    "ProbingSchema",
+    # M2 stats agent
+    "StatsAnalysisAgent",
+    "StatsAnalysisReport",
+    "StatsToolAgent",
+    # M2 stats tools
+    "StatsInput",
+    "StatsToolResult",
+    "STATS_TOOL_CATALOG",
+    "build_stats_input",
+    "default_plan",
+    "fdr_correct",
+    "run_stats_tool",
+    # M5 hypothesis tester
+    "HypothesisTester",
+    "HypothesisTestResult",
     # Shared
     "EvalOrchestrator",
     "Hypothesis",

@@ -51,11 +51,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import AnalysisReport
-    from evalvitals.eval_agent.diagnosis import DiagnosisResult
     from evalvitals.eval_agent.hypothesis import Hypothesis
     from evalvitals.eval_agent.loop import AutoDiagnoseReport
-    from evalvitals.eval_agent.surgery import InterventionResult
+    from evalvitals.eval_agent.stages.analysis import AnalysisReport
+    from evalvitals.eval_agent.stages.diagnosis import DiagnosisResult
+    from evalvitals.eval_agent.stages.surgery import InterventionResult
 
 
 def _artifact_to_numpy(artifact: Any) -> "Any | None":
@@ -211,33 +211,62 @@ class RunLogger:
     # Event hooks — called by AutoDiagnoseLoop at each stage
     # ------------------------------------------------------------------
 
-    def log_probe(self, cycle: int, results: dict[str, "Result"]) -> None:
+    def log_probe(
+        self,
+        cycle: int,
+        results: dict[str, "Result"],
+        schema: "Any | None" = None,
+    ) -> None:
         """M1: log findings (JSON) and persist heavy artifacts to disk."""
         artifact_paths = self._save_probe_artifacts(cycle, results)
-        self._log(
-            {
-                "event": "probe",
-                "cycle": cycle,
-                "analyzers": list(results),
-                "findings": {name: r.findings for name, r in results.items()},
-                "artifact_paths": artifact_paths,
-            },
-            span_id=f"c{cycle}.m1",
-        )
+        entry: dict[str, Any] = {
+            "event": "probe",
+            "cycle": cycle,
+            "analyzers": list(results),
+            "findings": {name: r.findings for name, r in results.items()},
+            "artifact_paths": artifact_paths,
+        }
+        if schema is not None:
+            entry["selection_rationale"] = getattr(schema, "rationale", "")
+        self._log(entry, span_id=f"c{cycle}.m1")
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""
-        self._log(
-            {
-                "event": "analysis",
-                "cycle": cycle,
-                "severity": report.severity,
-                "n_findings": len(report.findings),
-                "findings": [str(f) for f in report.findings],
-                "narrative": report.narrative,
-            },
-            span_id=f"c{cycle}.m2",
-        )
+        entry: dict[str, Any] = {
+            "event": "analysis",
+            "cycle": cycle,
+            "severity": report.severity,
+            "n_findings": len(report.findings),
+            "findings": [str(f) for f in report.findings],
+            "narrative": report.narrative,
+        }
+        # StatsAnalysisReport extras (present when VLDiagnoseLoop is used)
+        conclusion = getattr(report, "conclusion", None)
+        if conclusion:
+            entry["conclusion"] = conclusion
+        evidence_chain = getattr(report, "evidence_chain", None)
+        if evidence_chain:
+            entry["evidence_chain"] = list(evidence_chain)
+        stats_tool_results = getattr(report, "stats_tool_results", None)
+        if stats_tool_results:
+            entry["stats_tool_results"] = list(stats_tool_results)
+        visualizations = getattr(report, "visualizations", None)
+        if visualizations:
+            entry["visualizations"] = list(visualizations)
+        # Statistical-tool layer: which tools ran, their verdicts, FDR, figures.
+        stats_plan = getattr(report, "stats_plan", None)
+        if stats_plan:
+            entry["stats_plan"] = stats_plan
+        stats_results = getattr(report, "stats_results", None)
+        if stats_results:
+            entry["stats_results"] = [r.to_dict() for r in stats_results]
+        corrected = getattr(report, "corrected_rejections", None)
+        if corrected:
+            entry["corrected_rejections"] = corrected
+        figures = getattr(report, "figures", None)
+        if figures:
+            entry["figures"] = list(figures)
+        self._log(entry, span_id=f"c{cycle}.m2")
 
     def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:
         """M3: log raw LLM output and every parsed hypothesis."""
@@ -266,11 +295,18 @@ class RunLogger:
         hypothesis: "Hypothesis",
         iv: "InterventionResult",
     ) -> None:
-        """M4: log intervention outcome for one hypothesis."""
+        """M4/M5: log intervention outcome for one hypothesis.
+
+        M5 results are distinguished by the presence of ``m5_test_name`` in
+        ``iv.evidence``; they get span_id ``c{cycle}.m5`` instead of ``.m4``.
+        """
+        is_m5 = "m5_test_name" in (iv.evidence or {})
+        span_suffix = "m5" if is_m5 else "m4"
         self._log(
             {
                 "event": "surgery",
                 "cycle": cycle,
+                "module": span_suffix,
                 "hypothesis": hypothesis.statement,
                 "failure_mode": hypothesis.predicted_failure_mode,
                 "status": iv.status.value,
@@ -280,27 +316,51 @@ class RunLogger:
                 "evidence": iv.evidence,
                 "n_refocused_cases": len(iv.new_data) if iv.new_data else None,
             },
-            span_id=f"c{cycle}.m4",
+            span_id=f"c{cycle}.{span_suffix}",
         )
 
     def log_loop_end(self, report: "AutoDiagnoseReport") -> None:
-        """Final summary entry — written and file closed when the loop exits."""
-        self._log(
-            {
-                "event": "loop_end",
-                "cycles": report.cycles,
-                "resolved": report.resolved,
-                "n_hypotheses": len(report.final_hypotheses),
-                "final_hypotheses": [
-                    {
-                        "statement": h.statement,
-                        "failure_mode": h.predicted_failure_mode,
-                        "status": h.status.value if h.status else None,
-                    }
-                    for h in report.final_hypotheses
-                ],
-            },
-        )
+        """Final summary entry — written and file closed when the loop exits.
+
+        Accepts both :class:`AutoDiagnoseReport` (``resolved``,
+        ``final_hypotheses``) and :class:`VLDiagnoseReport` (``stopped_by``,
+        ``verified_hypotheses``, ``all_hypotheses``) via duck typing.
+        """
+        entry: dict[str, Any] = {
+            "event": "loop_end",
+            "cycles": report.cycles,
+        }
+        # AutoDiagnoseReport shape
+        if hasattr(report, "resolved"):
+            entry["resolved"] = report.resolved
+            hyps = getattr(report, "final_hypotheses", [])
+            entry["n_hypotheses"] = len(hyps)
+            entry["final_hypotheses"] = [
+                {
+                    "statement": h.statement,
+                    "failure_mode": h.predicted_failure_mode,
+                    "status": h.status.value if h.status else None,
+                }
+                for h in hyps
+            ]
+        # VLDiagnoseReport shape
+        if hasattr(report, "stopped_by"):
+            entry["stopped_by"] = report.stopped_by
+            all_hyps = getattr(report, "all_hypotheses", [])
+            verified = getattr(report, "verified_hypotheses", [])
+            entry["n_hypotheses"] = len(all_hyps)
+            entry["n_verified"] = len(verified)
+            entry["verified_hypotheses"] = [
+                {
+                    "statement": tr.hypothesis.statement,
+                    "failure_mode": tr.hypothesis.predicted_failure_mode,
+                    "status": tr.status.value,
+                    "confidence": tr.confidence,
+                    "protocol_consistent": tr.is_consistent_with_protocol,
+                }
+                for tr in verified
+            ]
+        self._log(entry)
         self.close()
 
     # ------------------------------------------------------------------
@@ -345,7 +405,7 @@ class RunLogger:
                 stem = f"c{cycle}_{analyzer_name}_{art_name}"
                 path = self._save_artifact(stem, artifact)
                 if path is not None:
-                    paths[f"{analyzer_name}/{art_name}"] = str(path)
+                    paths[f"{analyzer_name}/{art_name}"] = str(path.relative_to(self.run_dir))
         return paths
 
     def _save_artifact(self, stem: str, artifact: Any) -> Path | None:

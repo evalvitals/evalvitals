@@ -30,7 +30,7 @@ from evalvitals.eval_agent.hypothesis import Hypothesis
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.analysis import AnalysisReport
+    from evalvitals.eval_agent.stages.analysis import AnalysisReport
 
 
 _DIAGNOSE_PROMPT = """\
@@ -295,18 +295,31 @@ def _validate_hypotheses(
 
 
 def _default_judge() -> "Model":
-    """Return a GeminiModel when GEMINI_API_KEY is available, else raise."""
+    """Return a judge model without requiring an explicit API key.
+
+    Resolution order:
+    1. ``agy`` CLI (antigravity) — if the binary is on PATH, no key needed.
+    2. Gemini — if ``GEMINI_API_KEY`` is set.
+    3. Raise with instructions.
+    """
     import os
+    import shutil
 
-    if not os.getenv("GEMINI_API_KEY"):
-        raise ValueError(
-            "DiagnosisAgent requires a judge model. "
-            "Either pass judge= explicitly, or set GEMINI_API_KEY to use the "
-            "Gemini default (install with: pip install 'evalvitals[gemini]')."
-        )
-    from evalvitals.models.blackbox.gemini import GeminiModel
+    if shutil.which("agy"):
+        from evalvitals.eval_agent.cli_agent import AgyModel
+        return AgyModel()
 
-    return GeminiModel()
+    if os.getenv("GEMINI_API_KEY"):
+        from evalvitals.models.blackbox.gemini import GeminiModel
+        return GeminiModel()
+
+    raise ValueError(
+        "DiagnosisAgent requires a judge model. "
+        "Options: install antigravity (agy) — no API key needed, "
+        "or set GEMINI_API_KEY to use Gemini "
+        "(install with: pip install 'evalvitals[gemini]'), "
+        "or pass judge= explicitly."
+    )
 
 
 class DiagnosisAgent:
@@ -367,7 +380,7 @@ class DiagnosisAgent:
         Returns:
             :class:`DiagnosisResult` with zero or more hypotheses.
         """
-        from evalvitals.eval_agent.analysis import AnalysisModule, AnalysisReport
+        from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
 
         if not isinstance(analysis, AnalysisReport):
             # Backward compat: wrap raw results in a minimal AnalysisReport.
@@ -396,7 +409,7 @@ class DiagnosisAgent:
         # auto-generate one hypothesis per finding so M4 can still run.
         # This prevents self-diagnosis bias when the judge is the model under test.
         if not hypotheses and analysis.findings:
-            from evalvitals.eval_agent.analysis import _SEVERITY_ORDER
+            from evalvitals.eval_agent.stages.analysis import _SEVERITY_ORDER
             for finding in analysis.findings:
                 if _SEVERITY_ORDER.get(finding.severity, 0) >= 2:  # medium or high
                     hypotheses.append(Hypothesis(

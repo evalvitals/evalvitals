@@ -16,6 +16,9 @@ import torch.nn as nn
 import evalvitals
 from evalvitals.analyzers.lens.logit_lens import LogitLensAnalyzer
 from evalvitals.core.capability import Capability
+from evalvitals.core.case import Inputs
+from evalvitals.core.spec import ModelSpec, VisionSpec
+from evalvitals.models.backends.base import RuntimeConfig
 from evalvitals.models.backends.hf_local import HFLocalModel
 from evalvitals.models.inference import infer_spec
 
@@ -184,3 +187,49 @@ def test_wrap_unembed_weight_exposed():
     m = evalvitals.wrap(FakeCausalLM(dim=8, vocab=16), FakeTokenizer())
     W = m.unembed_weight()
     assert tuple(W.shape) == (16, 8)  # (vocab, dim)
+
+
+def test_hf_local_generate_uses_vlm_encoder_for_image_inputs(monkeypatch):
+    spec = ModelSpec(
+        key="fake-vlm",
+        family="fake",
+        model_type="fake_vlm",
+        hf_repo="",
+        auto_class="AutoModelForImageTextToText",
+        processor_class="AutoProcessor",
+        vision=VisionSpec(image_token_id_attr="image_token_id"),
+    )
+    m = HFLocalModel(spec, RuntimeConfig(max_new_tokens=4))
+
+    class Processor:
+        tokenizer = FakeTokenizer()
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.param = nn.Parameter(torch.zeros(1))
+
+        def generate(self, **kwargs):
+            assert "pixel_values" in kwargs
+            return torch.tensor([[1, 2, 99]])
+
+    called = {"vlm": False}
+
+    def fake_encode_vlm(inputs, model, processor):
+        called["vlm"] = True
+        enc = {
+            "input_ids": torch.tensor([[1, 2]]),
+            "pixel_values": torch.zeros(1, 3, 2, 2),
+        }
+        return enc, [1, 2], ["t1", "t2"], None
+
+    def fail_text_encode(prompt):
+        raise AssertionError("text-only encoder should not be used for VLM generate")
+
+    m._hf = (Model(), Processor())
+    monkeypatch.setattr(m, "_encode_vlm", fake_encode_vlm)
+    monkeypatch.setattr(m, "_encode", fail_text_encode)
+
+    out = m.generate(Inputs(prompt="what is here?", image=object()))
+    assert called["vlm"] is True
+    assert out == "t99"

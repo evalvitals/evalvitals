@@ -457,7 +457,7 @@ def test_create_sandbox_docker_fallback_returns_subprocess(tmp_path):
 
 
 def test_experiment_writer_result_defaults():
-    from evalvitals.eval_agent.experiment_writer import ExperimentWriterResult
+    from evalvitals.eval_agent.stages.experiment_writer import ExperimentWriterResult
 
     r = ExperimentWriterResult(code="print('hello')")
     assert r.files == {}
@@ -467,7 +467,7 @@ def test_experiment_writer_result_defaults():
 
 
 def test_experiment_writer_result_code_set():
-    from evalvitals.eval_agent.experiment_writer import ExperimentWriterResult
+    from evalvitals.eval_agent.stages.experiment_writer import ExperimentWriterResult
 
     r = ExperimentWriterResult(
         code="print('verdict: 1.0')",
