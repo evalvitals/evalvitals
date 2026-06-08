@@ -306,6 +306,12 @@ def main() -> None:
     parser.add_argument("--model", default="qwen3-vl-4b-instruct")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument(
+        "--judge-model", default="Gemini 3.1 Pro (Low)",
+        help="agy model for the M1–M5 judge. The session default (Gemini 3.5 "
+             "Flash) is often quota-exhausted and returns empty; pick a free one "
+             "from `agy models`. Set to empty to use agy's session default.",
+    )
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument(
@@ -356,8 +362,9 @@ def main() -> None:
     # If the binary is not properly mounted, the loaded VLM acts as judge
     # (a warning is printed and the rationale will reflect this).
     try:
-        judge = AgyModel()
-        print(f"\n  judge : antigravity CLI ({judge._binary})  [M1–M5, no API key]")
+        judge = AgyModel(model=args.judge_model)
+        print(f"\n  judge : antigravity CLI ({judge._binary})  "
+              f"model={args.judge_model or 'session default'}  [M1–M5, no API key]")
     except RuntimeError as _agy_err:
         import warnings as _w
         _w.warn(
@@ -420,7 +427,7 @@ def main() -> None:
         max_analyzers=args.max_analyzers,
         allow_codegen=_m1_codegen,
         codegen_config=(
-            CliAgentConfig(provider="antigravity", timeout_sec=120) if _m1_codegen else None
+            CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model) if _m1_codegen else None
         ),
     )
 
@@ -435,7 +442,7 @@ def main() -> None:
         figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
         allow_codegen=args.allow_codegen and not args.analysis_only,
         codegen_config=(
-            CliAgentConfig(provider="antigravity", timeout_sec=120)
+            CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model)
             if args.allow_codegen and not args.analysis_only
             else None
         ),
@@ -455,7 +462,7 @@ def main() -> None:
     surgery_agent = None
     if not args.analysis_only:
         writer_cfg = ExperimentWriterConfig(
-            cli_agent=CliAgentConfig(provider="antigravity", timeout_sec=120),
+            cli_agent=CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model),
             exec_fix_timeout_sec=60,
         )
         surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)

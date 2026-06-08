@@ -396,6 +396,12 @@ class ProbeAgent:
         # Remove <think>…</think> reasoning blocks before JSON search
         cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
+        # An empty response (e.g. agy rate-limited/quota-exhausted) is distinct
+        # from an unparseable one — surface that so the fallback is diagnosable.
+        if not cleaned:
+            logger.warning("ProbeAgent: LLM returned an empty response — using static fallback")
+            return self._static_fallback(model), "static fallback (LLM returned empty response)"
+
         # Use a non-greedy search that stops at the first closing brace so we
         # don't accidentally span multiple JSON objects.
         match = re.search(r"\{[^{}]*\}", cleaned)
