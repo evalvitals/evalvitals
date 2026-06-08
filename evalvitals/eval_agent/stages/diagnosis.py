@@ -38,11 +38,11 @@ You are an expert ML diagnostician. Based on the analysis report below, propose
 specific, falsifiable hypotheses about the root cause of the model's failures.
 {prior_section}
 Model: {model_name}
-Overall severity: {severity}
+Overall severity (threshold rules): {severity}
 
-Analysis narrative:
-{narrative}
-
+Analysis conclusion (the analyst's interpretation):
+{conclusion}
+{evidence_section}{stats_section}
 Raw findings (JSON):
 {findings_json}
 
@@ -50,9 +50,11 @@ Propose 1-3 hypotheses. For each write exactly two lines:
 HYPOTHESIS: <one-sentence falsifiable claim about the failure mode>
 FAILURE_MODE: <short tag, e.g. attention_sink / hallucination / loop / low_consistency>
 
-Only include hypotheses clearly supported by the analysis.
+Base your hypotheses on the analysis conclusion and evidence above — an analyzer
+can surface a real failure mode even when no numeric threshold fired, so do NOT
+rely on the threshold severity alone.
 Do NOT repeat hypotheses already listed in the prior cycles above.
-If the model looks healthy, respond with: NO_ISSUE"""
+If the conclusion and evidence genuinely show no problem, respond with: NO_ISSUE"""
 
 _VALIDATE_PROMPT = """\
 You are an adversarial ML reviewer. Your job is to find reasons to REJECT each
@@ -387,11 +389,35 @@ class DiagnosisAgent:
             analysis = AnalysisModule().analyze(analysis, model_name)
 
         summary = {name: r.findings for name, r in analysis.raw_results.items()}
+
+        # Prefer M2's LLM conclusion + evidence chain (StatsAnalysisReport) over
+        # the bare threshold narrative, so a real failure mode surfaced by the
+        # analyst is not dropped just because no numeric threshold fired.
+        conclusion = getattr(analysis, "conclusion", "") or analysis.narrative or "(no conclusion)"
+        evidence_chain = getattr(analysis, "evidence_chain", None) or []
+        evidence_section = ""
+        if evidence_chain:
+            evidence_section = (
+                "\nEvidence chain:\n"
+                + "\n".join(f"  - {step}" for step in evidence_chain)
+                + "\n"
+            )
+        stats_section = ""
+        stats_lines = [
+            f"  - {r.summary}"
+            for r in (getattr(analysis, "stats_results", None) or [])
+            if getattr(r, "ok", False) and getattr(r, "summary", "")
+        ]
+        if stats_lines:
+            stats_section = "\nStatistical test results:\n" + "\n".join(stats_lines) + "\n"
+
         prompt = _DIAGNOSE_PROMPT.format(
             prior_section=_format_prior_section(prior_cycles or []),
             model_name=analysis.model_name or model_name,
             severity=analysis.severity,
-            narrative=analysis.narrative,
+            conclusion=conclusion,
+            evidence_section=evidence_section,
+            stats_section=stats_section,
             findings_json=json.dumps(summary, indent=2, default=str),
         )
         raw = self.judge.generate(prompt)
