@@ -91,6 +91,17 @@ def test_signal_label_assoc_detects_perfect_correlation():
     assert r.details["fail_rate_control"] == 0.0
 
 
+def test_signal_label_assoc_sparse_binary_missing_is_control():
+    # Sparse flag: only the 4 FAIL cases carry a per_case entry; the 4 PASS
+    # cases are absent → must be treated as signal-absent control, not skipped.
+    per_case = [{"sample_id": f"c{i}", "flag": 1} for i in range(4)]
+    res = Result(analyzer="agent", model="fake", findings={"per_case": per_case})
+    inp = build_stats_input({"agent": res}, _labeled_cases())
+    r = run_stats_tool("signal_label_assoc", inp, {"signal": "agent.flag"})
+    assert r.ok and r.effect == 1.0
+    assert r.details["n_signal"] == 4 and r.details["n_control"] == 4
+
+
 def test_signal_label_assoc_degenerate_split_is_skipped():
     # signal absent for everyone → one group empty → not ok
     res = Result(analyzer="attention", model="fake", findings={

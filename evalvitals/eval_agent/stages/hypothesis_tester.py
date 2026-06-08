@@ -4,10 +4,12 @@ M5 is the *gatekeeper* between M3 (hypothesis generation) and the stopping
 decision.  It asks two questions for each hypothesis:
 
 1. **Statistical support** — do cases that exhibit the hypothesised signal fail
-   at a higher rate than cases that do not?  Uses the same per-case signal
-   extraction as M4 (:func:`~evalvitals.eval_agent.surgery._extract_per_case_signals`),
-   but reports a richer picture: effect size, confidence, and whether the
-   result clears a minimum-effect threshold.
+   at a higher rate than cases that do not?  M5 now *consumes M2's rigorous
+   ``stats_results``* (effect size + CI + e-value, FDR-corrected via e-BH) when
+   present, deciding SUPPORTED/REFUTED only on a corrected rejection.  When M2
+   ran without labeled data (no ``stats_results``), it falls back to a rigorous
+   clustered-bootstrap :func:`~evalvitals.stats.compare` on the extracted
+   per-case signal — never a hand-rolled proportion difference.
 
 2. **Protocol consistency** — is the hypothesis consistent with what the user
    described in their experiment protocol?  Uses keyword-based heuristics by
@@ -34,19 +36,29 @@ Usage::
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from evalvitals.core.case import CaseBatch, Label
 from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-from evalvitals.eval_agent.stages.surgery import _compute_confidence, _extract_per_case_signals
+from evalvitals.eval_agent.stages.surgery import _extract_per_case_signals
+from evalvitals.stats import compare
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
+    from evalvitals.eval_agent.stages.stats_tools import StatsToolResult
 
 logger = logging.getLogger(__name__)
+
+# M2 tools whose effect is a directional per-mechanism signal (effect>0 = harmful:
+# the signal group fails MORE). These can decide SUPPORTED/REFUTED for a hypothesis.
+_SIGNAL_TOOLS = frozenset({"signal_label_assoc", "bootstrap_diff", "mcnemar_evalue"})
+# Tools that describe the run globally rather than a specific mechanism — used as
+# corroborating evidence only, never sufficient to confirm a specific hypothesis.
+_GLOBAL_TOOLS = frozenset({"single_rate_evalue", "friedman_nemenyi", "rank_corr"})
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +126,13 @@ class HypothesisTester:
                      Any :class:`~evalvitals.core.model.Model` with
                      ``Capability.GENERATE``.  When ``None``, uses a
                      keyword-based heuristic instead.
-        alpha:       Statistical significance level (unused in default
-                     fail-rate comparison; reserved for future integration
-                     with :func:`~evalvitals.stats.compare`).
+        alpha:       Statistical significance level used for the e-value /
+                     bootstrap-CI decisions inherited from
+                     :func:`~evalvitals.stats.compare` and for confidence
+                     scaling.
         min_effect:  Minimum fail-rate difference to consider a finding
-                     meaningful (default 0.10 = 10 pp).
+                     meaningful (default 0.10 = 10 pp).  Used by the rigorous
+                     fallback path when M2 supplied no ``stats_results``.
     """
 
     def __init__(
@@ -202,74 +216,21 @@ class HypothesisTester:
         data: CaseBatch,
         protocol: "ExperimentProtocol | None",
     ) -> HypothesisTestResult:
-        """Test a single hypothesis."""
-        # ── Statistical test ──────────────────────────────────────────
-        signal = _extract_per_case_signals(stats_report.raw_results)
-        signal_source = "analyzer_per_case"
-        if not signal:
-            signal = _fallback_case_signals(data, hypothesis)
-            signal_source = "case_metadata_fallback"
+        """Test a single hypothesis.
 
-        # Split cases into signal / no-signal groups with fail indicators.
-        fail_signal: list[int] = []
-        fail_control: list[int] = []
-        for case in data:
-            if getattr(case, "label", None) is None:
-                continue
-            is_fail = int(case.label == Label.FAIL)
-            if signal.get(case.id, False):
-                fail_signal.append(is_fail)
-            else:
-                fail_control.append(is_fail)
-
-        if not fail_signal or not fail_control:
-            status = HypothesisStatus.INCONCLUSIVE
-            effect_size = None
-            confidence = 0.0
-            verdict = "Insufficient labeled data to test statistically."
-            evidence: dict[str, Any] = {
-                "reason": verdict,
-                "signal_source": signal_source,
-                "n_signal": len(fail_signal),
-                "n_control": len(fail_control),
-            }
+        Primary path: consume M2's rigorous ``stats_results`` (effect + CI +
+        e-value, FDR-aware).  Fallback (when M2 supplied none, e.g. it ran
+        without labeled data): a rigorous ``compare()`` on the extracted
+        per-case signal — *not* a hand-rolled proportion difference.
+        """
+        stats_results = list(getattr(stats_report, "stats_results", None) or [])
+        if stats_results:
+            core = self._verdict_from_stats_results(hypothesis, stats_report, stats_results)
         else:
-            rate_signal = sum(fail_signal) / len(fail_signal)
-            rate_control = sum(fail_control) / len(fail_control)
-            effect_size = round(rate_signal - rate_control, 4)
+            core = self._verdict_fallback(hypothesis, stats_report, data)
 
-            confidence, dims = _compute_confidence(
-                rate_signal, rate_control, len(fail_signal), len(fail_control)
-            )
-
-            if effect_size > self.min_effect:
-                status = HypothesisStatus.SUPPORTED
-                verdict = (
-                    f"Signal group fails {effect_size:.0%} more than control "
-                    f"(confidence={confidence:.2f})."
-                )
-            elif effect_size < -self.min_effect:
-                status = HypothesisStatus.REFUTED
-                verdict = (
-                    f"Signal group fails less than control "
-                    f"(effect={effect_size:.0%}); hypothesis refuted."
-                )
-            else:
-                status = HypothesisStatus.INCONCLUSIVE
-                verdict = (
-                    f"Effect size {effect_size:.0%} below minimum {self.min_effect:.0%}; "
-                    f"inconclusive."
-                )
-
-            evidence = {
-                "n_signal": len(fail_signal),
-                "n_control": len(fail_control),
-                "fail_rate_signal": round(rate_signal, 4),
-                "fail_rate_control": round(rate_control, 4),
-                "effect_size": effect_size,
-                "signal_source": signal_source,
-                "confidence_dims": dims,
-            }
+        status: HypothesisStatus = core["status"]
+        verdict: str = core["verdict"]
 
         # ── Protocol consistency check ────────────────────────────────
         is_consistent = self._check_protocol_consistency(
@@ -281,13 +242,210 @@ class HypothesisTester:
         return HypothesisTestResult(
             hypothesis=hypothesis,
             status=status,
-            test_name="fail_rate_comparison",
-            effect_size=effect_size,
+            test_name=core["test_name"],
+            effect_size=core["effect_size"],
             is_consistent_with_protocol=is_consistent,
-            confidence=confidence,
+            confidence=core["confidence"],
             verdict=verdict,
-            evidence=evidence,
+            evidence=core["evidence"],
         )
+
+    # ------------------------------------------------------------------
+    # Primary path: consume M2's rigorous stats_results
+    # ------------------------------------------------------------------
+
+    def _verdict_from_stats_results(
+        self,
+        hypothesis: Hypothesis,
+        stats_report: "StatsAnalysisReport",
+        stats_results: "list[StatsToolResult]",
+    ) -> dict[str, Any]:
+        """Derive a verdict from M2's effect-sized, FDR-aware tool results."""
+        corrected = getattr(stats_report, "corrected_rejections", None) or {}
+        fdr_rejected = set(corrected.get("rejected_tools", []))
+
+        def _decisive(r: "StatsToolResult") -> bool:
+            # A result decides direction only if it rejected H0.  When the tool
+            # produced an e-value, the e-BH FDR correction is the authority;
+            # CI-only tools (no e-value) use their own reject flag.
+            if not r.reject:
+                return False
+            if r.e_value is not None:
+                return r.tool in fdr_rejected
+            return True
+
+        relevant, global_res = self._select_results(hypothesis, stats_results)
+        decisive = [r for r in relevant if _decisive(r)]
+        harmful = [r for r in decisive if (r.effect or 0.0) > 0]
+        protective = [r for r in decisive if (r.effect or 0.0) < 0]
+
+        consulted = [r.tool for r in relevant] + [r.tool for r in global_res]
+
+        if harmful:
+            chosen = max(harmful, key=lambda r: abs(r.effect or 0.0))
+            status = HypothesisStatus.SUPPORTED
+        elif protective:
+            chosen = max(protective, key=lambda r: abs(r.effect or 0.0))
+            status = HypothesisStatus.REFUTED
+        else:
+            pool = relevant or global_res
+            chosen = max(pool, key=lambda r: abs(r.effect or 0.0)) if pool else None
+            status = HypothesisStatus.INCONCLUSIVE
+
+        if chosen is None:
+            return {
+                "status": HypothesisStatus.INCONCLUSIVE,
+                "effect_size": None,
+                "confidence": 0.0,
+                "verdict": "No applicable M2 statistical result to test this hypothesis.",
+                "test_name": "stats_results",
+                "evidence": {"source": "m2_stats_results", "consulted_tools": consulted},
+            }
+
+        confidence = _confidence_from_stat(
+            chosen.effect, chosen.ci, chosen.e_value, chosen.underpowered, self.alpha
+        )
+        if status == HypothesisStatus.INCONCLUSIVE:
+            verdict = f"No significant M2 result (best: {chosen.summary})"
+        else:
+            verdict = f"{chosen.tool}: {chosen.summary}"
+
+        evidence = {
+            "source": "m2_stats_results",
+            "chosen_tool": chosen.tool,
+            "effect_size": chosen.effect,
+            "ci": list(chosen.ci) if chosen.ci is not None else None,
+            "e_value": chosen.e_value,
+            "reject": chosen.reject,
+            "underpowered": chosen.underpowered,
+            "consulted_tools": consulted,
+            "fdr": corrected,
+        }
+        return {
+            "status": status,
+            "effect_size": chosen.effect,
+            "confidence": confidence,
+            "verdict": verdict,
+            "test_name": chosen.tool,
+            "evidence": evidence,
+        }
+
+    def _select_results(
+        self,
+        hypothesis: Hypothesis,
+        stats_results: "list[StatsToolResult]",
+    ) -> "tuple[list[StatsToolResult], list[StatsToolResult]]":
+        """Split tool results into (mechanism-relevant signal tools, global tools).
+
+        Relevance: keyword overlap between the hypothesis and the tool's signal
+        key/name.  When nothing matches by keyword, all signal tools are shared
+        evidence (mirrors the historical aggregated-signal behaviour).
+        """
+        signal_res = [
+            r for r in stats_results
+            if r.ok and r.tool in _SIGNAL_TOOLS and r.effect is not None
+        ]
+        global_res = [r for r in stats_results if r.ok and r.tool in _GLOBAL_TOOLS]
+
+        kw = _keywords(hypothesis.statement + " "
+                       + hypothesis.predicted_failure_mode.replace("_", " "))
+        matched = [
+            r for r in signal_res
+            if kw & _keywords(f"{r.tool} {r.config.get('signal', '')} "
+                              f"{r.details.get('signal', '')}")
+        ]
+        relevant = matched or signal_res
+        return relevant, global_res
+
+    # ------------------------------------------------------------------
+    # Fallback path: rigorous compare() on the extracted per-case signal
+    # ------------------------------------------------------------------
+
+    def _verdict_fallback(
+        self,
+        hypothesis: Hypothesis,
+        stats_report: "StatsAnalysisReport",
+        data: CaseBatch,
+    ) -> dict[str, Any]:
+        """Rigorous bootstrap comparison when M2 supplied no stats_results."""
+        signal = _extract_per_case_signals(stats_report.raw_results)
+        signal_source = "analyzer_per_case"
+        if not signal:
+            signal = _fallback_case_signals(data, hypothesis)
+            signal_source = "case_metadata_fallback"
+
+        fail_signal: list[int] = []
+        fail_control: list[int] = []
+        for case in data:
+            if getattr(case, "label", None) is None:
+                continue
+            is_fail = int(case.label == Label.FAIL)
+            (fail_signal if signal.get(case.id, False) else fail_control).append(is_fail)
+
+        if not fail_signal or not fail_control:
+            return {
+                "status": HypothesisStatus.INCONCLUSIVE,
+                "effect_size": None,
+                "confidence": 0.0,
+                "verdict": "Insufficient labeled data to test statistically.",
+                "test_name": "fail_rate_compare",
+                "evidence": {
+                    "source": "fallback_compare",
+                    "signal_source": signal_source,
+                    "reason": "no signal-present and signal-absent split available",
+                    "n_signal": len(fail_signal),
+                    "n_control": len(fail_control),
+                },
+            }
+
+        # Rigorous, effect-sized verdict (clustered bootstrap CI) — replaces the
+        # old hand-computed proportion difference + geometric-mean confidence.
+        sr = compare(
+            fail_control, fail_signal, paired=False,
+            alpha=self.alpha, min_effect=self.min_effect,
+        )
+        effect_size = round(sr.effect, 4)
+        confidence = _confidence_from_stat(sr.effect, sr.ci, sr.e_value, sr.underpowered, self.alpha)
+
+        if effect_size > self.min_effect:
+            status = HypothesisStatus.SUPPORTED
+            verdict = (
+                f"Signal group fails {effect_size:.0%} more than control "
+                f"({sr.summary()})."
+            )
+        elif effect_size < -self.min_effect:
+            status = HypothesisStatus.REFUTED
+            verdict = (
+                f"Signal group fails less than control "
+                f"(effect={effect_size:.0%}); hypothesis refuted."
+            )
+        else:
+            status = HypothesisStatus.INCONCLUSIVE
+            verdict = (
+                f"Effect size {effect_size:.0%} below minimum {self.min_effect:.0%}; "
+                f"inconclusive."
+            )
+
+        evidence = {
+            "source": "fallback_compare",
+            "signal_source": signal_source,
+            "n_signal": len(fail_signal),
+            "n_control": len(fail_control),
+            "fail_rate_signal": round(sum(fail_signal) / len(fail_signal), 4),
+            "fail_rate_control": round(sum(fail_control) / len(fail_control), 4),
+            "effect_size": effect_size,
+            "ci": list(sr.ci),
+            "underpowered": sr.underpowered,
+            "method": sr.method,
+        }
+        return {
+            "status": status,
+            "effect_size": effect_size,
+            "confidence": confidence,
+            "verdict": verdict,
+            "test_name": "fail_rate_compare",
+            "evidence": evidence,
+        }
 
     def _check_protocol_consistency(
         self,
@@ -361,6 +519,10 @@ class HypothesisTester:
         return first_line.startswith("YES")
 
 
+# ---------------------------------------------------------------------------
+# Module helpers
+# ---------------------------------------------------------------------------
+
 def _fallback_case_signals(data: CaseBatch, hypothesis: Hypothesis) -> dict[str, bool]:
     """Non-label fallback signals when analyzers expose no per-case entries.
 
@@ -388,3 +550,37 @@ def _fallback_case_signals(data: CaseBatch, hypothesis: Hypothesis) -> dict[str,
         if hit:
             signal[case.id] = True
     return signal
+
+
+def _keywords(text: str) -> set[str]:
+    """Significant (4+ char) lowercase word tokens of *text*."""
+    return set(re.findall(r"[a-z]{4,}", text.lower()))
+
+
+def _confidence_from_stat(
+    effect: float | None,
+    ci: tuple[float, float] | None,
+    e_value: float | None,
+    underpowered: bool,
+    alpha: float = 0.05,
+) -> float:
+    """Map a rigorous statistical verdict to a confidence in [0, 1].
+
+    Priority: an e-value (anytime-valid) over a CI.  An e-value at the rejection
+    threshold ``1/alpha`` maps to 1.0; a CI that excludes 0 scales by how far it
+    sits from 0 relative to its width.  ``underpowered`` halves the score.
+    """
+    c = 0.0
+    if e_value is not None:
+        c = min(1.0, e_value * alpha)  # e_value / (1/alpha)
+    elif ci is not None:
+        lo, hi = ci
+        width = (hi - lo) or 1e-9
+        if lo <= 0 <= hi:
+            # CI includes 0 → not significant; small, capped contribution.
+            c = min(0.49, abs(effect or 0.0) / width * 0.5)
+        else:
+            c = min(1.0, abs(effect or 0.0) / (abs(effect or 0.0) + width))
+    if underpowered:
+        c *= 0.5
+    return round(c, 3)

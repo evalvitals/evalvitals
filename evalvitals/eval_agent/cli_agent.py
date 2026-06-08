@@ -28,14 +28,46 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Markers that identify an agy backend failure (quota, auth, …) in its log so
+# AgyModel can surface *why* a response was empty instead of failing silently.
+_AGY_ERROR_MARKERS = (
+    "RESOURCE_EXHAUSTED", "code 429", "quota", "ineligible",
+    "PERMISSION_DENIED", "UNAUTHENTICATED", "exhausted",
+)
+
+
+def _safe_unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _scan_agy_log(path: str) -> str:
+    """Return the last agy-log error line (quota/auth/…), or ``""`` if none."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()[-300:]
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        if any(m.lower() in line.lower() for m in _AGY_ERROR_MARKERS):
+            msg = line.strip()
+            idx = msg.rfind("] ")  # drop the glog "I0608 ...]" prefix
+            return (msg[idx + 2:] if idx != -1 else msg)[:240]
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -469,10 +501,21 @@ class AgyModel:
         self.modalities = frozenset({"text"})
 
     def generate(self, inputs: object, **kwargs: object) -> str:
-        """Run ``agy -p <inputs>`` and return the text response."""
-        import re as _re
+        """Run ``agy -p <inputs>`` and return the text response.
 
-        cmd = [self._binary, "-p", str(inputs), "--dangerously-skip-permissions"]
+        agy logs backend errors (quota exhaustion, auth ineligibility, …) to its
+        ``--log-file`` rather than stdout, and on such errors prints an *empty*
+        response with exit code 0.  To avoid a silent empty string that callers
+        misread as a parse failure, this captures the log and surfaces the real
+        reason: a non-zero exit raises, and an empty response emits a warning
+        naming the agy error before returning ``""`` for graceful fallback.
+        """
+        fd, log_path = tempfile.mkstemp(prefix="agy_", suffix=".log")
+        os.close(fd)
+        cmd = [
+            self._binary, "-p", str(inputs),
+            "--dangerously-skip-permissions", "--log-file", log_path,
+        ]
         if self._model:
             cmd += ["--model", self._model]
         try:
@@ -484,17 +527,29 @@ class AgyModel:
                 env={**os.environ},
             )
         except subprocess.TimeoutExpired as exc:
+            _safe_unlink(log_path)
             raise RuntimeError(
                 f"AgyModel: agy timed out after {self._timeout_sec}s"
             ) from exc
 
         output = proc.stdout.strip()
         if proc.returncode != 0 and not output:
-            raise RuntimeError(
-                f"AgyModel: agy exited {proc.returncode}: {proc.stderr[:300]}"
-            )
+            reason = _scan_agy_log(log_path) or (proc.stderr or "").strip()[:240]
+            _safe_unlink(log_path)
+            raise RuntimeError(f"AgyModel: agy exited {proc.returncode}: {reason}")
+
         # Strip <think>…</think> reasoning blocks
-        output = _re.sub(r"<think>.*?</think>", "", output, flags=_re.DOTALL).strip()
+        output = re.sub(r"<think>.*?</think>", "", output, flags=re.DOTALL).strip()
+        if not output:
+            reason = _scan_agy_log(log_path)
+            warnings.warn(
+                "AgyModel: agy returned an empty response"
+                + (f" — {reason}" if reason else "")
+                + ". agy is likely rate-limited or quota-exhausted; the caller "
+                "will fall back to a non-LLM path.",
+                stacklevel=2,
+            )
+        _safe_unlink(log_path)
         return output
 
     def __repr__(self) -> str:

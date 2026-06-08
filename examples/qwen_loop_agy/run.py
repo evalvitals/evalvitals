@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import re
 import textwrap
 import urllib.request
 from pathlib import Path
@@ -191,243 +192,113 @@ def _synthetic_image():
 
 
 # ---------------------------------------------------------------------------
-# Cases
+# Cases + robust scorer
 # ---------------------------------------------------------------------------
+#
+# M5 needs BOTH passing and failing cases (a control group + a failure group) to
+# run its fail-rate tests.  The default substring heuristic in CaseDiscoveryAgent
+# is fragile on yes/no answers ("no" matches "snow"/"not"), and the old prompt
+# set was all hard questions, so runs came out all-FAIL.  We fix both here:
+#
+#   - a word-boundary scorer (``_score_case``) so yes/no/colour terms match cleanly;
+#   - a balanced prompt set: salient-feature questions a VLM reliably PASSES
+#     (red present? list colours?) + precise-detail questions it reliably FAILS
+#     (exact RGB hex, verbatim tiny caption).  This guarantees both M5 groups.
+
+
+def _contains(term: str, text: str) -> bool:
+    """Match *term* in *text*: word-boundary for plain alphanumerics (so "no"
+    does not match "snow"/"not"), substring for terms with punctuation (hex)."""
+    term = term.lower().strip()
+    if not term:
+        return False
+    if re.fullmatch(r"[a-z0-9]+", term):
+        return re.search(rf"\b{re.escape(term)}\b", text) is not None
+    return term in text
+
+
+def _score_case(case, observed):
+    """Word-boundary-aware scorer for the dict/str ``expected`` rubrics."""
+    from evalvitals.core.case import Label
+
+    text = re.sub(r"\s+", " ", str(observed).lower())
+    expected = case.expected
+    if isinstance(expected, dict):
+        if any(_contains(t, text) for t in expected.get("none_of", [])):
+            return Label.FAIL
+        if not all(_contains(t, text) for t in expected.get("all_of", [])):
+            return Label.FAIL
+        any_of = expected.get("any_of", [])
+        if any_of and not any(_contains(t, text) for t in any_of):
+            return Label.FAIL
+        return Label.PASS
+    if isinstance(expected, str):
+        return Label.PASS if _contains(expected, text) else Label.FAIL
+    return Label.UNKNOWN
+
 
 def _build_candidate_cases(image):
-    """Human-prior candidate prompts; labels are assigned after model execution."""
+    """Balanced human-prior prompts: easy (reliably PASS) + hard (reliably FAIL).
+
+    Labels are assigned after model execution by :func:`_score_case`.
+    """
     from evalvitals.core.case import CaseBatch, FailureCase, Inputs
 
     return CaseBatch([
+        # ── Easy: salient features a VLM reliably gets right → PASS (control) ──
+        FailureCase(
+            id="q_has_red",
+            inputs=Inputs(
+                prompt="Is there a red shape in this image? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["yes"], "none_of": ["no"]},
+        ),
+        FailureCase(
+            id="q_colors",
+            inputs=Inputs(
+                prompt="List the colors that appear in this image.",
+                image=image,
+            ),
+            expected={"any_of": ["red", "green", "blue"]},
+        ),
         FailureCase(
             id="q_count",
             inputs=Inputs(
-                prompt="How many colored rectangles are in this image? Answer with the number.",
+                prompt="How many colored rectangles are in this image? "
+                       "Answer with just the number.",
                 image=image,
             ),
             expected={"any_of": ["3", "three"]},
         ),
+        # ── Hard: precise pixel-level details a VLM cannot know → FAIL ──
+        # (asks for the exact source values, which the model can only guess at).
         FailureCase(
-            id="q_colour",
+            id="q_rgb",
             inputs=Inputs(
-                prompt="What are the dominant rectangle colors in this image?",
+                prompt="What is the exact RGB hex code of the left rectangle? "
+                       "Answer with the hex code only.",
                 image=image,
             ),
-            expected={"all_of": ["red", "green", "blue"]},
+            expected={"any_of": ["dc503c", "#dc503c"]},  # source fill is (220,80,60)
         ),
         FailureCase(
-            id="q_location",
+            id="q_coords",
             inputs=Inputs(
-                prompt="Describe the spatial layout of the colored rectangles.",
+                prompt="What are the exact pixel coordinates (x1, y1, x2, y2) of "
+                       "the blue rectangle? Answer with the four numbers.",
                 image=image,
             ),
-            expected={"all_of": ["left", "right"], "any_of": ["bottom", "below", "lower"]},
+            expected={"all_of": ["60", "130", "164", "190"]},  # exact source box
         ),
         FailureCase(
-            id="q_weather",
+            id="q_width",
             inputs=Inputs(
-                prompt="Does this image show a snowy mountain landscape? Answer yes or no.",
+                prompt="Exactly how many pixels wide is the green rectangle? "
+                       "Answer with one number.",
                 image=image,
             ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "negative_absence"},
-        ),
-        FailureCase(
-            id="q_text",
-            inputs=Inputs(
-                prompt="Is the phrase 'synthetic test image' visible? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["yes"], "none_of": ["no"]},
-            metadata={"pope_label": "yes", "case_family": "ocr_presence"},
-        ),
-        FailureCase(
-            id="q_bottom_colour",
-            inputs=Inputs(
-                prompt="Which colored rectangle is lowest in the image? Answer with one color.",
-                image=image,
-            ),
-            expected={"all_of": ["blue"]},
-        ),
-        FailureCase(
-            id="q_absent_yellow",
-            inputs=Inputs(
-                prompt="Is there a yellow rectangle in the image? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "negative_absence"},
-        ),
-        FailureCase(
-            id="q_text_word",
-            inputs=Inputs(
-                prompt="What word appears immediately after 'synthetic' in the visible text?",
-                image=image,
-            ),
-            expected={"all_of": ["test"]},
-        ),
-        FailureCase(
-            id="q_top_left_colour",
-            inputs=Inputs(
-                prompt="What color is the top-left rectangle? Answer with one color.",
-                image=image,
-            ),
-            expected={"all_of": ["red"], "none_of": ["green", "blue", "purple"]},
-            metadata={"case_family": "spatial_colour"},
-        ),
-        FailureCase(
-            id="q_top_right_colour",
-            inputs=Inputs(
-                prompt="What color is the top-right rectangle? Answer with one color.",
-                image=image,
-            ),
-            expected={"all_of": ["green"], "none_of": ["red", "blue", "purple"]},
-            metadata={"case_family": "spatial_colour"},
-        ),
-        FailureCase(
-            id="q_top_row_count",
-            inputs=Inputs(
-                prompt="How many rectangles are in the top row? Answer with the number.",
-                image=image,
-            ),
-            expected={"any_of": ["2", "two"]},
-            metadata={"case_family": "spatial_counting"},
-        ),
-        FailureCase(
-            id="q_bottom_row_count",
-            inputs=Inputs(
-                prompt="How many rectangles are in the bottom row? Answer with the number.",
-                image=image,
-            ),
-            expected={"any_of": ["1", "one"]},
-            metadata={"case_family": "spatial_counting"},
-        ),
-        FailureCase(
-            id="q_blue_position",
-            inputs=Inputs(
-                prompt="Where is the blue rectangle relative to the red and green rectangles?",
-                image=image,
-            ),
-            expected={
-                "all_of": ["below"],
-                "any_of": ["red", "green", "rectangles"],
-                "none_of": ["above"],
-            },
-            metadata={"case_family": "spatial_relation"},
-        ),
-        FailureCase(
-            id="q_red_left_of_green",
-            inputs=Inputs(
-                prompt="Is the red rectangle left of the green rectangle? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["yes"], "none_of": ["no"]},
-            metadata={"pope_label": "yes", "case_family": "spatial_relation"},
-        ),
-        FailureCase(
-            id="q_green_left_of_red",
-            inputs=Inputs(
-                prompt="Is the green rectangle left of the red rectangle? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "spatial_relation"},
-        ),
-        FailureCase(
-            id="q_has_circle",
-            inputs=Inputs(
-                prompt="Is there a circle in the image? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "negative_absence"},
-        ),
-        FailureCase(
-            id="q_has_black_background",
-            inputs=Inputs(
-                prompt="Does the image have a black background? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "negative_absence"},
-        ),
-        FailureCase(
-            id="q_exact_visible_phrase",
-            inputs=Inputs(
-                prompt="What exact phrase is written at the bottom of the image?",
-                image=image,
-            ),
-            expected={"all_of": ["synthetic", "test", "image"]},
-            metadata={"case_family": "ocr_exact"},
-        ),
-        FailureCase(
-            id="q_visible_text_word_count",
-            inputs=Inputs(
-                prompt="How many words are in the visible phrase at the bottom? Answer with the number.",
-                image=image,
-            ),
-            expected={"any_of": ["3", "three"]},
-            metadata={"case_family": "ocr_counting"},
-        ),
-        FailureCase(
-            id="q_largest_rectangle_colour",
-            inputs=Inputs(
-                prompt="What color is the largest rectangle? Answer with one color.",
-                image=image,
-            ),
-            expected={"all_of": ["blue"], "none_of": ["red", "green", "purple"]},
-            metadata={"case_family": "size_colour"},
-        ),
-        FailureCase(
-            id="q_all_colours_ordered",
-            inputs=Inputs(
-                prompt=(
-                    "List the rectangle colors in reading order: top-left, top-right, "
-                    "then bottom. Answer with only the three color names."
-                ),
-                image=image,
-            ),
-            expected={
-                "all_of": ["red", "green", "blue"],
-                "none_of": ["purple", "yellow"],
-            },
-            metadata={"case_family": "ordered_colour"},
-        ),
-        FailureCase(
-            id="q_has_purple_rectangle",
-            inputs=Inputs(
-                prompt="Is there a purple rectangle in the image? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "colour_absence"},
-        ),
-        FailureCase(
-            id="q_lowest_is_purple",
-            inputs=Inputs(
-                prompt="Is the lowest rectangle purple? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-            metadata={"pope_label": "no", "case_family": "colour_absence"},
-        ),
-        FailureCase(
-            id="q_bottom_not_purple_colour",
-            inputs=Inputs(
-                prompt="The bottom rectangle is not purple. What color is it?",
-                image=image,
-            ),
-            expected={"all_of": ["blue"], "none_of": ["purple"]},
-            metadata={"case_family": "contrastive_colour"},
-        ),
-        FailureCase(
-            id="q_blue_vs_purple_choice",
-            inputs=Inputs(
-                prompt="Is the bottom rectangle blue or purple? Answer with one word.",
-                image=image,
-            ),
-            expected={"all_of": ["blue"], "none_of": ["purple"]},
-            metadata={"case_family": "forced_choice_colour"},
+            expected={"any_of": ["80"]},  # green box spans x=124..204 → 80 px
         ),
     ])
 
@@ -710,6 +581,12 @@ def main() -> None:
     parser.add_argument("--model", default="qwen3-vl-4b-instruct")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument(
+        "--judge-model", default="Gemini 3.1 Pro (Low)",
+        help="agy model for the M1–M5 judge. The session default (Gemini 3.5 "
+             "Flash) is often quota-exhausted and returns empty; pick a free one "
+             "from `agy models`. Set to empty to use agy's session default.",
+    )
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument(
@@ -721,8 +598,9 @@ def main() -> None:
         help="Use the demo Wikimedia image instead of the synthetic labeled image.",
     )
     parser.add_argument(
-        "--judge-discovery", action="store_true",
-        help="Use the judge model to label discovery outputs against expected rubrics.",
+        "--allow-codegen", action="store_true",
+        help="M2 tier(b): let the agent write+run a bespoke stats tool in a "
+             "sandbox when no built-in tool fits (uses antigravity to write code).",
     )
     parser.add_argument(
         "--analysis-only", action="store_true",
@@ -767,8 +645,9 @@ def main() -> None:
     # If the binary is not properly mounted, the loaded VLM acts as judge
     # (a warning is printed and the rationale will reflect this).
     try:
-        judge = AgyModel()
-        print(f"\n  judge : antigravity CLI ({judge._binary})  [M1–M5, no API key]")
+        judge = AgyModel(model=args.judge_model)
+        print(f"\n  judge : antigravity CLI ({judge._binary})  "
+              f"model={args.judge_model or 'session default'}  [M1–M5, no API key]")
     except RuntimeError as _agy_err:
         import warnings as _w
         _w.warn(
@@ -789,9 +668,9 @@ def main() -> None:
     image = _get_image(download=args.download_image)
     candidate_cases = _build_candidate_cases(image)
     discovery = CaseDiscoveryAgent(
-        judge=judge if args.judge_discovery else None,
-        include_unknown=True,
-    ).discover(model, candidate_cases, protocol=protocol)
+        scorer=_score_case,
+        include_unknown=False,
+    ).discover(model, candidate_cases)
     cases = discovery.cases
     print(
         f"  discovered {len(cases)} labeled cases "
@@ -829,7 +708,17 @@ def main() -> None:
     print(f"  description : {protocol.description[:80]}...")
 
     # ── M1: ProbeAgent — agy selects analyzers from the protocol ─────────────
-    probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
+    # With --allow-codegen, M1 also generates a bespoke black-box probe (run in a
+    # sandbox over the model's outputs) when no catalog analyzer fits the failure.
+    _m1_codegen = args.allow_codegen and not args.analysis_only
+    probe_agent = ProbeAgent(
+        judge=judge,
+        max_analyzers=args.max_analyzers,
+        allow_codegen=_m1_codegen,
+        codegen_config=(
+            CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model) if _m1_codegen else None
+        ),
+    )
 
     # ── M2: StatsAnalysisAgent — selects stats tools + agy writes narrative ──
     # M2 now runs a statistical-tool layer (signal/label association, McNemar +
@@ -840,6 +729,12 @@ def main() -> None:
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
         figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
+        allow_codegen=args.allow_codegen and not args.analysis_only,
+        codegen_config=(
+            CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model)
+            if args.allow_codegen and not args.analysis_only
+            else None
+        ),
     )
 
     # ── M3: DiagnosisAgent — agy proposes hypotheses ─────────────────────────
@@ -856,7 +751,7 @@ def main() -> None:
     surgery_agent = None
     if not args.analysis_only:
         writer_cfg = ExperimentWriterConfig(
-            cli_agent=CliAgentConfig(provider="antigravity", timeout_sec=120),
+            cli_agent=CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model),
             exec_fix_timeout_sec=60,
         )
         surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)

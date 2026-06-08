@@ -75,7 +75,7 @@ EXPERIMENT DESCRIPTION:
 {description}
 {task_domain_section}
 {success_criteria_section}
-{failure_patterns_section}
+{failure_patterns_section}{cases_section}
 MODEL TYPE: {model_kind}
 
 AVAILABLE ANALYZERS ({n_available} compatible with this model):
@@ -83,6 +83,9 @@ AVAILABLE ANALYZERS ({n_available} compatible with this model):
 {prior_hypotheses_section}
 Select up to {max_n} analyzers. Return ONLY a JSON object, no other text:
 {{"analyzers": ["name1", "name2", ...], "rationale": "one sentence explaining the selection"}}
+
+If NONE of the available analyzers can probe the described failure, additionally
+include "need_custom": "<one line describing the probe to generate>" in the JSON.
 """
 
 
@@ -126,6 +129,10 @@ class ProbeAgent:
         docker_image: str = "evalvitals:latest",
         docker_timeout: int = 300,
         model_env_var: str = "GEMINI_API_KEY",
+        allow_codegen: bool = False,
+        codegen_config: "Any | None" = None,
+        probe_generator: "Any | None" = None,
+        case_examples: tuple[int, int] = (4, 2),
     ) -> None:
         self.selector = probe or StrategyProbe()
         self.judge = judge
@@ -139,6 +146,19 @@ class ProbeAgent:
         # Set by probe() / probe_with_schema() so callers can inspect why
         # each analyzer was chosen without changing the return type of probe().
         self.last_schema: "ProbingSchema | None" = None
+        # Tier (b): generate a bespoke black-box probe in a sandbox when no
+        # catalog analyzer fits.  Disabled unless allow_codegen=True + a backend.
+        self.allow_codegen = allow_codegen
+        self._codegen_config = codegen_config
+        self._probe_generator = probe_generator
+        # Tier (c): generated probes are cached and re-run on later cycles.
+        self._generated_probes: list[Any] = []
+        # Optional "need_custom" hint extracted from the LLM selection response.
+        self._last_need_custom: str | None = None
+        # How many FAIL / PASS example cases to fold into the LLM selection
+        # prompt.  More examples = more specialised selection, less generalisable
+        # (the generalization–specialization trade-off).  ``(0, 0)`` disables it.
+        self._case_examples = case_examples
 
     # ------------------------------------------------------------------
     # Public interface
@@ -184,8 +204,9 @@ class ProbeAgent:
                                  (e.g. from :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`).
         """
         rationale: str
+        self._last_need_custom = None
         if self.judge is not None and protocol is not None:
-            names, rationale = self._llm_select(protocol, model, prior_hypotheses)
+            names, rationale = self._llm_select(protocol, model, prior_hypotheses, data)
         else:
             names = self.selector.select(
                 model,
@@ -205,10 +226,6 @@ class ProbeAgent:
             if analyzer is not None:
                 tasks.append((name, analyzer))
 
-        if not tasks:
-            self.last_schema = _build_schema([], rationale, protocol)
-            return {}
-
         results: dict[str, "Result"] = {}
 
         def _run_one(name: str, analyzer: "Analyzer") -> tuple[str, "Result | None"]:
@@ -217,25 +234,31 @@ class ProbeAgent:
                 return name, self._run_in_docker(name, analyzer, data)
             return name, self._run_direct(analyzer, model, data)
 
-        max_workers = min(len(tasks), 8)
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(_run_one, name, analyzer): name
-                for name, analyzer in tasks
-            }
-            for future in as_completed(futures):
-                try:
-                    name, result = future.result()
-                    if result is not None:
-                        results[name] = result
-                except Exception as exc:
-                    name = futures[future]
-                    warnings.warn(
-                        f"Analyzer '{name}' raised in parallel run: {exc}",
-                        stacklevel=2,
-                    )
+        if tasks:
+            max_workers = min(len(tasks), 8)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_run_one, name, analyzer): name
+                    for name, analyzer in tasks
+                }
+                for future in as_completed(futures):
+                    try:
+                        name, result = future.result()
+                        if result is not None:
+                            results[name] = result
+                    except Exception as exc:
+                        name = futures[future]
+                        warnings.warn(
+                            f"Analyzer '{name}' raised in parallel run: {exc}",
+                            stacklevel=2,
+                        )
 
-        self.last_schema = _build_schema([t[0] for t in tasks], rationale, protocol)
+        selected = [t[0] for t in tasks]
+        # Tier (b)/(c): reuse + generate a bespoke probe when the catalog is thin.
+        if self.allow_codegen:
+            selected += self._maybe_generate(model, data, results)
+
+        self.last_schema = _build_schema(selected, rationale, protocol)
         return results
 
     def probe_with_schema(
@@ -277,8 +300,13 @@ class ProbeAgent:
         protocol: "ExperimentProtocol",
         model: "Model",
         prior_hypotheses: list[Any] | None,
+        data: "CaseBatch | None" = None,
     ) -> tuple[list[str], str]:
         """Ask the judge LLM to choose analyzers from the available catalog.
+
+        The selection prompt is grounded in the *observed* cases (a digest of
+        real PASS/FAIL prompts and the model's actual answers) so the judge
+        picks analyzers for what actually failed, not just the abstract protocol.
 
         Returns ``(selected_names, rationale_string)``.  Falls back to static
         selection on any error.
@@ -290,7 +318,7 @@ class ProbeAgent:
         if not catalog:
             return self._static_fallback(model), "no analyzers available"
 
-        max_n = self.max_analyzers or len(catalog)
+        max_n = self.max_analyzers if self.max_analyzers is not None else len(catalog)
 
         analyzer_lines = "\n".join(
             f"  - {name}: {desc}" for name, desc in catalog.items()
@@ -327,11 +355,15 @@ class ProbeAgent:
                 + "\n"
             )
 
+        n_fail, n_pass = self._case_examples
+        cases_section = _summarize_cases(data, max_fail=n_fail, max_pass=n_pass)
+
         prompt = _SELECTION_PROMPT_TMPL.format(
             description=protocol.description,
             task_domain_section=task_domain_section,
             success_criteria_section=success_criteria_section,
             failure_patterns_section=failure_patterns_section,
+            cases_section=cases_section,
             model_kind=kind.value,
             n_available=len(catalog),
             analyzer_list=analyzer_lines,
@@ -367,6 +399,12 @@ class ProbeAgent:
         # Remove <think>…</think> reasoning blocks before JSON search
         cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
+        # An empty response (e.g. agy rate-limited/quota-exhausted) is distinct
+        # from an unparseable one — surface that so the fallback is diagnosable.
+        if not cleaned:
+            logger.warning("ProbeAgent: LLM returned an empty response — using static fallback")
+            return self._static_fallback(model), "static fallback (LLM returned empty response)"
+
         # Use a non-greedy search that stops at the first closing brace so we
         # don't accidentally span multiple JSON objects.
         match = re.search(r"\{[^{}]*\}", cleaned)
@@ -379,6 +417,9 @@ class ProbeAgent:
                     if n.lower() in valid_names
                 ]
                 rationale = str(data.get("rationale", "LLM-selected"))
+                need = data.get("need_custom")
+                if isinstance(need, str) and need.strip():
+                    self._last_need_custom = need.strip()
                 if names:
                     return names[:max_n], rationale
             except json.JSONDecodeError:
@@ -409,7 +450,7 @@ class ProbeAgent:
         specific case shape.  Filtering here prevents invalid runs such as POPE
         on open-ended VQA prompts without yes/no gold labels.
         """
-        max_n = self.max_analyzers or len(names)
+        max_n = self.max_analyzers if self.max_analyzers is not None else len(names)
         selected: list[str] = []
         filtered: list[str] = []
         filtered_seen: set[str] = set()
@@ -424,6 +465,9 @@ class ProbeAgent:
                 return
             selected.append(candidate)
 
+        if max_n <= 0:
+            return selected, filtered
+
         for name in names:
             _consider(name)
             if len(selected) >= max_n:
@@ -436,6 +480,64 @@ class ProbeAgent:
             if len(selected) >= max_n:
                 break
         return selected, filtered
+
+    # ------------------------------------------------------------------
+    # Tier (b)/(c): probe generation
+    # ------------------------------------------------------------------
+
+    def _maybe_generate(
+        self,
+        model: "Model",
+        data: "CaseBatch",
+        results: "dict[str, Result]",
+    ) -> list[str]:
+        """Reuse cached generated probes, then generate one if the catalog is thin.
+
+        Mutates *results* in place (adds ``generated:<name>`` entries) and returns
+        the list of probe names added, for inclusion in the schema.
+        """
+        generator = self._get_generator()
+        if generator is None:
+            return []
+
+        added: list[str] = []
+
+        # Tier (c): re-run cached generated probes on this cycle's cases.
+        for probe in self._generated_probes:
+            r = generator.run_cached(probe, model, data)
+            if r is not None:
+                results[r.analyzer] = r
+                added.append(r.analyzer)
+
+        # Tier (b): generate a new probe when the judge asked for one (and we
+        # have not already generated it), or when nothing produced any output.
+        need = self._last_need_custom
+        should_generate = (bool(need) and not self._generated_probes) or not results
+        if not should_generate:
+            return added
+
+        goal = need or "Probe the model outputs for the failure described in the protocol."
+        name = f"probe{len(self._generated_probes) + 1}"
+        result, probe = generator.generate(goal, model, data, name=name)
+        if result is not None:
+            results[result.analyzer] = result
+            added.append(result.analyzer)
+        if probe is not None:
+            self._generated_probes.append(probe)
+        return added
+
+    def _get_generator(self) -> "Any | None":
+        """Lazily build the probe generator from the judge / codegen config."""
+        if self._probe_generator is not None:
+            return self._probe_generator
+        if self.judge is None and self._codegen_config is None:
+            return None
+        from evalvitals.eval_agent.stages.probe_generator import ProbeGenerator
+        gen = ProbeGenerator(judge=self.judge, cli_config=self._codegen_config)
+        if not gen.available:
+            return None
+        self._probe_generator = gen
+        return gen
 
     # ------------------------------------------------------------------
     # Execution strategies
@@ -538,6 +640,71 @@ class ProbeAgent:
     def detect_kind(self, model: "Model") -> ModelKind:
         """Delegate to the inner :class:`~evalvitals.eval_agent.probe.StrategyProbe`."""
         return self.selector.detect_kind(model)
+
+
+def _clip(text: str, max_chars: int) -> str:
+    """Collapse whitespace and truncate *text* for compact prompt inclusion."""
+    flat = re.sub(r"\s+", " ", str(text)).strip()
+    return flat if len(flat) <= max_chars else flat[:max_chars] + "…"
+
+
+def _summarize_cases(
+    data: "CaseBatch | None",
+    *,
+    max_fail: int = 4,
+    max_pass: int = 2,
+    max_chars: int = 160,
+) -> str:
+    """Digest observed PASS/FAIL cases (prompt + expected + model answer).
+
+    Folded into the M1 selection prompt so the judge selects analyzers grounded
+    in concrete failures.  Returns ``""`` when there are no labeled cases or the
+    feature is disabled (``max_fail == max_pass == 0``).
+    """
+    from evalvitals.core.case import Label
+
+    if data is None or (max_fail <= 0 and max_pass <= 0):
+        return ""
+
+    counts = {"pass": 0, "fail": 0, "unknown": 0}
+    fails: list[Any] = []
+    passes: list[Any] = []
+    for c in data:
+        label = getattr(c, "label", None)
+        key = getattr(label, "value", None)
+        if key in counts:
+            counts[key] += 1
+        if label == Label.FAIL and len(fails) < max_fail:
+            fails.append(c)
+        elif label == Label.PASS and len(passes) < max_pass:
+            passes.append(c)
+
+    # No concrete PASS/FAIL examples to show (e.g. all UNKNOWN) → no useful digest.
+    if not fails and not passes:
+        return ""
+
+    lines = [
+        f"\nOBSERVED CASES (PASS={counts['pass']} FAIL={counts['fail']} "
+        f"UNKNOWN={counts['unknown']}) — select analyzers for what actually failed:"
+    ]
+
+    def _emit(case: Any, tag: str) -> None:
+        inp = getattr(case, "inputs", None)
+        prompt = getattr(inp, "prompt", "") if inp is not None else ""
+        observed = (
+            getattr(case, "observed", None)
+            or getattr(case, "metadata", {}).get("discovery_observed", "")
+        )
+        lines.append(f"  [{tag}] prompt: {_clip(prompt, max_chars)}")
+        if getattr(case, "expected", None) is not None:
+            lines.append(f"         expected: {_clip(case.expected, max_chars)}")
+        lines.append(f"         model answered: {_clip(observed, max_chars)}")
+
+    for c in fails:
+        _emit(c, "FAIL")
+    for c in passes:
+        _emit(c, "PASS")
+    return "\n".join(lines) + "\n"
 
 
 def _static_rationale(names: list[str], hints: list[str] | None) -> str:

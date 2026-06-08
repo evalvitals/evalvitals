@@ -29,7 +29,11 @@ Top-level (shared / orchestration):
 stages/ (M1–M5 implementation):
   probe.py             M1 — StrategyProbe: model-kind detection + analyzer ranking
   probe_agent.py       M1 — ProbeAgent: execute ranked analyzers (direct or Docker);
-                              protocol-guided via ExperimentProtocol.probe_hints()
+                              protocol-guided via ExperimentProtocol.probe_hints();
+                              tier(b) generates a bespoke probe when no analyzer fits
+  probe_generator.py   M1 tier(b) — ProbeGenerator: host collects model outputs,
+                              an LLM/CLI writes a probe over them, run in a sandbox,
+                              parse PROBE_RESULT_JSON into a Result (per_case findings)
   protocol.py          M1 — ExperimentProtocol (NL description → probe hints);
                               ProbingSchema (records M1 selection rationale)
   analysis.py          M2 — AnalysisModule: threshold rules → AnalysisReport
@@ -41,6 +45,9 @@ stages/ (M1–M5 implementation):
                               (signal/label association, McNemar+e-value, Friedman,
                               single-rate e-value, rank corr) + StatsInput/fdr_correct
   stats_tool_agent.py  M2 — legacy deterministic exploratory stats tools
+  stats_tool_generator.py M2 tier(b) — StatsToolGenerator: LLM/CLI writes a new
+                              stats script, runs it in a sandbox, parses a
+                              STATS_RESULT_JSON contract (never mutates repo source)
   diagnosis.py         M3 — DiagnosisAgent: judge reads report → Hypothesis list
   case_discovery.py    Data — run candidate prompts and label PASS/FAIL cases
   surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
@@ -108,9 +115,14 @@ from evalvitals.eval_agent.stages.experiment_writer import (
 from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
 from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.probe_generator import GeneratedProbe, ProbeGenerator
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolAgent
+from evalvitals.eval_agent.stages.stats_tool_generator import (
+    GeneratedStatsTool,
+    StatsToolGenerator,
+)
 from evalvitals.eval_agent.stages.stats_tools import (
     STATS_TOOL_CATALOG,
     StatsInput,
@@ -130,6 +142,9 @@ __all__ = [
     "ProbeAgent",
     "StrategyProbe",
     "ModelKind",
+    # M1 tier (b) probe generation
+    "ProbeGenerator",
+    "GeneratedProbe",
     # M2
     "AnalysisModule",
     "AnalysisReport",
@@ -163,6 +178,9 @@ __all__ = [
     "default_plan",
     "fdr_correct",
     "run_stats_tool",
+    # M2 tier (b) code generation
+    "StatsToolGenerator",
+    "GeneratedStatsTool",
     # M5 hypothesis tester
     "HypothesisTester",
     "HypothesisTestResult",

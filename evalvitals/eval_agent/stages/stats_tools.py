@@ -246,17 +246,28 @@ def _split_signal_groups(
     binarize: str = "median",
     threshold: float | None = None,
 ) -> tuple[list[int], list[int]] | None:
-    """Split labeled cases into (signal-present, signal-absent) fail indicators."""
+    """Split labeled cases into (signal-present, signal-absent) fail indicators.
+
+    A sparse binary flag only lists the cases where it fired, so a labeled case
+    missing from the signal map means the signal was *absent* (control group).
+    For a continuous signal we cannot assume a value, so missing cases are
+    skipped rather than defaulted.
+    """
     sigmap = inp.per_case.get(signal_key)
     if not sigmap:
         return None
     binar = _binarize(sigmap, binarize, threshold)
+    treat_missing_as_absent = _is_binary(sigmap.values())
     signal_fail: list[int] = []
     control_fail: list[int] = []
     for cid, is_fail in inp.labels.items():
-        if cid not in binar:
+        if cid in binar:
+            present = binar[cid]
+        elif treat_missing_as_absent:
+            present = False
+        else:
             continue
-        (signal_fail if binar[cid] else control_fail).append(int(is_fail))
+        (signal_fail if present else control_fail).append(int(is_fail))
     return signal_fail, control_fail
 
 
