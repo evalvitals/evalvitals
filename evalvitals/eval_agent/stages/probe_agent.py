@@ -318,7 +318,7 @@ class ProbeAgent:
         if not catalog:
             return self._static_fallback(model), "no analyzers available"
 
-        max_n = self.max_analyzers or len(catalog)
+        max_n = self.max_analyzers if self.max_analyzers is not None else len(catalog)
 
         analyzer_lines = "\n".join(
             f"  - {name}: {desc}" for name, desc in catalog.items()
@@ -450,7 +450,7 @@ class ProbeAgent:
         specific case shape.  Filtering here prevents invalid runs such as POPE
         on open-ended VQA prompts without yes/no gold labels.
         """
-        max_n = self.max_analyzers or len(names)
+        max_n = self.max_analyzers if self.max_analyzers is not None else len(names)
         selected: list[str] = []
         filtered: list[str] = []
         filtered_seen: set[str] = set()
@@ -464,6 +464,9 @@ class ProbeAgent:
                     filtered_seen.add(candidate)
                 return
             selected.append(candidate)
+
+        if max_n <= 0:
+            return selected, filtered
 
         for name in names:
             _consider(name)

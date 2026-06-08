@@ -227,7 +227,7 @@ class HypothesisTester:
         if stats_results:
             core = self._verdict_from_stats_results(hypothesis, stats_report, stats_results)
         else:
-            core = self._verdict_fallback(stats_report, data)
+            core = self._verdict_fallback(hypothesis, stats_report, data)
 
         status: HypothesisStatus = core["status"]
         verdict: str = core["verdict"]
@@ -363,11 +363,16 @@ class HypothesisTester:
 
     def _verdict_fallback(
         self,
+        hypothesis: Hypothesis,
         stats_report: "StatsAnalysisReport",
         data: CaseBatch,
     ) -> dict[str, Any]:
         """Rigorous bootstrap comparison when M2 supplied no stats_results."""
         signal = _extract_per_case_signals(stats_report.raw_results)
+        signal_source = "analyzer_per_case"
+        if not signal:
+            signal = _fallback_case_signals(data, hypothesis)
+            signal_source = "case_metadata_fallback"
 
         fail_signal: list[int] = []
         fail_control: list[int] = []
@@ -386,6 +391,7 @@ class HypothesisTester:
                 "test_name": "fail_rate_compare",
                 "evidence": {
                     "source": "fallback_compare",
+                    "signal_source": signal_source,
                     "reason": "no signal-present and signal-absent split available",
                     "n_signal": len(fail_signal),
                     "n_control": len(fail_control),
@@ -422,6 +428,7 @@ class HypothesisTester:
 
         evidence = {
             "source": "fallback_compare",
+            "signal_source": signal_source,
             "n_signal": len(fail_signal),
             "n_control": len(fail_control),
             "fail_rate_signal": round(sum(fail_signal) / len(fail_signal), 4),
@@ -515,6 +522,35 @@ class HypothesisTester:
 # ---------------------------------------------------------------------------
 # Module helpers
 # ---------------------------------------------------------------------------
+
+def _fallback_case_signals(data: CaseBatch, hypothesis: Hypothesis) -> dict[str, bool]:
+    """Non-label fallback signals when analyzers expose no per-case entries.
+
+    These are operational signals from discovery/generation, not PASS/FAIL
+    labels: empty outputs, discovery exceptions, or UNKNOWN scorer verdicts.
+    They keep M5 from becoming vacuous while avoiding label leakage.
+    """
+    hyp_text = (
+        hypothesis.statement + " " + hypothesis.predicted_failure_mode
+    ).lower()
+    wants_empty = any(k in hyp_text for k in ("empty", "whitespace", "special token"))
+    wants_parse = any(k in hyp_text for k in ("parse", "parser", "unparsed", "format"))
+
+    signal: dict[str, bool] = {}
+    for case in data:
+        meta = getattr(case, "metadata", {}) or {}
+        observed = str(getattr(case, "observed", "") or meta.get("discovery_observed", ""))
+        hit = False
+        if wants_empty and not observed.strip():
+            hit = True
+        if wants_parse and meta.get("discovery_label") == "unknown":
+            hit = True
+        if meta.get("discovery_error"):
+            hit = True
+        if hit:
+            signal[case.id] = True
+    return signal
+
 
 def _keywords(text: str) -> set[str]:
     """Significant (4+ char) lowercase word tokens of *text*."""
