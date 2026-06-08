@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import logging
+import textwrap
 import uuid
 import warnings
 from datetime import datetime, timezone
@@ -171,10 +172,13 @@ class RunLogger:
     Args:
         run_dir:  Directory to write into.  Created if it does not exist.
                   Defaults to ``runs/<YYYYMMDD_HHMMSS>/`` relative to cwd.
+        verbose:  When ``True``, print a human-readable summary of each event
+                  to stdout as it occurs.  Off by default so library use stays
+                  silent; set ``True`` when running interactively or in Docker.
 
     The logger is safe to use as a context manager::
 
-        with RunLogger("runs/my_exp") as logger:
+        with RunLogger("runs/my_exp", verbose=True) as logger:
             loop = AutoDiagnoseLoop(model=model, run_logger=logger)
             loop.run(cases)
     """
@@ -183,6 +187,7 @@ class RunLogger:
         self,
         run_dir: str | Path | None = None,
         *,
+        verbose: bool = False,
         trace_id: str | None = None,
     ) -> None:
         if run_dir is None:
@@ -192,6 +197,8 @@ class RunLogger:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.artifact_dir.mkdir(exist_ok=True)
         self.log_path = self.run_dir / "run_log.jsonl"
+
+        self._verbose = verbose
 
         # trace_id ties all events from a single AutoDiagnoseLoop.run() call
         # together — including events from any recursive or nested sub-loops.
@@ -218,6 +225,17 @@ class RunLogger:
         schema: "Any | None" = None,
     ) -> None:
         """M1: log findings (JSON) and persist heavy artifacts to disk."""
+        if self._verbose:
+            print(f"\n[M1] cycle={cycle}  analyzers={list(results.keys())}", flush=True)
+            if schema is not None and getattr(schema, "rationale", ""):
+                print(f"     rationale  : {schema.rationale}", flush=True)
+            for name, r in results.items():
+                scalars = {
+                    k: round(v, 4)
+                    for k, v in (getattr(r, "findings", {}) or {}).items()
+                    if isinstance(v, (int, float))
+                }
+                print(f"     {name}: {dict(list(scalars.items())[:6])}", flush=True)
         artifact_paths = self._save_probe_artifacts(cycle, results)
         entry: dict[str, Any] = {
             "event": "probe",
@@ -232,6 +250,35 @@ class RunLogger:
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""
+        if self._verbose:
+            print(f"\n[M2] cycle={cycle}  severity={report.severity}", flush=True)
+            conclusion = getattr(report, "conclusion", None)
+            if conclusion:
+                print(
+                    f"     conclusion : "
+                    f"{textwrap.fill(conclusion, 72, subsequent_indent='     ')}",
+                    flush=True,
+                )
+            for step in (getattr(report, "evidence_chain", []) or [])[:3]:
+                print(f"     evidence   : {step}", flush=True)
+            plan = getattr(report, "stats_plan", []) or []
+            if plan:
+                print(f"     stats_tools: {[p['tool'] for p in plan]}", flush=True)
+            corrected = getattr(report, "corrected_rejections", {}) or {}
+            if corrected.get("rejected_tools"):
+                print(f"     fdr_survive: {corrected['rejected_tools']}", flush=True)
+            for tool in (getattr(report, "stats_tool_results", []) or [])[:2]:
+                print(
+                    f"     stats_tool : {tool.get('name')} - {tool.get('conclusion', '')}",
+                    flush=True,
+                )
+            for fig in getattr(report, "figures", []) or []:
+                print(f"     figure     : {fig}", flush=True)
+            if not conclusion:
+                print(
+                    f"     {textwrap.fill(report.narrative, 72, subsequent_indent='     ')}",
+                    flush=True,
+                )
         entry: dict[str, Any] = {
             "event": "analysis",
             "cycle": cycle,
@@ -270,6 +317,11 @@ class RunLogger:
 
     def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:
         """M3: log raw LLM output and every parsed hypothesis."""
+        if self._verbose:
+            print(f"\n[M3] cycle={cycle}  {len(diag.hypotheses)} hypothesis/es", flush=True)
+            for h in diag.hypotheses:
+                print(f"     hypothesis  : {h.statement}", flush=True)
+                print(f"     failure_mode: {h.predicted_failure_mode}", flush=True)
         self._log(
             {
                 "event": "diagnosis",
@@ -301,6 +353,28 @@ class RunLogger:
         ``iv.evidence``; they get span_id ``c{cycle}.m5`` instead of ``.m4``.
         """
         is_m5 = "m5_test_name" in (iv.evidence or {})
+        if self._verbose:
+            tag = "M5" if is_m5 else "M4"
+            status = getattr(getattr(iv, "status", None), "value", "?")
+            print(f"\n[{tag}] cycle={cycle}  '{hypothesis.statement[:70]}'", flush=True)
+            if is_m5:
+                ev = iv.evidence or {}
+                print(
+                    f"     status={status}"
+                    f"  effect={ev.get('m5_effect_size', '?')}"
+                    f"  confidence={ev.get('m5_confidence', '?')}",
+                    flush=True,
+                )
+                print(
+                    f"     protocol_consistent={ev.get('m5_protocol_consistent', '?')}",
+                    flush=True,
+                )
+                print(f"     verdict : {ev.get('m5_verdict', '')}", flush=True)
+            else:
+                print(f"     status={status}  fixed={iv.fixed}", flush=True)
+                ev = iv.evidence or {}
+                if ev:
+                    print(f"     evidence: {dict(list(ev.items())[:4])}", flush=True)
         span_suffix = "m5" if is_m5 else "m4"
         self._log(
             {
@@ -326,6 +400,15 @@ class RunLogger:
         ``final_hypotheses``) and :class:`VLDiagnoseReport` (``stopped_by``,
         ``verified_hypotheses``, ``all_hypotheses``) via duck typing.
         """
+        if self._verbose:
+            stopped_by = getattr(report, "stopped_by", None)
+            if stopped_by is not None:
+                print(f"\n[DONE] cycles={report.cycles}  stopped_by={stopped_by}", flush=True)
+            else:
+                print(
+                    f"\n[DONE] cycles={report.cycles}  resolved={getattr(report, 'resolved', None)}",
+                    flush=True,
+                )
         entry: dict[str, Any] = {
             "event": "loop_end",
             "cycles": report.cycles,
