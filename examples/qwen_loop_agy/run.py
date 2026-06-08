@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 import textwrap
 import urllib.request
 from pathlib import Path
@@ -183,53 +184,113 @@ def _synthetic_image():
 
 
 # ---------------------------------------------------------------------------
-# Cases
+# Cases + robust scorer
 # ---------------------------------------------------------------------------
+#
+# M5 needs BOTH passing and failing cases (a control group + a failure group) to
+# run its fail-rate tests.  The default substring heuristic in CaseDiscoveryAgent
+# is fragile on yes/no answers ("no" matches "snow"/"not"), and the old prompt
+# set was all hard questions, so runs came out all-FAIL.  We fix both here:
+#
+#   - a word-boundary scorer (``_score_case``) so yes/no/colour terms match cleanly;
+#   - a balanced prompt set: salient-feature questions a VLM reliably PASSES
+#     (red present? list colours?) + precise-detail questions it reliably FAILS
+#     (exact RGB hex, verbatim tiny caption).  This guarantees both M5 groups.
+
+
+def _contains(term: str, text: str) -> bool:
+    """Match *term* in *text*: word-boundary for plain alphanumerics (so "no"
+    does not match "snow"/"not"), substring for terms with punctuation (hex)."""
+    term = term.lower().strip()
+    if not term:
+        return False
+    if re.fullmatch(r"[a-z0-9]+", term):
+        return re.search(rf"\b{re.escape(term)}\b", text) is not None
+    return term in text
+
+
+def _score_case(case, observed):
+    """Word-boundary-aware scorer for the dict/str ``expected`` rubrics."""
+    from evalvitals.core.case import Label
+
+    text = re.sub(r"\s+", " ", str(observed).lower())
+    expected = case.expected
+    if isinstance(expected, dict):
+        if any(_contains(t, text) for t in expected.get("none_of", [])):
+            return Label.FAIL
+        if not all(_contains(t, text) for t in expected.get("all_of", [])):
+            return Label.FAIL
+        any_of = expected.get("any_of", [])
+        if any_of and not any(_contains(t, text) for t in any_of):
+            return Label.FAIL
+        return Label.PASS
+    if isinstance(expected, str):
+        return Label.PASS if _contains(expected, text) else Label.FAIL
+    return Label.UNKNOWN
+
 
 def _build_candidate_cases(image):
-    """Human-prior candidate prompts; labels are assigned after model execution."""
+    """Balanced human-prior prompts: easy (reliably PASS) + hard (reliably FAIL).
+
+    Labels are assigned after model execution by :func:`_score_case`.
+    """
     from evalvitals.core.case import CaseBatch, FailureCase, Inputs
 
     return CaseBatch([
+        # ── Easy: salient features a VLM reliably gets right → PASS (control) ──
+        FailureCase(
+            id="q_has_red",
+            inputs=Inputs(
+                prompt="Is there a red shape in this image? Answer yes or no.",
+                image=image,
+            ),
+            expected={"all_of": ["yes"], "none_of": ["no"]},
+        ),
+        FailureCase(
+            id="q_colors",
+            inputs=Inputs(
+                prompt="List the colors that appear in this image.",
+                image=image,
+            ),
+            expected={"any_of": ["red", "green", "blue"]},
+        ),
         FailureCase(
             id="q_count",
             inputs=Inputs(
-                prompt="How many colored rectangles are in this image? Answer with the number.",
+                prompt="How many colored rectangles are in this image? "
+                       "Answer with just the number.",
                 image=image,
             ),
             expected={"any_of": ["3", "three"]},
         ),
+        # ── Hard: precise pixel-level details a VLM cannot know → FAIL ──
+        # (asks for the exact source values, which the model can only guess at).
         FailureCase(
-            id="q_colour",
+            id="q_rgb",
             inputs=Inputs(
-                prompt="What are the dominant rectangle colors in this image?",
+                prompt="What is the exact RGB hex code of the left rectangle? "
+                       "Answer with the hex code only.",
                 image=image,
             ),
-            expected={"all_of": ["red", "green", "blue"]},
+            expected={"any_of": ["dc503c", "#dc503c"]},  # source fill is (220,80,60)
         ),
         FailureCase(
-            id="q_location",
+            id="q_coords",
             inputs=Inputs(
-                prompt="Describe the spatial layout of the colored rectangles.",
+                prompt="What are the exact pixel coordinates (x1, y1, x2, y2) of "
+                       "the blue rectangle? Answer with the four numbers.",
                 image=image,
             ),
-            expected={"all_of": ["left", "right"], "any_of": ["bottom", "below", "lower"]},
+            expected={"all_of": ["60", "130", "164", "190"]},  # exact source box
         ),
         FailureCase(
-            id="q_weather",
+            id="q_width",
             inputs=Inputs(
-                prompt="Does this image show a snowy mountain landscape? Answer yes or no.",
+                prompt="Exactly how many pixels wide is the green rectangle? "
+                       "Answer with one number.",
                 image=image,
             ),
-            expected={"all_of": ["no"], "none_of": ["yes"]},
-        ),
-        FailureCase(
-            id="q_text",
-            inputs=Inputs(
-                prompt="Is the phrase 'synthetic test image' visible? Answer yes or no.",
-                image=image,
-            ),
-            expected={"all_of": ["yes"], "none_of": ["no"]},
+            expected={"any_of": ["80"]},  # green box spans x=124..204 → 80 px
         ),
     ])
 
@@ -313,6 +374,7 @@ def main() -> None:
     image = _get_image(download=args.download_image)
     candidate_cases = _build_candidate_cases(image)
     discovery = CaseDiscoveryAgent(
+        scorer=_score_case,
         include_unknown=False,
     ).discover(model, candidate_cases)
     cases = discovery.cases

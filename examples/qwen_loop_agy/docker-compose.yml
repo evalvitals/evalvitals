@@ -10,7 +10,13 @@ services:
     #   export AGY_PATH=$(which agy)
     # user: "${UID:-1000}:${GID:-1000}"
     environment:
+      # Make CUDA_VISIBLE_DEVICES match `nvidia-smi` indices (default CUDA
+      # ordering can map index 0 to a different physical card) so you can pick a
+      # GPU with free memory: export CUDA_VISIBLE_DEVICES=6
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}  # override: export CUDA_VISIBLE_DEVICES=2
+      # Reduce CUDA fragmentation OOMs on shared GPUs.
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - HF_HOME=/hf_cache
       # agy reads its OAuth token from $HOME/.gemini — point HOME at the
       # location we mount the auth directory below.

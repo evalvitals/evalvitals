@@ -250,11 +250,29 @@ class HFLocalModel(Model):
         model, processor = self._loaded
         tok = getattr(processor, "tokenizer", processor)
         prompt = self._as_prompt(inputs)
-        enc = self._encode(prompt)
+        image = getattr(inputs, "image", None) if isinstance(inputs, Inputs) else None
+
+        # VLM with an image: encode image + text through the processor and the
+        # chat template (with the generation prompt) so the model actually sees
+        # the image.  Without this the bare tokenizer drops the image and the
+        # model generates empty/garbage.  Text-only inputs keep the plain path.
+        if image is not None and hasattr(processor, "apply_chat_template"):
+            text = processor.apply_chat_template(
+                [{"role": "user", "content": [
+                    {"type": "image"}, {"type": "text", "text": prompt}]}],
+                add_generation_prompt=True, tokenize=False,
+                **self.spec.chat_template_kwargs,
+            )
+            enc = processor(text=[text], images=[image], return_tensors="pt")
+            enc = enc.to(next(model.parameters()).device)
+        else:
+            enc = self._encode(prompt)
+
+        input_len = enc["input_ids"].shape[1]
         max_new = kwargs.pop("max_new_tokens", self.runtime.max_new_tokens)
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=max_new, **kwargs)
-        new = out[0][enc["input_ids"].shape[1]:]
+        new = out[0][input_len:]
         return tok.decode(new, skip_special_tokens=True)
 
     def logprobs(self, inputs: Any, max_new_tokens: int = 64, top_k: int = 5, **kwargs) -> list[TokenLogprob]:
