@@ -334,8 +334,13 @@ class RunLogger:
         cycle: int,
         results: dict[str, "Result"],
         schema: "Any | None" = None,
-    ) -> None:
-        """M1: log findings (JSON) and persist heavy artifacts to disk."""
+    ) -> "list[Path]":
+        """M1: log findings (JSON) and persist heavy artifacts to disk.
+
+        Returns a list of PNG figure paths that were saved for this cycle
+        (attention heatmaps, spatial maps, etc.) so callers can forward them
+        to the judge as visual context.
+        """
         artifact_paths = self._save_probe_artifacts(cycle, results)
         entry: dict[str, Any] = {
             "event": "probe",
@@ -347,6 +352,16 @@ class RunLogger:
         if schema is not None:
             entry["selection_rationale"] = getattr(schema, "rationale", "")
         self._log(entry, span_id=f"c{cycle}.m1")
+
+        # Collect PNG heatmap paths saved alongside the .npy arrays.
+        png_figures: list[Path] = []
+        for rel_npy in artifact_paths.values():
+            if not rel_npy.endswith(".npy"):
+                continue
+            png = (self.run_dir / rel_npy).with_suffix(".png")
+            if png.exists():
+                png_figures.append(png)
+        return png_figures
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""

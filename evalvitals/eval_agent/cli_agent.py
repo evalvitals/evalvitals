@@ -500,7 +500,13 @@ class AgyModel:
         self.capabilities = frozenset({Capability.GENERATE})
         self.modalities = frozenset({"text"})
 
-    def generate(self, inputs: object, **kwargs: object) -> str:
+    def generate(
+        self,
+        inputs: object,
+        *,
+        images: "list[Path] | None" = None,
+        **kwargs: object,
+    ) -> str:
         """Run ``agy -p <inputs>`` and return the text response.
 
         agy logs backend errors (quota exhaustion, auth ineligibility, …) to its
@@ -509,48 +515,74 @@ class AgyModel:
         misread as a parse failure, this captures the log and surfaces the real
         reason: a non-zero exit raises, and an empty response emits a warning
         naming the agy error before returning ``""`` for graceful fallback.
+
+        Args:
+            images: Optional list of image :class:`~pathlib.Path` objects to make
+                    visible to the agent.  Each file is copied into a temporary
+                    workspace directory passed via ``--add-dir``, and their names
+                    are listed at the top of the prompt so the model knows to look
+                    at them.
         """
+        import pathlib
+
         fd, log_path = tempfile.mkstemp(prefix="agy_", suffix=".log")
         os.close(fd)
-        cmd = [
-            self._binary, "-p", str(inputs),
-            "--dangerously-skip-permissions", "--log-file", log_path,
-        ]
-        if self._model:
-            cmd += ["--model", self._model]
+        img_dir: str | None = None
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=self._timeout_sec,
-                text=True,
-                env={**os.environ},
-            )
-        except subprocess.TimeoutExpired as exc:
-            _safe_unlink(log_path)
-            raise RuntimeError(
-                f"AgyModel: agy timed out after {self._timeout_sec}s"
-            ) from exc
+            # ── Build prompt and optional image workspace ─────────────────────
+            prompt_text = str(inputs)
+            if images:
+                valid = [p for p in images if isinstance(p, pathlib.Path) and p.exists()]
+                if valid:
+                    img_dir = tempfile.mkdtemp(prefix="agy_imgs_")
+                    for p in valid:
+                        shutil.copy2(p, pathlib.Path(img_dir) / p.name)
+                    names = ", ".join(p.name for p in valid)
+                    prompt_text = f"Images available in workspace: {names}\n\n{prompt_text}"
 
-        output = proc.stdout.strip()
-        if proc.returncode != 0 and not output:
-            reason = _scan_agy_log(log_path) or (proc.stderr or "").strip()[:240]
-            _safe_unlink(log_path)
-            raise RuntimeError(f"AgyModel: agy exited {proc.returncode}: {reason}")
+            cmd = [
+                self._binary, "-p", prompt_text,
+                "--dangerously-skip-permissions", "--log-file", log_path,
+            ]
+            if img_dir:
+                cmd += ["--add-dir", img_dir]
+            if self._model:
+                cmd += ["--model", self._model]
 
-        # Strip <think>…</think> reasoning blocks
-        output = re.sub(r"<think>.*?</think>", "", output, flags=re.DOTALL).strip()
-        if not output:
-            reason = _scan_agy_log(log_path)
-            warnings.warn(
-                "AgyModel: agy returned an empty response"
-                + (f" — {reason}" if reason else "")
-                + ". agy is likely rate-limited or quota-exhausted; the caller "
-                "will fall back to a non-LLM path.",
-                stacklevel=2,
-            )
-        _safe_unlink(log_path)
-        return output
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=self._timeout_sec,
+                    text=True,
+                    env={**os.environ},
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"AgyModel: agy timed out after {self._timeout_sec}s"
+                ) from exc
+
+            output = proc.stdout.strip()
+            if proc.returncode != 0 and not output:
+                reason = _scan_agy_log(log_path) or (proc.stderr or "").strip()[:240]
+                raise RuntimeError(f"AgyModel: agy exited {proc.returncode}: {reason}")
+
+            # Strip <think>…</think> reasoning blocks
+            output = re.sub(r"<think>.*?</think>", "", output, flags=re.DOTALL).strip()
+            if not output:
+                reason = _scan_agy_log(log_path)
+                warnings.warn(
+                    "AgyModel: agy returned an empty response"
+                    + (f" — {reason}" if reason else "")
+                    + ". agy is likely rate-limited or quota-exhausted; the caller "
+                    "will fall back to a non-LLM path.",
+                    stacklevel=2,
+                )
+            return output
+        finally:
+            _safe_unlink(log_path)
+            if img_dir:
+                shutil.rmtree(img_dir, ignore_errors=True)
 
     def __repr__(self) -> str:
         return f"AgyModel(binary={self._binary!r})"
