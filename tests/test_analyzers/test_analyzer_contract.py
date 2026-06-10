@@ -38,6 +38,7 @@ from evalvitals.analyzers.lens.logit_lens import LogitLensAnalyzer
 from evalvitals.analyzers.lens.tuned_lens import TunedLensAnalyzer
 from evalvitals.analyzers.patching.causal_trace import CausalTraceAnalyzer
 from evalvitals.analyzers.perturbation.mm_shap import MMShapAnalyzer
+from evalvitals.analyzers.perturbation.prompt_contrast import PromptContrastAnalyzer
 from evalvitals.analyzers.uncertainty.entropy import TokenEntropyAnalyzer
 from evalvitals.analyzers.uncertainty.logprob_entropy import LogprobEntropyAnalyzer
 from evalvitals.analyzers.uncertainty.self_consistency import SelfConsistencyAnalyzer
@@ -124,6 +125,15 @@ def _chair_batch() -> CaseBatch:
     )
 
 
+def _contrast_batch() -> CaseBatch:
+    case = FailureCase(
+        inputs=Inputs(prompt="Is there a dog?"),
+        expected={"all_of": ["yes"], "none_of": ["no"]},
+        label=Label.FAIL,
+    )
+    return CaseBatch([case])
+
+
 # ── analyzers excluded from suite 2, with documented reasons ──────────────────
 # When adding a new analyzer: either add it to _RUNNABLE/_STUBS below, or add an
 # entry here explaining why it is excluded. The coverage test will catch omissions.
@@ -179,6 +189,10 @@ _RUNNABLE: list[tuple[Any, Any, Any]] = [
         capabilities={Capability.GENERATE},
         modalities={"image"},
     ), _chair_batch()),
+    (PromptContrastAnalyzer(), ScriptedFakeModel(
+        answers=["yes"],  # repeated for every strategy call
+        capabilities={Capability.GENERATE},
+    ), _contrast_batch()),
 ]
 _RUNNABLE_IDS = [a.name for a, _, _ in _RUNNABLE]
 
@@ -212,6 +226,7 @@ _EXPECTED_FINDING_KEYS: dict[str, set[str]] = {
     "counterfactual": {"n_trajectories", "per_case", "_caveat"},
     "pope": {"n", "unparsed", "accuracy", "precision", "recall", "f1", "yes_rate"},
     "chair": {"n", "chair_i", "chair_s"},
+    "prompt_contrast": {"n_cases", "n_strategies", "n_unscored", "by_strategy", "per_case"},
 }
 
 
@@ -315,6 +330,16 @@ def _check_chair(f: dict[str, Any]) -> None:
     assert f["chair_s"] == 0.0
 
 
+def _check_prompt_contrast(f: dict[str, Any]) -> None:
+    assert f["n_cases"] == 1
+    assert f["n_strategies"] == 3
+    assert f["n_unscored"] == 0
+    # "yes" under every strategy satisfies the gold-yes rubric.
+    assert f["success_rate_baseline"] == 1.0
+    assert all(v == {} or set(v.values()) == {1.0} for v in f["by_strategy"].values())
+    assert f["n_fixed_by_sensitive"] == 0 and f["n_broken_by_sensitive"] == 0
+
+
 _FINDING_INVARIANTS: dict[str, Callable[[dict[str, Any]], None]] = {
     "attention": _check_attention,
     "attention_rollout": _check_attention_rollout,
@@ -332,6 +357,7 @@ _FINDING_INVARIANTS: dict[str, Callable[[dict[str, Any]], None]] = {
     "counterfactual": _check_counterfactual,
     "pope": _check_pope,
     "chair": _check_chair,
+    "prompt_contrast": _check_prompt_contrast,
 }
 
 

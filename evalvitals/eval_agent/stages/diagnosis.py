@@ -46,9 +46,13 @@ Analysis conclusion (the analyst's interpretation):
 Raw findings (JSON):
 {findings_json}
 
-Propose 1-3 hypotheses. For each write exactly two lines:
+{available_signals_section}Propose 1-3 hypotheses. For each write exactly three lines:
 HYPOTHESIS: <one-sentence falsifiable claim about the failure mode>
 FAILURE_MODE: <short tag, e.g. attention_sink / hallucination / loop / low_consistency>
+TEST: <which evidence verifies this claim — name a signal/analyzer from the
+available evidence list when one fits (e.g. "relative_attention.max_relative_weight"
+or "prompt_contrast describe_first contrast"); otherwise describe the analyzer
+or intervention that should be run next cycle>
 
 Base your hypotheses on the analysis conclusion and evidence above — an analyzer
 can surface a real failure mode even when no numeric threshold fired, so do NOT
@@ -196,6 +200,7 @@ def _parse_hypotheses_json(raw: str, model_name: str) -> list[Hypothesis] | None
             statement=item["hypothesis"],
             target_model=model_name,
             predicted_failure_mode=item["failure_mode"],
+            test_design=str(item.get("test", "")),
         )
         for item in data
         if item.get("hypothesis") and item.get("failure_mode")
@@ -230,6 +235,9 @@ def _parse_hypotheses(raw: str, model_name: str) -> list[Hypothesis]:
                 )
             )
             statement = None
+        elif line.upper().startswith("TEST:") and hypotheses:
+            # Attach the test design to the most recent hypothesis.
+            hypotheses[-1].test_design = line[len("TEST:"):].strip()
     return hypotheses
 
 
@@ -402,14 +410,35 @@ class DiagnosisAgent:
                 + "\n".join(f"  - {step}" for step in evidence_chain)
                 + "\n"
             )
+        stats_results = getattr(analysis, "stats_results", None) or []
         stats_section = ""
         stats_lines = [
             f"  - {r.summary}"
-            for r in (getattr(analysis, "stats_results", None) or [])
+            for r in stats_results
             if getattr(r, "ok", False) and getattr(r, "summary", "")
         ]
         if stats_lines:
             stats_section = "\nStatistical test results:\n" + "\n".join(stats_lines) + "\n"
+
+        # Evidence sources M3 can reference in TEST designs: per-case signal
+        # keys and strategy contrasts that already exist in this cycle.
+        signals: list[str] = []
+        for r in stats_results:
+            cfg = getattr(r, "config", None) or {}
+            sig = cfg.get("signal")
+            if sig and sig not in signals:
+                signals.append(sig)
+            for s in cfg.get("strategies", []) or []:
+                tag = f"strategy contrast vs '{s}'"
+                if s != "baseline" and tag not in signals:
+                    signals.append(tag)
+        available_signals_section = ""
+        if signals:
+            available_signals_section = (
+                "AVAILABLE EVIDENCE (per-case signals / contrasts already measured):\n"
+                + "\n".join(f"  - {s}" for s in signals)
+                + "\n\n"
+            )
 
         prompt = _DIAGNOSE_PROMPT.format(
             prior_section=_format_prior_section(prior_cycles or []),
@@ -418,6 +447,7 @@ class DiagnosisAgent:
             conclusion=conclusion,
             evidence_section=evidence_section,
             stats_section=stats_section,
+            available_signals_section=available_signals_section,
             findings_json=json.dumps(summary, indent=2, default=str),
         )
         import inspect as _inspect

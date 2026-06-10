@@ -28,6 +28,12 @@ class Hypothesis:
         statement:              Natural-language claim (LLM-generated/readable).
         target_model:           Registered model name the claim is about.
         predicted_failure_mode: Tag/description of the expected failure.
+        test_design:            How to verify this claim — analyzer / per-case
+                                signal / strategy-contrast keywords proposed by
+                                M3 (e.g. ``"relative_attention.max_relative_weight"``,
+                                ``"prompt_contrast describe_first"``).  M5 uses
+                                it to route evidence deterministically and M1
+                                uses it for cycle-2 targeted probing.
         status:                 Lifecycle state (:class:`HypothesisStatus`).
         parent_id:              Hypothesis this one was mutated from, if any.
         id:                     Stable identifier.
@@ -38,6 +44,7 @@ class Hypothesis:
     statement: str
     target_model: str
     predicted_failure_mode: str
+    test_design: str = ""
     status: HypothesisStatus = HypothesisStatus.PROPOSED
     parent_id: str | None = None
     id: str = ""
@@ -71,6 +78,7 @@ def hypothesis_to_dict(h: Hypothesis) -> dict[str, Any]:
         "statement": h.statement,
         "target_model": h.target_model,
         "predicted_failure_mode": h.predicted_failure_mode,
+        "test_design": h.test_design,
         "status": h.status.value if h.status else HypothesisStatus.PROPOSED.value,
         "parent_id": h.parent_id,
         "id": h.id,
@@ -90,6 +98,7 @@ def hypothesis_from_dict(data: dict[str, Any]) -> Hypothesis:
         statement=str(data.get("statement", "")),
         target_model=str(data.get("target_model", "")),
         predicted_failure_mode=str(data.get("predicted_failure_mode", "")),
+        test_design=str(data.get("test_design", "")),
         status=status,
         parent_id=data.get("parent_id"),
         id=str(data.get("id", "")),

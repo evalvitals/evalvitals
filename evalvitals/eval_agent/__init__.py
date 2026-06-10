@@ -133,6 +133,10 @@ from evalvitals.eval_agent.stages.stats_tools import (
     run_stats_tool,
 )
 from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgent
+from evalvitals.eval_agent.stages.whitebox_probe_generator import (
+    GeneratedWhiteboxProbe,
+    WhiteboxProbeGenerator,
+)
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 
 __all__ = [
@@ -145,6 +149,8 @@ __all__ = [
     # M1 tier (b) probe generation
     "ProbeGenerator",
     "GeneratedProbe",
+    "WhiteboxProbeGenerator",
+    "GeneratedWhiteboxProbe",
     # M2
     "AnalysisModule",
     "AnalysisReport",

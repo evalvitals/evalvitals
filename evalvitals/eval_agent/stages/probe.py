@@ -44,6 +44,12 @@ _FAILURE_MODE_TO_ANALYZERS: dict[str, list[str]] = {
     "confident_inconsistency":   ["self_consistency", "verbalized_confidence"],
     "loop":                      ["loop_detect"],
     "ignored_obs":               ["ignored_obs"],
+    # Decision-layer mechanisms — discriminated by prompt interventions.
+    "language_prior_bias":       ["prompt_contrast"],
+    "negative_bias":             ["prompt_contrast", "pope"],
+    "threshold_miscalibration":  ["prompt_contrast"],
+    "prompt_formatting_bias":    ["prompt_contrast"],
+    "instruction_following":     ["prompt_contrast"],
     "entropy":                   ["token_entropy", "logprob_entropy"],
     "perplexity":                ["logprob_entropy"],
     "logit_lens":                ["logit_lens"],
@@ -58,6 +64,7 @@ _PRIORITY: dict[str, list[str]] = {
         "pope", "chair",                          # hallucination metrics
         "attention", "attention_rollout",          # where is the model looking?
         "attention_sink",                          # sink collapse?
+        "prompt_contrast",                         # are failures prompt-repairable?
         "mm_shap",                                # text vs image reliance
         "logprob_entropy", "self_consistency",
     ],
@@ -69,6 +76,7 @@ _PRIORITY: dict[str, list[str]] = {
         "attention", "logit_lens",                # interpretability
         "token_entropy", "logprob_entropy",
         "attention_sink", "attention_rollout",
+        "prompt_contrast",                         # are failures prompt-repairable?
         "cka", "self_consistency", "verbalized_confidence",
     ],
 }

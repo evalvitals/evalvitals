@@ -318,6 +318,95 @@ def _build_protocol():
     )
 
 
+# Probe order: cheap/fast models first; quotas are per-model and reset on
+# independent clocks, so whichever responds first is "the available version".
+_JUDGE_CANDIDATES = (
+    "Gemini 3.1 Pro (Low)",
+    "Claude Sonnet 4.6 (Thinking)",
+    "GPT-OSS 120B (Medium)",
+    "Gemini 3.5 Flash (Low)",
+    "Claude Opus 4.6 (Thinking)",
+)
+
+
+def _pick_agy_model() -> str:
+    """Return the first agy model that actually answers a probe prompt.
+
+    A quota-exhausted model returns an empty response (exit 0), so a tiny
+    generation probe is the only reliable availability check.  Raises
+    RuntimeError when every candidate is dead so the caller's existing
+    fallback (loaded model as judge) takes over.
+    """
+    import warnings as _w
+
+    from evalvitals.eval_agent import AgyModel
+
+    for name in _JUDGE_CANDIDATES:
+        try:
+            probe = AgyModel(model=name, timeout_sec=60)
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")  # quota warnings are expected here
+                out = probe.generate("Reply with exactly the word OK")
+            if out.strip():
+                print(f"  judge probe: {name!r} responded — selected")
+                return name
+            print(f"  judge probe: {name!r} empty (likely quota-exhausted)")
+        except RuntimeError as exc:
+            print(f"  judge probe: {name!r} failed ({str(exc)[:80]})")
+    raise RuntimeError(
+        "no agy model responded to the availability probe "
+        f"(tried {len(_JUDGE_CANDIDATES)} candidates — quotas likely exhausted)"
+    )
+
+
+def _build_protocol_med():
+    from evalvitals.eval_agent import ExperimentProtocol
+
+    return ExperimentProtocol(
+        description=(
+            "We evaluate a general vision-language model on radiology VQA "
+            "(VQA-RAD): identification questions (imaging modality, plane, "
+            "organ) and closed yes/no finding-presence questions (e.g. 'is "
+            "there evidence of a pneumothorax?'). The model handles "
+            "identification well but is unreliable on finding presence — its "
+            "yes/no answers often contradict the radiologist gold label. We "
+            "want to know whether presence answers are grounded in the scan, "
+            "and whether the errors are hallucinated findings (answering yes "
+            "to absent findings) or missed findings (answering no to present "
+            "findings)."
+        ),
+        task_domain="medical visual question answering",
+        success_criteria=(
+            "Presence answers must match the radiologist gold label: 'yes' "
+            "only when the finding is actually visible in the image, 'no' "
+            "otherwise. Identification answers must name the correct "
+            "modality/plane/organ."
+        ),
+        failure_patterns=(
+            "Failures concentrate on finding-presence questions, while "
+            "identification questions are mostly answered correctly."
+        ),
+        target_modalities=frozenset({"text", "image"}),
+    )
+
+
+def _build_medical_cases(args):
+    """Load the VQA-RAD diagnosis mix (easy control + presence yes/no)."""
+    from evalvitals.datasets import VQARADDataset
+
+    ds = VQARADDataset(
+        split="train",
+        n_easy=args.n_easy,
+        n_presence=args.n_presence,
+        seed=0,
+    )
+    cases = ds.load()
+    n_easy = sum(1 for c in cases if c.metadata.get("category") == "easy")
+    n_pres = sum(1 for c in cases if c.metadata.get("category") == "presence")
+    print(f"  VQA-RAD cases: {len(cases)} (easy={n_easy}, presence={n_pres})")
+    return cases
+
+
 def _run_smoke_test(args) -> None:
     from evalvitals.eval_agent import (
         CaseDiscoveryAgent,
@@ -451,16 +540,44 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument(
-        "--judge-model", default="Gemini 3.1 Pro (Low)",
-        help="agy model for the M1–M5 judge. The session default (Gemini 3.5 "
-             "Flash) is often quota-exhausted and returns empty; pick a free one "
-             "from `agy models`. Set to empty to use agy's session default.",
+        "--judge-model", default="auto",
+        help="agy model for the M1–M5 judge. 'auto' (default) probes a list of "
+             "candidates at startup and picks the first that responds — agy "
+             "quotas are per-model and exhaust independently. Pass an explicit "
+             "name from `agy models` to skip probing; empty = session default.",
     )
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument(
+        "--analyzers", default="",
+        help="Comma-separated analyzer names to pin for M1 (e.g. "
+             "'pope,relative_attention,prompt_contrast'). Bypasses the LLM "
+             "selection for reproducible experiments; empty = LLM-guided.",
+    )
+    parser.add_argument(
+        "--depth", choices=["observational", "intervention"], default="observational",
+        help="M5 stopping depth (P4): 'observational' stops on any supported "
+             "hypothesis; 'intervention' keeps cycling until a hypothesis is "
+             "verified by intervention-grade evidence (paired prompt contrast).",
+    )
+    parser.add_argument(
         "--smoke-test", action="store_true",
         help="Run a fast local wiring test without loading Qwen, GPU, or agy.",
+    )
+    parser.add_argument(
+        "--scenario", choices=["synthetic", "vqa-rad"], default="synthetic",
+        help="synthetic: labeled toy image (default). vqa-rad: radiology VQA "
+             "from HuggingFace flaviagiammarino/vqa-rad — easy identification "
+             "questions as the PASS control group + yes/no finding-presence "
+             "questions where presence hallucination concentrates failures.",
+    )
+    parser.add_argument(
+        "--n-easy", type=int, default=6,
+        help="vqa-rad: number of easy identification questions (control group).",
+    )
+    parser.add_argument(
+        "--n-presence", type=int, default=12,
+        help="vqa-rad: number of yes/no presence questions (balanced yes/no gold).",
     )
     parser.add_argument(
         "--download-image", action="store_true",
@@ -488,7 +605,6 @@ def main() -> None:
         CaseDiscoveryAgent,
         CliAgentConfig,
         DiagnosisAgent,
-        ExperimentProtocol,
         ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
@@ -515,9 +631,14 @@ def main() -> None:
     # If the binary is not properly mounted, the loaded VLM acts as judge
     # (a warning is printed and the rationale will reflect this).
     try:
-        judge = AgyModel(model=args.judge_model)
+        judge_model = args.judge_model
+        if judge_model == "auto":
+            judge_model = _pick_agy_model()
+        # 240s: M3 prompts now carry ~20 statistical verdicts + image attachments,
+        # which routinely exceed agy's 120s default.
+        judge = AgyModel(model=judge_model, timeout_sec=240)
         print(f"\n  judge : antigravity CLI ({judge._binary})  "
-              f"model={args.judge_model or 'session default'}  [M1–M5, no API key]")
+              f"model={judge_model or 'session default'}  [M1–M5, no API key]")
     except RuntimeError as _agy_err:
         import warnings as _w
         _w.warn(
@@ -529,14 +650,19 @@ def main() -> None:
         judge = model
         print(f"\n  judge : {args.model} (agy unavailable — using evaluated model as fallback)")
 
-    protocol = _build_protocol()
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Image + cases ─────────────────────────────────────────────────────────
-    print("\nPreparing image …")
-    image = _get_image(download=args.download_image)
-    candidate_cases = _build_candidate_cases(image)
+    # ── Protocol + candidate cases (per scenario) ─────────────────────────────
+    if args.scenario == "vqa-rad":
+        protocol = _build_protocol_med()
+        print("\nLoading VQA-RAD cases …")
+        candidate_cases = _build_medical_cases(args)
+    else:
+        protocol = _build_protocol()
+        print("\nPreparing image …")
+        image = _get_image(download=args.download_image)
+        candidate_cases = _build_candidate_cases(image)
     discovery = CaseDiscoveryAgent(
         scorer=_score_case,
         include_unknown=False,
@@ -581,14 +707,26 @@ def main() -> None:
     # With --allow-codegen, M1 also generates a bespoke black-box probe (run in a
     # sandbox over the model's outputs) when no catalog analyzer fits the failure.
     _m1_codegen = args.allow_codegen and not args.analysis_only
-    probe_agent = ProbeAgent(
-        judge=judge,
-        max_analyzers=args.max_analyzers,
-        allow_codegen=_m1_codegen,
-        codegen_config=(
-            CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model) if _m1_codegen else None
-        ),
-    )
+    if args.analyzers.strip():
+        # Pinned analyzer list — deterministic M1 for reproducible experiments.
+        from evalvitals.eval_agent import StrategyProbe
+
+        pinned = [a.strip() for a in args.analyzers.split(",") if a.strip()]
+        print(f"  M1 pinned analyzers: {pinned}")
+        probe_agent = ProbeAgent(
+            probe=StrategyProbe(priority_override={k: pinned for k in ("vlm", "agent", "llm")}),
+            judge=None,  # bypass LLM selection
+            max_analyzers=len(pinned),
+        )
+    else:
+        probe_agent = ProbeAgent(
+            judge=judge,
+            max_analyzers=args.max_analyzers,
+            allow_codegen=_m1_codegen,
+            codegen_config=(
+                CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model) if _m1_codegen else None
+            ),
+        )
 
     # ── M2: StatsAnalysisAgent — selects stats tools + agy writes narrative ──
     # M2 now runs a statistical-tool layer (signal/label association, McNemar +
@@ -599,6 +737,9 @@ def main() -> None:
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
         figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
+        # pope (5) + relative_attention (3) + prompt_contrast (5) per-case
+        # signal keys — don't silently truncate any of them.
+        max_signal_tools=16,
         allow_codegen=args.allow_codegen and not args.analysis_only,
         codegen_config=(
             CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model)
@@ -615,7 +756,9 @@ def main() -> None:
     # ── M5: HypothesisTester — agy checks protocol consistency ───────────────
     hypothesis_tester = None
     if not args.analysis_only:
-        hypothesis_tester = HypothesisTester(judge=judge, min_effect=0.05)
+        hypothesis_tester = HypothesisTester(
+            judge=judge, min_effect=0.05, min_evidence_grade=args.depth,
+        )
 
     # ── M4: SurgeryAgent — agy writes and runs the fix script ────────────────
     surgery_agent = None

@@ -173,6 +173,35 @@ def test_fdr_correct_with_evalues():
     assert out["n_tested"] == 1
 
 
+def test_llm_narrowing_never_drops_paired_tools():
+    """Judge narrowing by tool name must retain mcnemar/friedman — they exist
+    only when an intervention produced strategy groups and carry the causal
+    verdicts (regression: narrowing silently dropped the paired contrasts)."""
+    from evalvitals.eval_agent import StatsAnalysisAgent
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+    class NarrowJudge:
+        def generate(self, prompt, **kw):
+            return '{"tools": ["signal_label_assoc"], "rationale": "x"}'
+
+    # labels + per-case signal + 3 strategy groups → plan has assoc + friedman + mcnemar
+    res = {
+        "a": Result(analyzer="a", model="m", findings={
+            "per_case": [{"sample_id": f"c{i}", "flag": i % 2} for i in range(6)],
+            "by_strategy": {
+                s: {f"c{i}": float((i + j) % 2) for i in range(6)}
+                for j, s in enumerate(["baseline", "v1", "v2"])
+            },
+        }),
+    }
+    agent = StatsAnalysisAgent(judge=NarrowJudge())
+    rep = agent.analyze(res, model_name="m", data=_labeled_cases(),
+                        protocol=ExperimentProtocol(description="d"))
+    tools = [p["tool"] for p in rep.stats_plan]
+    assert "friedman_nemenyi" in tools
+    assert "mcnemar_evalue" in tools
+
+
 def test_fdr_correct_no_evalues():
     inp = build_stats_input({"attention": _attention_result()}, _labeled_cases())
     r = run_stats_tool("signal_label_assoc", inp, {"signal": "attention.low_img_attn"})

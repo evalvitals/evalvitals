@@ -132,6 +132,15 @@ def _save_artifact_figure(artifact_dir: Path, stem: str, arr: Any) -> None:
             ax.set_title(f"{stem}  (mean over {n_heads} heads)")
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             plt.tight_layout()
+        elif ndim == 2 and "diff" in key:
+            # Signed difference map (e.g. FAIL-mean minus PASS-mean attention):
+            # diverging colormap with symmetric limits so the sign is readable.
+            bound = float(max(abs(arr.min()), abs(arr.max()))) or 1.0
+            fig, ax = plt.subplots(figsize=(8, 7))
+            im = ax.imshow(arr, cmap="coolwarm", aspect="auto", vmin=-bound, vmax=bound)
+            ax.set_title(stem)
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            plt.tight_layout()
         elif ndim == 2 and (_is_attn or any(k in key for k in ("rollout", "spatial", "map"))):
             fig, ax = plt.subplots(figsize=(8, 7))
             im = ax.imshow(arr, cmap="viridis", aspect="auto")

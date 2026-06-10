@@ -66,6 +66,12 @@ class POPEAnalyzer(Analyzer):
                 "id": case.id,
                 "gold": gold,
                 "pred": pred,
+                # Mechanism signals first: M2's stats layer caps how many per-case
+                # signal keys it tests, and these two carry the diagnosis
+                # (hallucinated presence vs missed finding) — is_correct alone
+                # cannot distinguish them.
+                "false_positive": gold == "no" and pred == "yes",
+                "false_negative": gold == "yes" and pred == "no",
                 "has_gold": gold in {"yes", "no"},
                 "unparsed": pred is None,
                 "is_correct": is_correct,
@@ -95,6 +101,7 @@ class POPEAnalyzer(Analyzer):
                 "recall": round(recall, 4),
                 "f1": round(f1, 4),
                 "yes_rate": round((tp + fp) / n, 4) if n else None,  # >0.5 ⇒ over-affirmation (hallucination)
+                "false_positive_rate": round(fp / (fp + tn), 4) if (fp + tn) else None,
                 "per_case": per_case,
             },
         )
