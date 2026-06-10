@@ -348,9 +348,13 @@ class ProbeAgent:
                 if s is not None:
                     status = f" [{getattr(s, 'value', str(s))}]"
                 lines.append(f"  - {stmt}{status}")
+                design = getattr(h, "test_design", "")
+                if design:
+                    lines.append(f"    → proposed test: {design}")
             prior_section = (
                 "\nPRIOR HYPOTHESES FROM THIS INVESTIGATION "
-                "(select analyzers that help verify or refute these):\n"
+                "(select analyzers that collect the evidence their proposed "
+                "tests call for):\n"
                 + "\n".join(lines)
                 + "\n"
             )

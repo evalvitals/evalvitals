@@ -927,6 +927,7 @@ def _make_intervention_result_from_test(tr: "HypothesisTestResult") -> Any:
             "m5_confidence": tr.confidence,
             "m5_protocol_consistent": tr.is_consistent_with_protocol,
             "m5_verdict": tr.verdict,
+            "m5_evidence_grade": tr.evidence_grade,
             **tr.evidence,
         },
         confidence_score=tr.confidence,

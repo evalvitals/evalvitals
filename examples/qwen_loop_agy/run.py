@@ -513,6 +513,12 @@ def main() -> None:
              "selection for reproducible experiments; empty = LLM-guided.",
     )
     parser.add_argument(
+        "--depth", choices=["observational", "intervention"], default="observational",
+        help="M5 stopping depth (P4): 'observational' stops on any supported "
+             "hypothesis; 'intervention' keeps cycling until a hypothesis is "
+             "verified by intervention-grade evidence (paired prompt contrast).",
+    )
+    parser.add_argument(
         "--smoke-test", action="store_true",
         help="Run a fast local wiring test without loading Qwen, GPU, or agy.",
     )
@@ -705,7 +711,9 @@ def main() -> None:
     # ── M5: HypothesisTester — agy checks protocol consistency ───────────────
     hypothesis_tester = None
     if not args.analysis_only:
-        hypothesis_tester = HypothesisTester(judge=judge, min_effect=0.05)
+        hypothesis_tester = HypothesisTester(
+            judge=judge, min_effect=0.05, min_evidence_grade=args.depth,
+        )
 
     # ── M4: SurgeryAgent — agy writes and runs the fix script ────────────────
     surgery_agent = None

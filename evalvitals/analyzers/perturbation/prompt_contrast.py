@@ -139,7 +139,11 @@ class PromptContrastAnalyzer(Analyzer):
                     continue
                 by_strategy[strat][case.id] = float(bool(verdict))
 
-        # Per-case repair/breakage flags relative to baseline.
+        # Per-case repair/breakage flags relative to baseline.  Deliberately NO
+        # baseline_correct flag here: baseline correctness is (inversely) the
+        # PASS/FAIL label itself, so as a stats signal it produces tautological
+        # verdicts and hijacks evidence routing — the intervention information
+        # lives in the fixed_by_*/broken_by_* flags.
         base = by_strategy.get("baseline", {})
         variants = [s for s in self.strategies if s != "baseline"]
         per_case: list[dict[str, Any]] = []
@@ -147,7 +151,7 @@ class PromptContrastAnalyzer(Analyzer):
             cid = case.id
             if cid not in base:
                 continue
-            entry: dict[str, Any] = {"sample_id": cid, "baseline_correct": bool(base[cid])}
+            entry: dict[str, Any] = {"sample_id": cid}
             for strat in variants:
                 if cid in by_strategy[strat]:
                     entry[f"fixed_by_{strat}"] = bool(
