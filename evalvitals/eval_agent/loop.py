@@ -783,7 +783,15 @@ class VLDiagnoseLoop:
                 stopped_by = _STOPPED_BY_NO_HYPS
                 break
 
-            diag = diag_agent.diagnose(stats_report, prior_cycles=prior_cycles or None)
+            try:
+                diag = diag_agent.diagnose(stats_report, prior_cycles=prior_cycles or None)
+            except Exception as exc:  # judge timeout/quota must not kill the loop
+                logger.warning(
+                    "M3 diagnosis failed at cycle %d (%s) — stopping with the "
+                    "evidence collected so far.", cycle, exc,
+                )
+                stopped_by = _STOPPED_BY_NO_HYPS
+                break
 
             # Track token usage
             _tok = getattr(diag, "tokens_used", None)

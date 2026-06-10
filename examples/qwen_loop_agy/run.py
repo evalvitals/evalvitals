@@ -507,6 +507,12 @@ def main() -> None:
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument(
+        "--analyzers", default="",
+        help="Comma-separated analyzer names to pin for M1 (e.g. "
+             "'pope,relative_attention,prompt_contrast'). Bypasses the LLM "
+             "selection for reproducible experiments; empty = LLM-guided.",
+    )
+    parser.add_argument(
         "--smoke-test", action="store_true",
         help="Run a fast local wiring test without loading Qwen, GPU, or agy.",
     )
@@ -577,7 +583,9 @@ def main() -> None:
     # If the binary is not properly mounted, the loaded VLM acts as judge
     # (a warning is printed and the rationale will reflect this).
     try:
-        judge = AgyModel(model=args.judge_model)
+        # 240s: M3 prompts now carry ~20 statistical verdicts + image attachments,
+        # which routinely exceed agy's 120s default.
+        judge = AgyModel(model=args.judge_model, timeout_sec=240)
         print(f"\n  judge : antigravity CLI ({judge._binary})  "
               f"model={args.judge_model or 'session default'}  [M1–M5, no API key]")
     except RuntimeError as _agy_err:
@@ -648,14 +656,26 @@ def main() -> None:
     # With --allow-codegen, M1 also generates a bespoke black-box probe (run in a
     # sandbox over the model's outputs) when no catalog analyzer fits the failure.
     _m1_codegen = args.allow_codegen and not args.analysis_only
-    probe_agent = ProbeAgent(
-        judge=judge,
-        max_analyzers=args.max_analyzers,
-        allow_codegen=_m1_codegen,
-        codegen_config=(
-            CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model) if _m1_codegen else None
-        ),
-    )
+    if args.analyzers.strip():
+        # Pinned analyzer list — deterministic M1 for reproducible experiments.
+        from evalvitals.eval_agent import StrategyProbe
+
+        pinned = [a.strip() for a in args.analyzers.split(",") if a.strip()]
+        print(f"  M1 pinned analyzers: {pinned}")
+        probe_agent = ProbeAgent(
+            probe=StrategyProbe(priority_override={k: pinned for k in ("vlm", "agent", "llm")}),
+            judge=None,  # bypass LLM selection
+            max_analyzers=len(pinned),
+        )
+    else:
+        probe_agent = ProbeAgent(
+            judge=judge,
+            max_analyzers=args.max_analyzers,
+            allow_codegen=_m1_codegen,
+            codegen_config=(
+                CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model) if _m1_codegen else None
+            ),
+        )
 
     # ── M2: StatsAnalysisAgent — selects stats tools + agy writes narrative ──
     # M2 now runs a statistical-tool layer (signal/label association, McNemar +
@@ -666,8 +686,9 @@ def main() -> None:
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
         figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
-        # pope (5) + relative_attention (3) per-case signal keys — don't truncate.
-        max_signal_tools=8,
+        # pope (5) + relative_attention (3) + prompt_contrast (5) per-case
+        # signal keys — don't silently truncate any of them.
+        max_signal_tools=16,
         allow_codegen=args.allow_codegen and not args.analysis_only,
         codegen_config=(
             CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model)
