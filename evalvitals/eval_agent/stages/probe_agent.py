@@ -132,6 +132,7 @@ class ProbeAgent:
         allow_codegen: bool = False,
         codegen_config: "Any | None" = None,
         probe_generator: "Any | None" = None,
+        whitebox_generator: "Any | None" = None,
         case_examples: tuple[int, int] = (4, 2),
     ) -> None:
         self.selector = probe or StrategyProbe()
@@ -151,7 +152,10 @@ class ProbeAgent:
         self.allow_codegen = allow_codegen
         self._codegen_config = codegen_config
         self._probe_generator = probe_generator
+        self._whitebox_generator = whitebox_generator
         # Tier (c): generated probes are cached and re-run on later cycles.
+        # Each entry is (generator, probe) so cached probes re-run on the
+        # generator (black-box or white-box) that created them.
         self._generated_probes: list[Any] = []
         # Optional "need_custom" hint extracted from the LLM selection response.
         self._last_need_custom: str | None = None
@@ -497,18 +501,20 @@ class ProbeAgent:
     ) -> list[str]:
         """Reuse cached generated probes, then generate one if the catalog is thin.
 
+        Generator dispatch: when the requested probe targets the model's
+        *internals* (attention/layers/hidden states/…) and the model is
+        white-box, the capture-then-compute
+        :class:`~evalvitals.eval_agent.stages.whitebox_probe_generator.WhiteboxProbeGenerator`
+        is used; otherwise the black-box output-probe generator.
+
         Mutates *results* in place (adds ``generated:<name>`` entries) and returns
         the list of probe names added, for inclusion in the schema.
         """
-        generator = self._get_generator()
-        if generator is None:
-            return []
-
         added: list[str] = []
 
-        # Tier (c): re-run cached generated probes on this cycle's cases.
-        for probe in self._generated_probes:
-            r = generator.run_cached(probe, model, data)
+        # Tier (c): re-run cached generated probes on the generator that made them.
+        for gen, probe in self._generated_probes:
+            r = gen.run_cached(probe, model, data)
             if r is not None:
                 results[r.analyzer] = r
                 added.append(r.analyzer)
@@ -521,17 +527,37 @@ class ProbeAgent:
             return added
 
         goal = need or "Probe the model outputs for the failure described in the protocol."
+        generator = self._dispatch_generator(goal, model)
+        if generator is None:
+            return added
         name = f"probe{len(self._generated_probes) + 1}"
         result, probe = generator.generate(goal, model, data, name=name)
         if result is not None:
             results[result.analyzer] = result
             added.append(result.analyzer)
         if probe is not None:
-            self._generated_probes.append(probe)
+            self._generated_probes.append((generator, probe))
         return added
 
+    # Mechanism wording that calls for internal (white-box) evidence.
+    _WHITEBOX_NEED_KEYWORDS = (
+        "attention", "layer", "hidden", "logit", "internal", "sink",
+        "head", "patch", "token mass", "image token",
+    )
+
+    def _dispatch_generator(self, need: str, model: "Model") -> "Any | None":
+        """Choose the white-box or black-box generator for *need*."""
+        lowered = need.lower()
+        wants_internals = any(k in lowered for k in self._WHITEBOX_NEED_KEYWORDS)
+        is_whitebox = Capability.ATTENTION in getattr(model, "capabilities", frozenset())
+        if wants_internals and is_whitebox:
+            gen = self._get_whitebox_generator()
+            if gen is not None:
+                return gen
+        return self._get_generator()
+
     def _get_generator(self) -> "Any | None":
-        """Lazily build the probe generator from the judge / codegen config."""
+        """Lazily build the black-box probe generator from the judge / config."""
         if self._probe_generator is not None:
             return self._probe_generator
         if self.judge is None and self._codegen_config is None:
@@ -541,6 +567,21 @@ class ProbeAgent:
         if not gen.available:
             return None
         self._probe_generator = gen
+        return gen
+
+    def _get_whitebox_generator(self) -> "Any | None":
+        """Lazily build the white-box (capture-then-compute) probe generator."""
+        if self._whitebox_generator is not None:
+            return self._whitebox_generator
+        if self.judge is None and self._codegen_config is None:
+            return None
+        from evalvitals.eval_agent.stages.whitebox_probe_generator import (
+            WhiteboxProbeGenerator,
+        )
+        gen = WhiteboxProbeGenerator(judge=self.judge, cli_config=self._codegen_config)
+        if not gen.available:
+            return None
+        self._whitebox_generator = gen
         return gen
 
     # ------------------------------------------------------------------

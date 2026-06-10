@@ -318,6 +318,47 @@ def _build_protocol():
     )
 
 
+# Probe order: cheap/fast models first; quotas are per-model and reset on
+# independent clocks, so whichever responds first is "the available version".
+_JUDGE_CANDIDATES = (
+    "Gemini 3.1 Pro (Low)",
+    "Claude Sonnet 4.6 (Thinking)",
+    "GPT-OSS 120B (Medium)",
+    "Gemini 3.5 Flash (Low)",
+    "Claude Opus 4.6 (Thinking)",
+)
+
+
+def _pick_agy_model() -> str:
+    """Return the first agy model that actually answers a probe prompt.
+
+    A quota-exhausted model returns an empty response (exit 0), so a tiny
+    generation probe is the only reliable availability check.  Raises
+    RuntimeError when every candidate is dead so the caller's existing
+    fallback (loaded model as judge) takes over.
+    """
+    import warnings as _w
+
+    from evalvitals.eval_agent import AgyModel
+
+    for name in _JUDGE_CANDIDATES:
+        try:
+            probe = AgyModel(model=name, timeout_sec=60)
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")  # quota warnings are expected here
+                out = probe.generate("Reply with exactly the word OK")
+            if out.strip():
+                print(f"  judge probe: {name!r} responded — selected")
+                return name
+            print(f"  judge probe: {name!r} empty (likely quota-exhausted)")
+        except RuntimeError as exc:
+            print(f"  judge probe: {name!r} failed ({str(exc)[:80]})")
+    raise RuntimeError(
+        "no agy model responded to the availability probe "
+        f"(tried {len(_JUDGE_CANDIDATES)} candidates — quotas likely exhausted)"
+    )
+
+
 def _build_protocol_med():
     from evalvitals.eval_agent import ExperimentProtocol
 
@@ -499,10 +540,11 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument(
-        "--judge-model", default="Gemini 3.1 Pro (Low)",
-        help="agy model for the M1–M5 judge. The session default (Gemini 3.5 "
-             "Flash) is often quota-exhausted and returns empty; pick a free one "
-             "from `agy models`. Set to empty to use agy's session default.",
+        "--judge-model", default="auto",
+        help="agy model for the M1–M5 judge. 'auto' (default) probes a list of "
+             "candidates at startup and picks the first that responds — agy "
+             "quotas are per-model and exhaust independently. Pass an explicit "
+             "name from `agy models` to skip probing; empty = session default.",
     )
     parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--max-analyzers", type=int, default=2)
@@ -589,11 +631,14 @@ def main() -> None:
     # If the binary is not properly mounted, the loaded VLM acts as judge
     # (a warning is printed and the rationale will reflect this).
     try:
+        judge_model = args.judge_model
+        if judge_model == "auto":
+            judge_model = _pick_agy_model()
         # 240s: M3 prompts now carry ~20 statistical verdicts + image attachments,
         # which routinely exceed agy's 120s default.
-        judge = AgyModel(model=args.judge_model, timeout_sec=240)
+        judge = AgyModel(model=judge_model, timeout_sec=240)
         print(f"\n  judge : antigravity CLI ({judge._binary})  "
-              f"model={args.judge_model or 'session default'}  [M1–M5, no API key]")
+              f"model={judge_model or 'session default'}  [M1–M5, no API key]")
     except RuntimeError as _agy_err:
         import warnings as _w
         _w.warn(
