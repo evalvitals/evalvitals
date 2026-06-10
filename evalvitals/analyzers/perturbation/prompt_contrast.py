@@ -139,11 +139,15 @@ class PromptContrastAnalyzer(Analyzer):
                     continue
                 by_strategy[strat][case.id] = float(bool(verdict))
 
-        # Per-case repair/breakage flags relative to baseline.  Deliberately NO
-        # baseline_correct flag here: baseline correctness is (inversely) the
-        # PASS/FAIL label itself, so as a stats signal it produces tautological
-        # verdicts and hijacks evidence routing — the intervention information
-        # lives in the fixed_by_*/broken_by_* flags.
+        # Per-case repair/breakage flags relative to baseline — stored in
+        # ARTIFACTS, not findings["per_case"].  As label-association signals
+        # they are tautological: fixed_by_* can only fire on baseline-FAIL
+        # cases and broken_by_* only on baseline-PASS cases, so their sign
+        # against the labels is structurally determined and produces spurious
+        # SUPPORTED/REFUTED verdicts (same family as the removed
+        # baseline_correct flag).  The rigorous intervention verdict lives in
+        # the paired McNemar over by_strategy; the per-case flags remain
+        # available in artifacts for inspection.
         base = by_strategy.get("baseline", {})
         variants = [s for s in self.strategies if s != "baseline"]
         per_case: list[dict[str, Any]] = []
@@ -167,7 +171,6 @@ class PromptContrastAnalyzer(Analyzer):
             "n_strategies": len(self.strategies),
             "n_unscored": n_unscored,
             "by_strategy": by_strategy,
-            "per_case": per_case,
         }
         for strat in self.strategies:
             scored = by_strategy[strat]
@@ -186,5 +189,5 @@ class PromptContrastAnalyzer(Analyzer):
             model=repr(model),
             cases=cases,
             findings=findings,
-            artifacts={"answers": answers},
+            artifacts={"answers": answers, "per_case": per_case},
         )

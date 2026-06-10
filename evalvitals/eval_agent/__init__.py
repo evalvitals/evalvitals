@@ -60,6 +60,7 @@ stages/ (M1–M5 implementation):
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
 from evalvitals.eval_agent.cli_agent import (
     AgyModel,
+    ClaudeModel,
     CliAgentConfig,
     CliAgentResult,
     create_cli_agent,
@@ -142,6 +143,7 @@ from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 __all__ = [
     # Judge
     "AgyModel",
+    "ClaudeModel",
     # M1
     "ProbeAgent",
     "StrategyProbe",
