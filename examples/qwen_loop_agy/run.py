@@ -318,6 +318,54 @@ def _build_protocol():
     )
 
 
+def _build_protocol_med():
+    from evalvitals.eval_agent import ExperimentProtocol
+
+    return ExperimentProtocol(
+        description=(
+            "We evaluate a general vision-language model on radiology VQA "
+            "(VQA-RAD): identification questions (imaging modality, plane, "
+            "organ) and closed yes/no finding-presence questions (e.g. 'is "
+            "there evidence of a pneumothorax?'). The model handles "
+            "identification well but is unreliable on finding presence — its "
+            "yes/no answers often contradict the radiologist gold label. We "
+            "want to know whether presence answers are grounded in the scan, "
+            "and whether the errors are hallucinated findings (answering yes "
+            "to absent findings) or missed findings (answering no to present "
+            "findings)."
+        ),
+        task_domain="medical visual question answering",
+        success_criteria=(
+            "Presence answers must match the radiologist gold label: 'yes' "
+            "only when the finding is actually visible in the image, 'no' "
+            "otherwise. Identification answers must name the correct "
+            "modality/plane/organ."
+        ),
+        failure_patterns=(
+            "Failures concentrate on finding-presence questions, while "
+            "identification questions are mostly answered correctly."
+        ),
+        target_modalities=frozenset({"text", "image"}),
+    )
+
+
+def _build_medical_cases(args):
+    """Load the VQA-RAD diagnosis mix (easy control + presence yes/no)."""
+    from evalvitals.datasets import VQARADDataset
+
+    ds = VQARADDataset(
+        split="train",
+        n_easy=args.n_easy,
+        n_presence=args.n_presence,
+        seed=0,
+    )
+    cases = ds.load()
+    n_easy = sum(1 for c in cases if c.metadata.get("category") == "easy")
+    n_pres = sum(1 for c in cases if c.metadata.get("category") == "presence")
+    print(f"  VQA-RAD cases: {len(cases)} (easy={n_easy}, presence={n_pres})")
+    return cases
+
+
 def _run_smoke_test(args) -> None:
     from evalvitals.eval_agent import (
         CaseDiscoveryAgent,
@@ -463,6 +511,21 @@ def main() -> None:
         help="Run a fast local wiring test without loading Qwen, GPU, or agy.",
     )
     parser.add_argument(
+        "--scenario", choices=["synthetic", "vqa-rad"], default="synthetic",
+        help="synthetic: labeled toy image (default). vqa-rad: radiology VQA "
+             "from HuggingFace flaviagiammarino/vqa-rad — easy identification "
+             "questions as the PASS control group + yes/no finding-presence "
+             "questions where presence hallucination concentrates failures.",
+    )
+    parser.add_argument(
+        "--n-easy", type=int, default=6,
+        help="vqa-rad: number of easy identification questions (control group).",
+    )
+    parser.add_argument(
+        "--n-presence", type=int, default=12,
+        help="vqa-rad: number of yes/no presence questions (balanced yes/no gold).",
+    )
+    parser.add_argument(
         "--download-image", action="store_true",
         help="Use the demo Wikimedia image instead of the synthetic labeled image.",
     )
@@ -488,7 +551,6 @@ def main() -> None:
         CaseDiscoveryAgent,
         CliAgentConfig,
         DiagnosisAgent,
-        ExperimentProtocol,
         ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
@@ -529,14 +591,19 @@ def main() -> None:
         judge = model
         print(f"\n  judge : {args.model} (agy unavailable — using evaluated model as fallback)")
 
-    protocol = _build_protocol()
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Image + cases ─────────────────────────────────────────────────────────
-    print("\nPreparing image …")
-    image = _get_image(download=args.download_image)
-    candidate_cases = _build_candidate_cases(image)
+    # ── Protocol + candidate cases (per scenario) ─────────────────────────────
+    if args.scenario == "vqa-rad":
+        protocol = _build_protocol_med()
+        print("\nLoading VQA-RAD cases …")
+        candidate_cases = _build_medical_cases(args)
+    else:
+        protocol = _build_protocol()
+        print("\nPreparing image …")
+        image = _get_image(download=args.download_image)
+        candidate_cases = _build_candidate_cases(image)
     discovery = CaseDiscoveryAgent(
         scorer=_score_case,
         include_unknown=False,

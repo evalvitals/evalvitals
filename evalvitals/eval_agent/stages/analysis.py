@@ -95,6 +95,10 @@ _RULES: dict[str, list[_Rule]] = {
               "low POPE accuracy — model frequently hallucinates objects"),
         _Rule("f1",        0.7, "below", "medium",
               "low POPE F1 — precision/recall imbalance in object detection"),
+        _Rule("yes_rate",  0.7, "above", "high",
+              "over-affirmation — model answers 'yes' regardless of image evidence"),
+        _Rule("false_positive_rate", 0.5, "above", "high",
+              "presence hallucination — model claims absent findings are present"),
     ],
     "chair": [
         _Rule("chair_i",   0.3, "above", "high",

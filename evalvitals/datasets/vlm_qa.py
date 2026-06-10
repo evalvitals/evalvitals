@@ -168,3 +168,163 @@ class Spatial457Dataset(Dataset):
             meta_keys=("image_filename", "question_index", "program"),
             base_meta={"dataset": "spatial457", "subset": self.subset},
         )
+
+
+# VQA-RAD — flaviagiammarino/vqa-rad row schema: {image: PIL, question, answer}
+_VQA_RAD_SAMPLE = [
+    {"image": None, "question": "what imaging modality was used?", "answer": "ct"},
+    {"image": None, "question": "is there evidence of a pneumothorax?", "answer": "no"},
+    {"image": None, "question": "is the heart enlarged?", "answer": "yes"},
+    {"image": None, "question": "what plane is this image taken in?", "answer": "axial"},
+]
+
+# Question fragments that identify "easy" identification questions (modality /
+# plane / organ) a general VLM reliably answers — the M5 control (PASS) group.
+_VQA_RAD_EASY_FRAGMENTS = (
+    "modality", "what plane", "which plane", "plane is", "what organ",
+    "which organ", "organ system", "part of the body", "what type of imaging",
+    "what kind of image", "what imaging", "mri or ct", "ct or mri",
+)
+
+
+def _categorize_vqa_rad(question: str, answer: str) -> str:
+    """``"easy"`` (modality/plane/organ), ``"presence"`` (closed yes/no), or ``"other"``."""
+    q = " ".join(str(question).lower().split())
+    if any(frag in q for frag in _VQA_RAD_EASY_FRAGMENTS):
+        return "easy"
+    if str(answer).strip().lower() in {"yes", "no"}:
+        return "presence"
+    return "other"
+
+
+def _easy_answer_rubric(gold: str) -> dict:
+    """Token-level ``any_of`` rubric for open identification answers.
+
+    VQA-RAD gold strings are messy ("xray - plain film", tab-separated organ
+    lists) — whole-string matching would mislabel correct answers as FAIL and
+    pollute the control group.  Accept any significant gold token instead, with
+    a cheap plural tolerance (kidneys → kidney).
+    """
+    import re as _re
+
+    tokens: list[str] = []
+    for tok in _re.findall(r"[a-z0-9]+", str(gold).lower()):
+        if len(tok) < 2 or tok in tokens:
+            continue
+        tokens.append(tok)
+        if tok.endswith("s") and len(tok) > 3 and tok[:-1] not in tokens:
+            tokens.append(tok[:-1])
+    return {"any_of": tokens or [str(gold).strip().lower()]}
+
+
+class VQARADDataset(Dataset):
+    """VQA-RAD — radiology VQA (Lau et al., 2018), public domain (CC0).
+
+    Builds a **diagnosis-ready** case mix for the VL failure-analysis loop:
+
+    - ``n_easy`` identification questions (modality/plane/organ) the model
+      reliably PASSES — M5's control group;
+    - ``n_presence`` closed yes/no finding-presence questions, balanced between
+      gold "yes" and gold "no" — where presence hallucination (yes-bias)
+      concentrates the failures.
+
+    Presence cases carry ``metadata["pope_label"]`` so the ``pope`` analyzer can
+    score them and emit per-case ``false_positive`` / ``false_negative``
+    mechanism signals, plus a strict ``{"all_of": [gold], "none_of": [other]}``
+    rubric for the discovery scorer.  Easy cases get a token-level ``any_of``
+    rubric (gold strings are messy free text).
+
+    Data: https://huggingface.co/datasets/flaviagiammarino/vqa-rad
+    Paper: "A dataset of clinically generated visual questions and answers
+           about radiology images" — Lau et al., Scientific Data 2018.
+    """
+
+    def __init__(
+        self,
+        split: str = "train",
+        *,
+        records: list[dict] | None = None,
+        hf_repo: str = "flaviagiammarino/vqa-rad",
+        n_easy: int = 6,
+        n_presence: int = 12,
+        seed: int = 0,
+    ) -> None:
+        self.split = split
+        self.hf_repo = hf_repo
+        self.n_easy = n_easy
+        self.n_presence = n_presence
+        self.seed = seed
+        self._records = records
+
+    @classmethod
+    def from_records(cls, records: list[dict], **kw) -> "VQARADDataset":
+        return cls(records=records, **kw)
+
+    @classmethod
+    def sample(cls) -> "VQARADDataset":
+        return cls(records=_VQA_RAD_SAMPLE, n_easy=2, n_presence=2)
+
+    def _load_hf(self) -> Iterable[dict]:
+        try:
+            from datasets import load_dataset
+        except ImportError as e:  # pragma: no cover - optional dep
+            raise ImportError(
+                "VQARADDataset.load() needs the HuggingFace 'datasets' library — "
+                "pip install evalvitals[data] (or use from_records()/sample() offline)."
+            ) from e
+        return load_dataset(self.hf_repo, split=self.split)
+
+    def load(self) -> CaseBatch:
+        import random
+
+        rows = self._records if self._records is not None else self._load_hf()
+
+        easy: list[dict] = []
+        pres_yes: list[dict] = []
+        pres_no: list[dict] = []
+        for rec in rows:
+            cat = _categorize_vqa_rad(rec.get("question", ""), rec.get("answer", ""))
+            if cat == "easy":
+                easy.append(rec)
+            elif cat == "presence":
+                (pres_yes if str(rec["answer"]).strip().lower() == "yes" else pres_no).append(rec)
+
+        rng = random.Random(self.seed)
+        rng.shuffle(easy)
+        rng.shuffle(pres_yes)
+        rng.shuffle(pres_no)
+
+        half = self.n_presence // 2
+        picked_pres = pres_yes[:half] + pres_no[: self.n_presence - half]
+        picked_easy = easy[: self.n_easy]
+
+        out = CaseBatch()
+        for i, rec in enumerate(picked_easy):
+            out.append(FailureCase(
+                id=f"rad_easy_{i}",
+                inputs=Inputs(
+                    prompt=f"{str(rec['question']).strip()} Answer briefly.",
+                    image=rec.get("image"),
+                ),
+                expected=_easy_answer_rubric(rec["answer"]),
+                tags={"vlm_qa", "med_vqa", "vqa_rad", "easy"},
+                provenance=Provenance(source=Source.DATASET),
+                metadata={"dataset": "vqa_rad", "category": "easy",
+                          "gold_answer": str(rec["answer"]).strip()},
+            ))
+        for i, rec in enumerate(picked_pres):
+            gold = str(rec["answer"]).strip().lower()
+            other = "no" if gold == "yes" else "yes"
+            out.append(FailureCase(
+                id=f"rad_pres_{i}",
+                inputs=Inputs(
+                    prompt=f"{str(rec['question']).strip()} Answer yes or no.",
+                    image=rec.get("image"),
+                ),
+                expected={"all_of": [gold], "none_of": [other]},
+                tags={"vlm_qa", "med_vqa", "vqa_rad", "presence"},
+                provenance=Provenance(source=Source.DATASET),
+                metadata={"dataset": "vqa_rad", "category": "presence",
+                          "pope_label": gold, "gold_answer": gold},
+            ))
+        return out
