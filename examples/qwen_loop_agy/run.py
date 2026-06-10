@@ -666,6 +666,8 @@ def main() -> None:
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
         figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
+        # pope (5) + relative_attention (3) per-case signal keys — don't truncate.
+        max_signal_tools=8,
         allow_codegen=args.allow_codegen and not args.analysis_only,
         codegen_config=(
             CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model)

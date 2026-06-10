@@ -1,0 +1,132 @@
+"""Batch RelativeAttentionAnalyzer: per-case focus signals + FAIL/PASS group maps.
+
+P1 of the depth roadmap: attention analyzers must emit per-case findings so the
+M2 stats layer can correlate attention behaviour with PASS/FAIL labels, plus
+group-mean / difference spatial maps for visual comparison.
+"""
+
+from __future__ import annotations
+
+import torch
+
+from evalvitals.analyzers.attention.relative_attn import RelativeAttentionAnalyzer
+from evalvitals.core.capability import Capability
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
+from evalvitals.core.model import Model, Trace
+
+_SEQ = 8
+_IMG_SLICE = slice(2, 6)  # 4 image tokens → spatial (2, 2)
+
+
+class AttnVLM(Model):
+    """Fake VLM with controllable last-row attention over 4 image tokens.
+
+    Prompts containing "FOCUS" peak on the first image patch; any other
+    task prompt (and the generic baseline) is uniform — so FOCUS cases get a
+    high max relative weight (~4x) and flat cases ~1x.
+    """
+
+    capabilities = frozenset({Capability.GENERATE, Capability.ATTENTION})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        return "x"
+
+    def forward(self, inputs, capture, spec=None) -> Trace:
+        prompt = str(getattr(inputs, "prompt", inputs))
+        row = torch.full((_SEQ,), 0.01)
+        if "FOCUS" in prompt:
+            row[_IMG_SLICE] = torch.tensor([0.4, 0.05, 0.05, 0.05])
+        else:  # generic baseline and "flat" task prompts
+            row[_IMG_SLICE] = torch.full((4,), 0.1)
+        layer = torch.zeros(2, _SEQ, _SEQ)
+        layer[:, -1, :] = row
+        mask = torch.zeros(_SEQ, dtype=torch.bool)
+        mask[_IMG_SLICE] = True
+        return Trace(
+            tokens=["t"] * _SEQ,
+            token_ids=list(range(_SEQ)),
+            provided={Capability.ATTENTION},
+            attentions=[layer.clone() for _ in range(3)],
+            extras={"image_token_mask": mask, "image_spatial_shape": (2, 2)},
+        )
+
+
+class NoMaskVLM(AttnVLM):
+    def forward(self, inputs, capture, spec=None) -> Trace:
+        trace = super().forward(inputs, capture, spec)
+        trace.extras = {}
+        return trace
+
+
+def _labeled_batch() -> CaseBatch:
+    return CaseBatch([
+        FailureCase(id="p0", inputs=Inputs(prompt="FOCUS on the lesion", image="<img>"),
+                    label=Label.PASS),
+        FailureCase(id="p1", inputs=Inputs(prompt="FOCUS on the organ", image="<img>"),
+                    label=Label.PASS),
+        FailureCase(id="f0", inputs=Inputs(prompt="is there a finding", image="<img>"),
+                    label=Label.FAIL),
+        FailureCase(id="f1", inputs=Inputs(prompt="is there a lesion", image="<img>"),
+                    label=Label.FAIL),
+    ])
+
+
+def test_per_case_signals_cover_batch():
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    pc = res.findings["per_case"]
+    assert [e["id"] for e in pc] == ["p0", "p1", "f0", "f1"]
+    assert res.findings["n_cases_analyzed"] == 4
+    by_id = {e["id"]: e for e in pc}
+    # FOCUS (pass) cases peak ~4x; flat (fail) cases ~1x.
+    assert by_id["p0"]["max_relative_weight"] > 3.5
+    assert by_id["f0"]["max_relative_weight"] < 1.5
+    assert 0 < by_id["p0"]["focus_share"] <= 1
+
+
+def test_group_means_and_diff_map():
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    assert res.findings["fail_mean_max_relative_weight"] < 1.5
+    assert res.findings["pass_mean_max_relative_weight"] > 3.5
+    diff = res.artifacts["diff_map_fail_minus_pass"]
+    assert diff.shape == (2, 2)
+    # Fail group is flat (~1.0); pass group peaks (~4.0) on the first patch.
+    assert diff.flat[0] < -2.0
+    assert res.artifacts["fail_mean_map"].shape == (2, 2)
+    assert res.artifacts["pass_mean_map"].shape == (2, 2)
+
+
+def test_backward_compatible_artifacts_and_findings():
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    # First-case artifacts + findings keys preserved for existing consumers.
+    assert res.artifacts["attn_map"].shape == (4,)
+    assert res.artifacts["spatial_map"].shape == (2, 2)
+    for key in ("n_image_tokens", "n_layers", "layer_used", "map_shape", "top_patches"):
+        assert key in res.findings
+
+
+def test_unlabeled_batch_has_no_group_maps():
+    cases = CaseBatch([
+        FailureCase(id="u0", inputs=Inputs(prompt="FOCUS here", image="<img>")),
+    ])
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), cases)
+    assert "diff_map_fail_minus_pass" not in res.artifacts
+    assert "fail_mean_max_relative_weight" not in res.findings
+
+
+def test_all_cases_failing_raises_actionable_error():
+    import pytest
+
+    with pytest.raises(ValueError, match="image_token_mask"):
+        RelativeAttentionAnalyzer().run(NoMaskVLM(), _labeled_batch())
+
+
+def test_stats_layer_picks_up_attention_signals():
+    from evalvitals.eval_agent.stages.stats_tools import build_stats_input, describe_data
+
+    batch = _labeled_batch()
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), batch)
+    inp = build_stats_input({"relative_attention": res}, batch)
+    assert "relative_attention.max_relative_weight" in inp.per_case
+    # Continuous signal → eligible for median-split association and rank corr.
+    assert "relative_attention.max_relative_weight" in describe_data(inp)["continuous_signals"]
