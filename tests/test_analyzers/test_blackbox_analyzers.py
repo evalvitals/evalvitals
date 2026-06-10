@@ -55,6 +55,27 @@ def test_pope_metrics():
     assert f["per_case"][0]["is_correct"] is True
 
 
+def test_pope_mechanism_signals():
+    """false_positive (hallucinated presence) vs false_negative (missed finding)."""
+    recs = [
+        {"question": "Is there a dog?", "pope_label": "yes"},   # pred yes → TP
+        {"question": "Is there a cat?", "pope_label": "yes"},   # pred no  → FN (miss)
+        {"question": "Is there a car?", "pope_label": "no"},    # pred yes → FP (hallucination)
+        {"question": "Is there a tree?", "pope_label": "no"},   # pred no  → TN
+    ]
+    cases = cases_from_records(recs)
+    model = ScriptModel(["yes", "no", "yes", "no"])
+    f = POPEAnalyzer().run(model, cases).findings
+    flags = [(e["false_positive"], e["false_negative"]) for e in f["per_case"]]
+    assert flags == [(False, False), (False, True), (True, False), (False, False)]
+    assert f["false_positive_rate"] == 0.5  # fp=1 of (fp+tn)=2
+    # Cases without a gold label never flag a mechanism signal.
+    no_gold = cases_from_records([{"question": "What modality is this?"}])
+    f2 = POPEAnalyzer().run(ScriptModel(["yes"]), no_gold).findings
+    assert f2["per_case"][0]["false_positive"] is False
+    assert f2["per_case"][0]["false_negative"] is False
+
+
 # ---------------- CHAIR ----------------
 def test_chair_score_and_extract():
     assert chair_score(["dog", "cat"], ["dog"])["chair_i"] == 0.5

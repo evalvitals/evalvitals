@@ -539,6 +539,15 @@ def default_plan(inp: StatsInput, max_signals: int = 4) -> list[tuple[str, dict,
     n_groups = d["n_strategy_groups"]
     if n_groups >= 3:
         plan.append(("friedman_nemenyi", {}, "rank 3+ strategies"))
+        # Pairwise paired tests against the first (baseline) strategy — the
+        # informative contrasts for intervention experiments (prompt variants).
+        names = list(inp.groups or {})
+        base = names[0]
+        for variant in names[1:4]:
+            plan.append((
+                "mcnemar_evalue", {"strategies": [base, variant]},
+                f"paired contrast: does '{variant}' repair '{base}' failures?",
+            ))
     elif n_groups == 2:
         plan.append(("mcnemar_evalue", {}, "paired two-strategy comparison"))
 

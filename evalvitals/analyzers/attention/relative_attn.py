@@ -88,11 +88,20 @@ class RelativeAttentionAnalyzer(Analyzer):
         "MLLMs Know Where to Look" (arXiv 2502.17422)
         https://arxiv.org/abs/2502.17422 · https://github.com/saccharomycetes/mllms_know
 
+    Runs over the **whole batch** (one specific/general forward pair per case)
+    and emits per-case focus metrics so the M2 stats layer can correlate
+    attention behaviour with PASS/FAIL labels — e.g. "missed-finding cases show
+    significantly lower task-specific attention".  When cases carry labels, the
+    artifacts additionally include the mean spatial maps of the FAIL and PASS
+    groups and their difference (``diff_map_fail_minus_pass``) for visual
+    comparison.
+
     Hyper-parameters:
         general_prompt: Baseline prompt (same image, generic question).
         layer:          Decoder layer to read attention from (-1 = last).
                         The paper uses layer 22 for Qwen2.5-VL-7B-Instruct.
         top_k:          Number of highest-scoring patches to include in findings.
+        max_cases:      Cap on analysed cases (2 attention-captured forwards each).
 
     Example::
 
@@ -115,13 +124,107 @@ class RelativeAttentionAnalyzer(Analyzer):
         general_prompt: str = "Describe the image.",
         layer: int = -1,
         top_k: int = 5,
+        max_cases: int = 32,
     ) -> None:
-        super().__init__(general_prompt=general_prompt, layer=layer, top_k=top_k)
+        super().__init__(
+            general_prompt=general_prompt, layer=layer, top_k=top_k, max_cases=max_cases
+        )
 
     def _run(self, model: "Model", cases: "CaseBatch") -> RelativeAttentionResult:
-        import torch
+        per_case: list[dict] = []
+        errors: list[str] = []
+        first_exc: Exception | None = None
+        first: tuple | None = None  # (rel_np, spatial_map, n_img, n_layers)
+        maps_fail: list[np.ndarray] = []
+        maps_pass: list[np.ndarray] = []
 
-        case = cases[0]
+        for case in list(cases)[: self.max_cases]:
+            try:
+                rel_np, spatial_map, n_img, n_layers = self._relative_map(model, case)
+            except Exception as exc:  # noqa: BLE001 - record and continue the batch
+                errors.append(f"{case.id}: {exc}")
+                if first_exc is None:
+                    first_exc = exc
+                continue
+            if first is None:
+                first = (rel_np, spatial_map, n_img, n_layers)
+
+            k = min(self.top_k, rel_np.size)
+            topk_share = float(np.sort(rel_np)[::-1][:k].sum() / (rel_np.sum() + 1e-8))
+            per_case.append({
+                "id": case.id,
+                "max_relative_weight": round(float(rel_np.max()), 4),
+                "mean_relative_weight": round(float(rel_np.mean()), 4),
+                "focus_share": round(topk_share, 4),
+            })
+
+            label = getattr(getattr(case, "label", None), "value", None)
+            if label == "fail":
+                maps_fail.append(spatial_map)
+            elif label == "pass":
+                maps_pass.append(spatial_map)
+
+        if first is None:
+            # Whole batch failed — preserve the original single-case semantics
+            # (probe_agent catches this and warns with the actionable message).
+            raise first_exc if first_exc is not None else ValueError("empty case batch")
+
+        rel_np, spatial_map, n_img, n_layers = first
+        topk_idx = np.argsort(rel_np)[::-1][: self.top_k]
+        top_patches = [
+            {"patch_idx": int(i), "relative_weight": round(float(rel_np[i]), 4)}
+            for i in topk_idx
+        ]
+
+        artifacts: dict = {"attn_map": rel_np, "spatial_map": spatial_map}
+        fail_mean = _group_mean_map(maps_fail)
+        pass_mean = _group_mean_map(maps_pass)
+        if fail_mean is not None:
+            artifacts["fail_mean_map"] = fail_mean
+        if pass_mean is not None:
+            artifacts["pass_mean_map"] = pass_mean
+        if (
+            fail_mean is not None and pass_mean is not None
+            and fail_mean.shape == pass_mean.shape
+        ):
+            artifacts["diff_map_fail_minus_pass"] = fail_mean - pass_mean
+
+        maxes = [e["max_relative_weight"] for e in per_case]
+        findings: dict = {
+            "n_image_tokens": n_img,
+            "n_layers": n_layers,
+            "layer_used": self.layer,
+            "map_shape": list(spatial_map.shape),
+            "top_patches": top_patches,
+            "n_cases_analyzed": len(per_case),
+            "n_errors": len(errors),
+            "mean_max_relative_weight": round(float(np.mean(maxes)), 4),
+            "per_case": per_case,
+        }
+        if maps_fail and maps_pass:
+            label_by_id = {
+                c.id: getattr(getattr(c, "label", None), "value", None) for c in cases
+            }
+            fail_maxes = [e["max_relative_weight"] for e in per_case
+                          if label_by_id.get(e["id"]) == "fail"]
+            pass_maxes = [e["max_relative_weight"] for e in per_case
+                          if label_by_id.get(e["id"]) == "pass"]
+            if fail_maxes and pass_maxes:
+                findings["fail_mean_max_relative_weight"] = round(float(np.mean(fail_maxes)), 4)
+                findings["pass_mean_max_relative_weight"] = round(float(np.mean(pass_maxes)), 4)
+
+        result = RelativeAttentionResult(
+            analyzer=self.name,
+            model=repr(model),
+            cases=cases,
+            artifacts=artifacts,
+        )
+        result.findings = findings
+        return result
+
+    def _relative_map(self, model: "Model", case) -> "tuple[np.ndarray, np.ndarray, int, int]":
+        """One specific/general forward pair → (rel_map, spatial_map, n_img, n_layers)."""
+        import torch  # noqa: F401 - tensor ops below
 
         # Forward pass 1: task-specific prompt
         specific_trace = model.forward(case.inputs, capture={Capability.ATTENTION})
@@ -152,7 +255,7 @@ class RelativeAttentionAnalyzer(Analyzer):
                 "Both prompts must use the same image."
             )
 
-        def _img_attn(trace, mask) -> torch.Tensor:
+        def _img_attn(trace, mask):
             """Head-averaged attention from the last query position to image patches."""
             attns = trace.require(Capability.ATTENTION)
             a = attns[self.layer].float()  # (heads, seq, seq)
@@ -160,6 +263,7 @@ class RelativeAttentionAnalyzer(Analyzer):
 
         specific_attn = _img_attn(specific_trace, specific_mask)
         general_attn = _img_attn(general_trace, general_mask)
+        n_layers = len(specific_trace.require(Capability.ATTENTION))
 
         # Relative attention: ratio highlighting task-relevant patches
         rel = specific_attn / (general_attn + 1e-8)
@@ -169,32 +273,24 @@ class RelativeAttentionAnalyzer(Analyzer):
         spatial_shape = specific_trace.extras.get("image_spatial_shape")
         if spatial_shape is not None:
             h, w = spatial_shape
-            if h * w == n_img:
-                spatial_map = rel_np.reshape(h, w)
-            else:
-                spatial_map = rel_np
+            spatial_map = rel_np.reshape(h, w) if h * w == n_img else rel_np
         else:
             side = int(n_img ** 0.5)
             spatial_map = rel_np.reshape(side, side) if side * side == n_img else rel_np
 
-        # Top-k patches for agent-readable findings
-        topk_idx = np.argsort(rel_np)[::-1][: self.top_k]
-        top_patches = [
-            {"patch_idx": int(i), "relative_weight": round(float(rel_np[i]), 4)}
-            for i in topk_idx
-        ]
+        return rel_np, spatial_map, n_img, n_layers
 
-        result = RelativeAttentionResult(
-            analyzer=self.name,
-            model=repr(model),
-            cases=cases,
-            artifacts={"attn_map": rel_np, "spatial_map": spatial_map},
-        )
-        result.findings = {
-            "n_image_tokens": n_img,
-            "n_layers": len(specific_trace.require(Capability.ATTENTION)),
-            "layer_used": self.layer,
-            "map_shape": list(spatial_map.shape),
-            "top_patches": top_patches,
-        }
-        return result
+
+def _group_mean_map(maps: "list[np.ndarray]") -> "np.ndarray | None":
+    """Mean of the spatial maps sharing the most common shape (None when empty).
+
+    Different source images can produce different patch grids; averaging is only
+    meaningful within one grid shape, so minority shapes are dropped.
+    """
+    if not maps:
+        return None
+    from collections import Counter
+
+    shape = Counter(m.shape for m in maps).most_common(1)[0][0]
+    same = [m for m in maps if m.shape == shape]
+    return np.mean(np.stack(same), axis=0)

@@ -90,3 +90,78 @@ def test_spatial457_sample():
     cb = Spatial457Dataset.sample().load()
     assert len(cb) == 2 and "spatial457" in cb[0].tags
     assert cb[0].metadata["dataset"] == "spatial457"
+
+
+# ---------------- VQA-RAD ----------------
+
+def _rad_records():
+    """Synthetic VQA-RAD-shaped records: 3 easy, 3 gold-yes, 3 gold-no, 1 open."""
+    recs = [
+        {"image": "<img>", "question": "what imaging modality was used?", "answer": "ct"},
+        {"image": "<img>", "question": "which plane is this image taken in?", "answer": "axial"},
+        {"image": "<img>", "question": "what organ system is shown?", "answer": "chest"},
+        {"image": "<img>", "question": "what is the largest structure?", "answer": "liver"},  # other
+    ]
+    for i in range(3):
+        recs.append({"image": "<img>", "question": f"is finding {i} present?", "answer": "yes"})
+        recs.append({"image": "<img>", "question": f"is lesion {i} visible?", "answer": "no"})
+    return recs
+
+
+def test_vqa_rad_categorize():
+    from evalvitals.datasets.vlm_qa import _categorize_vqa_rad
+    assert _categorize_vqa_rad("what imaging modality was used?", "ct") == "easy"
+    assert _categorize_vqa_rad("which plane is this?", "axial") == "easy"
+    assert _categorize_vqa_rad("is there a pneumothorax?", "no") == "presence"
+    assert _categorize_vqa_rad("is the heart enlarged?", "yes") == "presence"
+    assert _categorize_vqa_rad("what is the largest structure?", "liver") == "other"
+
+
+def test_vqa_rad_balanced_mix_and_pope_labels():
+    from evalvitals.datasets import VQARADDataset
+
+    cb = VQARADDataset.from_records(_rad_records(), n_easy=2, n_presence=4, seed=0).load()
+    easy = [c for c in cb if c.metadata["category"] == "easy"]
+    pres = [c for c in cb if c.metadata["category"] == "presence"]
+    assert len(easy) == 2 and len(pres) == 4
+
+    # Presence cases: balanced gold, pope_label set, dict expected rubric.
+    golds = [c.metadata["pope_label"] for c in pres]
+    assert golds.count("yes") == 2 and golds.count("no") == 2
+    for c in pres:
+        assert c.inputs.prompt.endswith("Answer yes or no.")
+        gold = c.metadata["pope_label"]
+        other = "no" if gold == "yes" else "yes"
+        assert c.expected == {"all_of": [gold], "none_of": [other]}
+        assert "med_vqa" in c.tags and "presence" in c.tags
+
+    # Easy cases: token any_of rubric, no pope_label.
+    for c in easy:
+        assert isinstance(c.expected, dict) and c.expected.get("any_of")
+        assert "pope_label" not in c.metadata
+        assert c.inputs.prompt.endswith("Answer briefly.")
+
+
+def test_vqa_rad_easy_rubric_tokenizes_messy_gold():
+    from evalvitals.datasets.vlm_qa import _easy_answer_rubric
+    assert _easy_answer_rubric("xray - plain film") == {"any_of": ["xray", "plain", "film"]}
+    # tab-separated organ lists + plural tolerance
+    r = _easy_answer_rubric("respiratory \tcardia c\tmusculoskeletal")
+    assert "respiratory" in r["any_of"]
+    assert _easy_answer_rubric("kidneys")["any_of"] == ["kidneys", "kidney"]
+    assert _easy_answer_rubric("ct")["any_of"] == ["ct"]
+
+
+def test_vqa_rad_deterministic_sampling():
+    from evalvitals.datasets import VQARADDataset
+
+    a = VQARADDataset.from_records(_rad_records(), n_easy=2, n_presence=4, seed=0).load()
+    b = VQARADDataset.from_records(_rad_records(), n_easy=2, n_presence=4, seed=0).load()
+    assert [c.inputs.prompt for c in a] == [c.inputs.prompt for c in b]
+
+
+def test_vqa_rad_sample_offline():
+    from evalvitals.datasets import VQARADDataset
+    cb = VQARADDataset.sample().load()
+    assert len(cb) >= 2
+    assert all(c.metadata["dataset"] == "vqa_rad" for c in cb)

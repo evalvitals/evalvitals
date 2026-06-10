@@ -900,3 +900,25 @@ class TestVLDiagnoseLoop:
             assert report.cycles >= 1
         except Exception:
             pass  # acceptable if Gemini key absent; we just check no crash
+
+
+class TestM3FaultTolerance:
+    def test_judge_exception_in_m3_does_not_kill_loop(self):
+        """A judge timeout/quota error in M3 must end the loop gracefully
+        (stopped_by=no_hypotheses), not propagate (regression: an agy
+        TimeoutExpired killed the whole run after M1+M2 had succeeded)."""
+
+        class ExplodingDiagnosisAgent:
+            def diagnose(self, analysis, model_name="", prior_cycles=None):
+                raise RuntimeError("AgyModel: agy timed out after 120s")
+
+        loop = VLDiagnoseLoop(
+            model=_vlm(),
+            protocol=_spatial_protocol(),
+            diagnosis_agent=ExplodingDiagnosisAgent(),
+            max_cycles=2,
+        )
+        report = loop.run(_labeled_batch())
+        assert isinstance(report, VLDiagnoseReport)
+        assert report.stopped_by == "no_hypotheses"
+        assert report.all_hypotheses == []

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from evalvitals.stats import (
     StatResult,
     clustered_bootstrap_diff,
@@ -89,3 +91,34 @@ def test_compare_never_exposes_bare_p_as_decision():
     r = compare([0, 0, 1], [1, 1, 1], paired=True)
     assert "p_value" in r.details
     assert isinstance(r.reject, bool) and isinstance(r.underpowered, bool)
+
+
+# ---------------- unpaired (two-sample) bootstrap ----------------
+
+def test_unpaired_bootstrap_unequal_groups():
+    """Regression: unpaired groups of different sizes must not crash or mis-index.
+
+    Before the fix, clustered_bootstrap_diff resampled one shared index set,
+    crashing when len(a) > len(b) and silently mis-sampling when len(a) < len(b).
+    """
+    from evalvitals.stats import compare
+
+    # control: 15 cases, 20% fail; signal: 3 cases, 100% fail (the VQA-RAD shape)
+    control = [1, 0, 0, 0, 0] * 3
+    signal = [1, 1, 1]
+    r = compare(control, signal, paired=False)
+    assert abs(r.effect - 0.8) < 1e-9
+    assert r.ci[0] > 0  # CI excludes 0 → reject
+    assert r.reject is True
+    assert "unpaired" in r.method
+
+    # reversed sizes (len(a) < len(b)) must give the mirrored effect
+    r2 = compare(signal, control, paired=False)
+    assert abs(r2.effect + 0.8) < 1e-9
+
+
+def test_paired_bootstrap_rejects_unequal_lengths():
+    from evalvitals.stats.bootstrap import clustered_bootstrap_diff
+
+    with pytest.raises(ValueError):
+        clustered_bootstrap_diff([1, 0, 1], [1, 0], paired=True)

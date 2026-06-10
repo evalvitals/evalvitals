@@ -511,7 +511,11 @@ class StatsAnalysisAgent:
             return plan
         if not chosen:
             return plan
-        filtered = [p for p in plan if p[0] in chosen]
+        # Paired/omnibus tools (mcnemar, friedman) only enter the plan when an
+        # intervention produced strategy groups — they carry the causal verdicts
+        # and must never be silently dropped by name-based narrowing.
+        _mandatory = {"mcnemar_evalue", "friedman_nemenyi"}
+        filtered = [p for p in plan if p[0] in chosen or p[0] in _mandatory]
         return filtered or plan
 
     # ------------------------------------------------------------------

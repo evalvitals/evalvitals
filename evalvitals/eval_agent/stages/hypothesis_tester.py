@@ -101,6 +101,11 @@ class HypothesisTestResult:
                                      of evidence gap, sample adequacy, and
                                      control cleanliness.
         verdict:                     NL one-liner for human consumption.
+        evidence_grade:              Strength tier of the deciding evidence:
+                                     ``"intervention"`` (paired strategy contrast
+                                     or intervention-derived signal — causal),
+                                     ``"observational"`` (signal/label
+                                     association), or ``"none"``.
         evidence:                    Supporting statistics and group sizes.
     """
 
@@ -111,7 +116,23 @@ class HypothesisTestResult:
     is_consistent_with_protocol: bool
     confidence: float
     verdict: str
+    evidence_grade: str = "observational"
     evidence: dict[str, Any] = field(default_factory=dict)
+
+
+# Evidence-strength ordering for the P4 depth-tiered stopping criterion.
+_GRADE_ORDER = {"none": 0, "observational": 1, "intervention": 2}
+
+
+def _evidence_grade(tool: str, signal: str) -> str:
+    """Grade the deciding evidence: paired contrasts and intervention-derived
+    per-case signals are causal ("intervention"); plain analyzer-signal
+    associations are correlational ("observational")."""
+    if tool in {"mcnemar_evalue", "friedman_nemenyi"}:
+        return "intervention"
+    if str(signal).startswith("prompt_contrast."):
+        return "intervention"
+    return "observational"
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +154,14 @@ class HypothesisTester:
         min_effect:  Minimum fail-rate difference to consider a finding
                      meaningful (default 0.10 = 10 pp).  Used by the rigorous
                      fallback path when M2 supplied no ``stats_results``.
+        min_evidence_grade: Depth tier required for the stopping criterion
+                     (P4).  ``"observational"`` (default) stops on any
+                     statistically supported + protocol-consistent hypothesis;
+                     ``"intervention"`` keeps the loop running until a
+                     hypothesis is verified by intervention-grade evidence
+                     (paired strategy contrast / intervention-derived signal),
+                     letting cycle 2 collect the targeted evidence that M3's
+                     test designs ask for.
     """
 
     def __init__(
@@ -140,10 +169,17 @@ class HypothesisTester:
         judge: "Model | None" = None,
         alpha: float = 0.05,
         min_effect: float = 0.10,
+        min_evidence_grade: str = "observational",
     ) -> None:
         self._judge = judge
         self.alpha = alpha
         self.min_effect = min_effect
+        if min_evidence_grade not in _GRADE_ORDER:
+            raise ValueError(
+                f"min_evidence_grade must be one of {sorted(_GRADE_ORDER)}, "
+                f"got {min_evidence_grade!r}"
+            )
+        self.min_evidence_grade = min_evidence_grade
 
     def test(
         self,
@@ -185,9 +221,17 @@ class HypothesisTester:
         statistically supported hypothesis that addresses what the
         user's protocol was testing — further cycling would only
         rediscover the same root cause.
+
+        With ``min_evidence_grade="intervention"`` (P4 depth tier), an
+        observationally supported hypothesis does NOT stop the loop — the next
+        cycle can collect the targeted (intervention) evidence that M3's test
+        designs call for.
         """
+        need = _GRADE_ORDER[self.min_evidence_grade]
         return any(
-            r.status == HypothesisStatus.SUPPORTED and r.is_consistent_with_protocol
+            r.status == HypothesisStatus.SUPPORTED
+            and r.is_consistent_with_protocol
+            and _GRADE_ORDER.get(r.evidence_grade, 0) >= need
             for r in test_results
         )
 
@@ -195,15 +239,20 @@ class HypothesisTester:
         self,
         test_results: list[HypothesisTestResult],
     ) -> list[HypothesisTestResult]:
-        """Return verified, protocol-consistent hypotheses sorted by confidence.
+        """Return verified, protocol-consistent hypotheses, strongest evidence first.
 
-        The first element is the highest-confidence candidate to hand to M4.
+        Sorted by evidence grade (intervention > observational), then
+        confidence.  The first element is the candidate to hand to M4.
         """
         supported = [
             r for r in test_results
             if r.status == HypothesisStatus.SUPPORTED and r.is_consistent_with_protocol
         ]
-        return sorted(supported, key=lambda r: r.confidence, reverse=True)
+        return sorted(
+            supported,
+            key=lambda r: (_GRADE_ORDER.get(r.evidence_grade, 0), r.confidence),
+            reverse=True,
+        )
 
     # ------------------------------------------------------------------
     # Internal
@@ -247,6 +296,7 @@ class HypothesisTester:
             is_consistent_with_protocol=is_consistent,
             confidence=core["confidence"],
             verdict=verdict,
+            evidence_grade=core.get("evidence_grade", "observational"),
             evidence=core["evidence"],
         )
 
@@ -274,7 +324,7 @@ class HypothesisTester:
                 return r.tool in fdr_rejected
             return True
 
-        relevant, global_res = self._select_results(hypothesis, stats_results)
+        relevant, global_res, routed_by = self._select_results(hypothesis, stats_results)
         decisive = [r for r in relevant if _decisive(r)]
         harmful = [r for r in decisive if (r.effect or 0.0) > 0]
         protective = [r for r in decisive if (r.effect or 0.0) < 0]
@@ -299,9 +349,12 @@ class HypothesisTester:
                 "confidence": 0.0,
                 "verdict": "No applicable M2 statistical result to test this hypothesis.",
                 "test_name": "stats_results",
-                "evidence": {"source": "m2_stats_results", "consulted_tools": consulted},
+                "evidence_grade": "none",
+                "evidence": {"source": "m2_stats_results", "consulted_tools": consulted,
+                             "routed_by": routed_by},
             }
 
+        grade = _evidence_grade(chosen.tool, chosen.config.get("signal", ""))
         confidence = _confidence_from_stat(
             chosen.effect, chosen.ci, chosen.e_value, chosen.underpowered, self.alpha
         )
@@ -319,6 +372,8 @@ class HypothesisTester:
             "reject": chosen.reject,
             "underpowered": chosen.underpowered,
             "consulted_tools": consulted,
+            "routed_by": routed_by,
+            "evidence_grade": grade,
             "fdr": corrected,
         }
         return {
@@ -327,6 +382,7 @@ class HypothesisTester:
             "confidence": confidence,
             "verdict": verdict,
             "test_name": chosen.tool,
+            "evidence_grade": grade,
             "evidence": evidence,
         }
 
@@ -334,12 +390,17 @@ class HypothesisTester:
         self,
         hypothesis: Hypothesis,
         stats_results: "list[StatsToolResult]",
-    ) -> "tuple[list[StatsToolResult], list[StatsToolResult]]":
-        """Split tool results into (mechanism-relevant signal tools, global tools).
+    ) -> "tuple[list[StatsToolResult], list[StatsToolResult], str]":
+        """Split tool results into (relevant signal tools, global tools, routed_by).
 
-        Relevance: keyword overlap between the hypothesis and the tool's signal
-        key/name.  When nothing matches by keyword, all signal tools are shared
-        evidence (mirrors the historical aggregated-signal behaviour).
+        Routing priority (P3):
+        1. **test_design** — when M3 attached an explicit test design to the
+           hypothesis, tools whose signal/strategies overlap it are the
+           designated evidence (deterministic routing).
+        2. **keywords** — overlap between the hypothesis text and the tool's
+           signal key/name.
+        3. **shared** — all signal tools as shared evidence (historical
+           aggregated-signal behaviour).
         """
         signal_res = [
             r for r in stats_results
@@ -347,15 +408,24 @@ class HypothesisTester:
         ]
         global_res = [r for r in stats_results if r.ok and r.tool in _GLOBAL_TOOLS]
 
+        def _tool_text(r: "StatsToolResult") -> str:
+            strategies = " ".join(r.config.get("strategies", []) or [])
+            return (f"{r.tool} {r.config.get('signal', '')} {strategies} "
+                    f"{r.details.get('signal', '')}")
+
+        design = (hypothesis.test_design or "").replace("_", " ").replace(".", " ")
+        if design.strip():
+            design_kw = _keywords(design)
+            designed = [r for r in signal_res if design_kw & _keywords(_tool_text(r))]
+            if designed:
+                return designed, global_res, "test_design"
+
         kw = _keywords(hypothesis.statement + " "
                        + hypothesis.predicted_failure_mode.replace("_", " "))
-        matched = [
-            r for r in signal_res
-            if kw & _keywords(f"{r.tool} {r.config.get('signal', '')} "
-                              f"{r.details.get('signal', '')}")
-        ]
-        relevant = matched or signal_res
-        return relevant, global_res
+        matched = [r for r in signal_res if kw & _keywords(_tool_text(r))]
+        if matched:
+            return matched, global_res, "keywords"
+        return signal_res, global_res, "shared"
 
     # ------------------------------------------------------------------
     # Fallback path: rigorous compare() on the extracted per-case signal
