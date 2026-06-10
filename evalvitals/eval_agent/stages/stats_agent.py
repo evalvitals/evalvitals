@@ -311,6 +311,7 @@ class StatsAnalysisAgent:
         model_name: str = "",
         protocol: "ExperimentProtocol | None" = None,
         data: "CaseBatch | None" = None,
+        extra_figures: "list | None" = None,
     ) -> StatsAnalysisReport:
         """Analyze *results* into a :class:`StatsAnalysisReport`.
 
@@ -334,6 +335,14 @@ class StatsAnalysisAgent:
         stats_results, stats_plan, corrected, figures = self._run_stats_tools(
             results, data, protocol
         )
+
+        # Merge in analyzer heatmap PNGs forwarded from the run logger.
+        if extra_figures:
+            from pathlib import Path as _Path
+            figures = figures + [
+                str(p) for p in extra_figures
+                if _Path(p).exists() and str(p).endswith(".png")
+            ]
 
         if self._judge is not None and protocol is not None:
             try:
@@ -620,7 +629,14 @@ class StatsAnalysisAgent:
             narrative=base.narrative + stats_block,
             findings_json=findings_json,
         )
-        raw = self._judge.generate(prompt)  # type: ignore[union-attr]
+        import inspect as _inspect
+        from pathlib import Path as _Path
+        _sig = _inspect.signature(self._judge.generate)  # type: ignore[union-attr]
+        if "images" in _sig.parameters and figures:
+            _imgs = [_Path(f) for f in figures if _Path(f).exists()]
+            raw = self._judge.generate(prompt, images=_imgs or None)  # type: ignore[union-attr]
+        else:
+            raw = self._judge.generate(prompt)  # type: ignore[union-attr]
         conclusion, evidence, qualitative = _parse_llm_analysis(str(raw), base)
 
         report = self._to_stats_report(

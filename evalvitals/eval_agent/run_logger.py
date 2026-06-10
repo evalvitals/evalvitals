@@ -7,7 +7,7 @@ analyzer artifacts (attention tensors, hidden-state arrays) to a separate
 Each JSON record always contains a ``ts`` (ISO-8601) and an ``event`` field.
 The underlying file handler is a standard :class:`logging.FileHandler`, so
 callers can attach additional handlers (e.g. a ``StreamHandler`` for console
-output) by accessing ``RunLogger.logger``.
+output) by accessing :attr:`RunLogger.logger`.
 
 Usage::
 
@@ -30,9 +30,13 @@ Filter by module::
 Auto-timestamped run dir (default when no path is given)::
 
     loop = AutoDiagnoseLoop(model=model, run_logger=RunLogger())
-    print(loop.run_logger.run_dir)   # → runs/20260603_142305/
+    # loop.run_logger.run_dir  → runs/20260603_142305/
 
-Add a console handler to mirror events to stderr::
+Verbose console output (human-readable summary to stdout)::
+
+    loop = AutoDiagnoseLoop(model=model, run_logger=RunLogger(verbose=True))
+
+Custom handler — e.g. redirect verbose output to a file instead::
 
     import logging, sys
     rl = RunLogger("runs/exp_01")
@@ -43,6 +47,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+import textwrap
 import uuid
 import warnings
 from datetime import datetime, timezone
@@ -156,6 +162,100 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(getattr(record, "_payload", {}), default=str)
 
 
+class _VerboseFormatter(logging.Formatter):
+    """Format each LogRecord as a human-readable stage summary.
+
+    Reads the same ``_payload`` dict that ``_JsonFormatter`` serialises to
+    JSON, dispatches on ``payload["event"]``, and returns a multi-line string
+    with the most useful fields for interactive / Docker console output.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:  # noqa: PLR0911
+        p = getattr(record, "_payload", {})
+        event = p.get("event", "")
+        cycle = p.get("cycle", "?")
+
+        if event == "probe":
+            lines = [f"\n[M1] cycle={cycle}  analyzers={p.get('analyzers', [])}"]
+            rationale = p.get("selection_rationale", "")
+            if rationale:
+                lines.append(f"     rationale  : {rationale}")
+            for name, findings in (p.get("findings") or {}).items():
+                scalars = {
+                    k: round(v, 4)
+                    for k, v in (findings or {}).items()
+                    if isinstance(v, (int, float))
+                }
+                lines.append(f"     {name}: {dict(list(scalars.items())[:6])}")
+            return "\n".join(lines)
+
+        if event == "analysis":
+            lines = [f"\n[M2] cycle={cycle}  severity={p.get('severity')}"]
+            conclusion = p.get("conclusion")
+            if conclusion:
+                lines.append(
+                    "     conclusion : "
+                    + textwrap.fill(conclusion, 72, subsequent_indent="     ")
+                )
+            for step in (p.get("evidence_chain") or [])[:3]:
+                lines.append(f"     evidence   : {step}")
+            stats_plan = p.get("stats_plan") or []
+            if stats_plan:
+                lines.append(f"     stats_tools: {[s['tool'] for s in stats_plan]}")
+            corrected = p.get("corrected_rejections") or {}
+            if corrected.get("rejected_tools"):
+                lines.append(f"     fdr_survive: {corrected['rejected_tools']}")
+            for tool in (p.get("stats_tool_results") or [])[:2]:
+                lines.append(
+                    f"     stats_tool : {tool.get('name')} - {tool.get('conclusion', '')}"
+                )
+            for fig in p.get("figures") or []:
+                lines.append(f"     figure     : {fig}")
+            if not conclusion:
+                lines.append(
+                    "     "
+                    + textwrap.fill(p.get("narrative", ""), 72, subsequent_indent="     ")
+                )
+            return "\n".join(lines)
+
+        if event == "diagnosis":
+            lines = [f"\n[M3] cycle={cycle}  {p.get('n_hypotheses', 0)} hypothesis/es"]
+            for h in p.get("hypotheses") or []:
+                lines.append(f"     hypothesis  : {h.get('statement', '')}")
+                lines.append(f"     failure_mode: {h.get('failure_mode', '')}")
+            return "\n".join(lines)
+
+        if event == "surgery":
+            module = p.get("module", "m4").upper()
+            hyp = p.get("hypothesis", "")[:70]
+            status = p.get("status", "?")
+            lines = [f"\n[{module}] cycle={cycle}  '{hyp}'"]
+            ev = p.get("evidence") or {}
+            if module == "M5":
+                lines.append(
+                    f"     status={status}"
+                    f"  effect={ev.get('m5_effect_size', '?')}"
+                    f"  confidence={ev.get('m5_confidence', '?')}"
+                )
+                lines.append(
+                    f"     protocol_consistent={ev.get('m5_protocol_consistent', '?')}"
+                )
+                lines.append(f"     verdict : {ev.get('m5_verdict', '')}")
+            else:
+                lines.append(f"     status={status}  fixed={p.get('fixed')}")
+                if ev:
+                    lines.append(f"     evidence: {dict(list(ev.items())[:4])}")
+            return "\n".join(lines)
+
+        if event == "loop_end":
+            stopped_by = p.get("stopped_by")
+            if stopped_by is not None:
+                return f"\n[DONE] cycles={p.get('cycles')}  stopped_by={stopped_by}"
+            return f"\n[DONE] cycles={p.get('cycles')}  resolved={p.get('resolved')}"
+
+        return json.dumps(p, default=str)
+
+
 class RunLogger:
     """Structured JSONL logger + artifact sink for one :class:`AutoDiagnoseLoop` run.
 
@@ -166,16 +266,27 @@ class RunLogger:
 
     The underlying :attr:`logger` is a standard :class:`logging.Logger` named
     ``evalvitals.run.<run_dir_name>``.  It does **not** propagate to the root
-    logger so it stays silent unless you add handlers.
+    logger so the library stays silent by default.  Attach additional handlers
+    to customise where and how events appear::
+
+        rl = RunLogger("runs/exp_01")
+        rl.logger.addHandler(logging.StreamHandler(sys.stderr))
 
     Args:
         run_dir:  Directory to write into.  Created if it does not exist.
                   Defaults to ``runs/<YYYYMMDD_HHMMSS>/`` relative to cwd.
+        verbose:  When ``True``, attach a stdout :class:`logging.StreamHandler`
+                  with human-readable formatting.  Equivalent to::
+
+                      rl.logger.addHandler(
+                          logging.StreamHandler(sys.stdout)
+                          # formatted by _VerboseFormatter
+                      )
 
     The logger is safe to use as a context manager::
 
-        with RunLogger("runs/my_exp") as logger:
-            loop = AutoDiagnoseLoop(model=model, run_logger=logger)
+        with RunLogger("runs/my_exp", verbose=True) as rl:
+            loop = AutoDiagnoseLoop(model=model, run_logger=rl)
             loop.run(cases)
     """
 
@@ -183,6 +294,7 @@ class RunLogger:
         self,
         run_dir: str | Path | None = None,
         *,
+        verbose: bool = False,
         trace_id: str | None = None,
     ) -> None:
         if run_dir is None:
@@ -207,6 +319,12 @@ class RunLogger:
         self._file_handler.setFormatter(_JsonFormatter())
         self.logger.addHandler(self._file_handler)
 
+        self._console_handler: logging.StreamHandler | None = None
+        if verbose:
+            self._console_handler = logging.StreamHandler(sys.stdout)
+            self._console_handler.setFormatter(_VerboseFormatter())
+            self.logger.addHandler(self._console_handler)
+
     # ------------------------------------------------------------------
     # Event hooks — called by AutoDiagnoseLoop at each stage
     # ------------------------------------------------------------------
@@ -216,8 +334,13 @@ class RunLogger:
         cycle: int,
         results: dict[str, "Result"],
         schema: "Any | None" = None,
-    ) -> None:
-        """M1: log findings (JSON) and persist heavy artifacts to disk."""
+    ) -> "list[Path]":
+        """M1: log findings (JSON) and persist heavy artifacts to disk.
+
+        Returns a list of PNG figure paths that were saved for this cycle
+        (attention heatmaps, spatial maps, etc.) so callers can forward them
+        to the judge as visual context.
+        """
         artifact_paths = self._save_probe_artifacts(cycle, results)
         entry: dict[str, Any] = {
             "event": "probe",
@@ -229,6 +352,16 @@ class RunLogger:
         if schema is not None:
             entry["selection_rationale"] = getattr(schema, "rationale", "")
         self._log(entry, span_id=f"c{cycle}.m1")
+
+        # Collect PNG heatmap paths saved alongside the .npy arrays.
+        png_figures: list[Path] = []
+        for rel_npy in artifact_paths.values():
+            if not rel_npy.endswith(".npy"):
+                continue
+            png = (self.run_dir / rel_npy).with_suffix(".png")
+            if png.exists():
+                png_figures.append(png)
+        return png_figures
 
     def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""
@@ -368,10 +501,12 @@ class RunLogger:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Flush and close the log file handler."""
-        self._file_handler.flush()
-        self._file_handler.close()
-        self.logger.removeHandler(self._file_handler)
+        """Flush and close all log handlers."""
+        for handler in (self._file_handler, self._console_handler):
+            if handler is not None:
+                handler.flush()
+                handler.close()
+                self.logger.removeHandler(handler)
 
     def __enter__(self) -> "RunLogger":
         return self

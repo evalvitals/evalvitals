@@ -222,3 +222,4 @@ __marimo__/
 examples/qwen_loop_agy/*
 .docker/
 .geimini/
+runs/

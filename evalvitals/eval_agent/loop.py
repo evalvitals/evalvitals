@@ -747,10 +747,11 @@ class VLDiagnoseLoop:
                 prior_hypotheses=all_hypotheses or None,
                 hint_failure_modes=prior_modes or None,
             )
+            artifact_pngs: list = []
             if self.run_logger:
-                self.run_logger.log_probe(
+                artifact_pngs = self.run_logger.log_probe(
                     cycle, probe_results, schema=self.probe_agent.last_schema
-                )
+                ) or []
             if not probe_results:
                 logger.info("M1 produced no probe results — stopping.")
                 stopped_by = _STOPPED_BY_NO_PROBE
@@ -764,6 +765,7 @@ class VLDiagnoseLoop:
                 model_name=repr(self.model),
                 protocol=self.protocol,
                 data=data,
+                extra_figures=artifact_pngs,
             )
             final_stats_report = stats_report
             if self.run_logger:

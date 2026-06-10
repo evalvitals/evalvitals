@@ -50,109 +50,6 @@ _OUTPUTS_DIR = Path(__file__).parent / "outputs"
 
 
 # ---------------------------------------------------------------------------
-# Verbose logger
-# ---------------------------------------------------------------------------
-
-class VerboseRunLogger:
-    """Mirror each loop event to stdout as it happens."""
-
-    def __init__(self, run_dir: Path) -> None:
-        from evalvitals.eval_agent import RunLogger
-        self._rl = RunLogger(run_dir=run_dir)
-
-    def __getattr__(self, name):
-        return getattr(self._rl, name)
-
-    def log_probe(self, cycle: int, results: dict, schema=None) -> None:
-        print(f"\n[M1] cycle={cycle}  analyzers={list(results.keys())}", flush=True)
-        if schema is not None and getattr(schema, "rationale", ""):
-            print(f"     rationale  : {schema.rationale}", flush=True)
-        for name, r in results.items():
-            scalars = {
-                k: round(v, 4)
-                for k, v in (getattr(r, "findings", {}) or {}).items()
-                if isinstance(v, (int, float))
-            }
-            print(f"     {name}: {dict(list(scalars.items())[:6])}", flush=True)
-        self._rl.log_probe(cycle, results, schema=schema)
-
-    def log_analysis(self, cycle: int, analysis) -> None:
-        print(f"\n[M2] cycle={cycle}  severity={analysis.severity}", flush=True)
-        # StatsAnalysisReport: show conclusion + first two evidence-chain steps
-        conclusion = getattr(analysis, "conclusion", None)
-        if conclusion:
-            print(f"     conclusion : {textwrap.fill(conclusion, 72, subsequent_indent='     ')}",
-                  flush=True)
-        chain = getattr(analysis, "evidence_chain", [])
-        for step in chain[:3]:
-            print(f"     evidence   : {step}", flush=True)
-        # Stats-tool layer: show which tools ran and the FDR survivors.
-        plan = getattr(analysis, "stats_plan", []) or []
-        if plan:
-            print(f"     stats_tools: {[p['tool'] for p in plan]}", flush=True)
-        corrected = getattr(analysis, "corrected_rejections", {}) or {}
-        if corrected.get("rejected_tools"):
-            print(f"     fdr_survive: {corrected['rejected_tools']}", flush=True)
-        tool_results = getattr(analysis, "stats_tool_results", [])
-        for tool in tool_results[:2]:
-            print(
-                f"     stats_tool : {tool.get('name')} - {tool.get('conclusion', '')}",
-                flush=True,
-            )
-        for fig in getattr(analysis, "figures", []) or []:
-            print(f"     figure     : {fig}", flush=True)
-        if not conclusion:
-            print(f"     {textwrap.fill(analysis.narrative, 72, subsequent_indent='     ')}",
-                  flush=True)
-        self._rl.log_analysis(cycle, analysis)
-
-    def log_diagnosis(self, cycle: int, diag) -> None:
-        print(f"\n[M3] cycle={cycle}  {len(diag.hypotheses)} hypothesis/es", flush=True)
-        for h in diag.hypotheses:
-            print(f"     hypothesis  : {h.statement}", flush=True)
-            print(f"     failure_mode: {h.predicted_failure_mode}", flush=True)
-        self._rl.log_diagnosis(cycle, diag)
-
-    def log_surgery(self, cycle: int, hypothesis, intervention) -> None:
-        # VLDiagnoseLoop fires this for M5 results via _make_intervention_result_from_test.
-        # Detect M5 vs M4 by presence of the m5_* evidence keys.
-        ev = getattr(intervention, "evidence", {}) or {}
-        is_m5 = "m5_test_name" in ev
-        tag = "M5" if is_m5 else "M4"
-        status = getattr(getattr(intervention, "status", None), "value", "?")
-        print(f"\n[{tag}] cycle={cycle}  '{hypothesis.statement[:70]}'", flush=True)
-
-        if is_m5:
-            print(
-                f"     status={status}"
-                f"  effect={ev.get('m5_effect_size', '?')}"
-                f"  confidence={ev.get('m5_confidence', '?')}",
-                flush=True,
-            )
-            print(
-                f"     protocol_consistent={ev.get('m5_protocol_consistent', '?')}",
-                flush=True,
-            )
-            print(f"     verdict : {ev.get('m5_verdict', '')}", flush=True)
-        else:
-            print(f"     status={status}  fixed={intervention.fixed}", flush=True)
-            if ev:
-                print(f"     evidence: {dict(list(ev.items())[:4])}", flush=True)
-
-        self._rl.log_surgery(cycle, hypothesis, intervention)
-
-    def log_loop_end(self, report) -> None:
-        # Supports both AutoDiagnoseReport (resolved=) and VLDiagnoseReport (stopped_by=).
-        resolved = getattr(report, "resolved", None)
-        stopped_by = getattr(report, "stopped_by", None)
-        if stopped_by is not None:
-            print(f"\n[DONE] cycles={report.cycles}  stopped_by={stopped_by}", flush=True)
-        else:
-            print(f"\n[DONE] cycles={report.cycles}  resolved={resolved}", flush=True)
-        self._rl.log_loop_end(report)
-
-
-# ---------------------------------------------------------------------------
 # Image helpers
 # ---------------------------------------------------------------------------
 
@@ -321,50 +218,21 @@ class _SmokeVLM:
 
     def generate(self, inputs, **kwargs) -> str:
         prompt = str(getattr(inputs, "prompt", inputs)).lower()
-        if "top-left rectangle" in prompt:
-            return "red"
-        if "top-right rectangle" in prompt:
-            return "green"
-        if "top row" in prompt:
-            return "2"
-        if "bottom row" in prompt:
-            return "2"
-        if "blue rectangle relative" in prompt:
-            return "It is above the red and green rectangles."
-        if "red rectangle left of the green" in prompt:
-            return "yes"
-        if "green rectangle left of the red" in prompt:
-            return "yes"
-        if "circle" in prompt:
-            return "no"
-        if "black background" in prompt:
-            return "no"
-        if "exact phrase" in prompt:
-            return "synthetic test image"
-        if "how many words" in prompt:
-            return "2"
-        if "largest rectangle" in prompt:
-            return "red"
-        if "reading order" in prompt:
-            return "red green purple"
-        if "purple rectangle" in prompt:
-            return "yes"
-        if "lowest rectangle purple" in prompt:
-            return "yes"
-        if "bottom rectangle is not purple" in prompt:
-            return "purple"
-        if "blue or purple" in prompt:
-            return "purple"
-        if "snowy mountain" in prompt:
-            return "No."
-        if "phrase" in prompt:
-            return "Yes, the phrase is visible."
-        if "how many" in prompt:
-            return "I see two rectangles."
-        if "dominant rectangle colors" in prompt:
-            return "Red and green."
-        if "spatial layout" in prompt:
-            return "They are arranged in a row."
+        # Easy questions (salient features): answered correctly → PASS.
+        if "is there a red shape" in prompt:
+            return "Yes, there is a red shape."
+        if "list the colors" in prompt:
+            return "Red, green, and blue."
+        if "how many colored rectangles" in prompt:
+            return "3"
+        # Hard questions (precise pixel-level details): the model can only
+        # guess, so it gets these wrong → FAIL (by design, for M5 contrast).
+        if "exact rgb hex code" in prompt:
+            return "ff0000"
+        if "exact pixel coordinates" in prompt:
+            return "10, 20, 30, 40"
+        if "pixels wide is the green rectangle" in prompt:
+            return "42"
         return "Unknown."
 
     def forward(self, inputs, capture, spec=None):
@@ -454,6 +322,7 @@ def _run_smoke_test(args) -> None:
     from evalvitals.eval_agent import (
         CaseDiscoveryAgent,
         HypothesisTester,
+        RunLogger,
         StatsAnalysisAgent,
         StatsToolAgent,
         SurgeryAgent,
@@ -478,7 +347,7 @@ def _run_smoke_test(args) -> None:
 
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
-    logger = VerboseRunLogger(run_dir=run_dir / "logs")
+    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
 
     loop = VLDiagnoseLoop(
         model=model,
@@ -623,6 +492,7 @@ def main() -> None:
         ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
+        RunLogger,
         StatsAnalysisAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
@@ -761,7 +631,7 @@ def main() -> None:
     print("  logs/run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
     print("  logs/artifacts/      ← per-cycle analyzer artifacts (.npy / .json)")
 
-    logger = VerboseRunLogger(run_dir=run_dir / "logs")
+    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
 
     # ── VLDiagnoseLoop (M1→M2→M3→M5) ─────────────────────────────────────────
     loop = VLDiagnoseLoop(

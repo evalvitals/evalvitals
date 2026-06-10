@@ -420,7 +420,14 @@ class DiagnosisAgent:
             stats_section=stats_section,
             findings_json=json.dumps(summary, indent=2, default=str),
         )
-        raw = self.judge.generate(prompt)
+        import inspect as _inspect
+        from pathlib import Path as _Path
+        _figs = [_Path(f) for f in getattr(analysis, "figures", []) if _Path(f).exists()]
+        _sig = _inspect.signature(self.judge.generate)
+        if "images" in _sig.parameters and _figs:
+            raw = self.judge.generate(prompt, images=_figs)
+        else:
+            raw = self.judge.generate(prompt)
         hypotheses = _parse_hypotheses(str(raw), analysis.model_name or model_name)
 
         # Adversarial validation: run a second critic call at temperature=0 to
