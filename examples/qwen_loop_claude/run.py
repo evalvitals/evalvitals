@@ -682,6 +682,14 @@ def main() -> None:
              "disable with --no-allow-codegen.",
     )
     parser.add_argument(
+        "--fix-tier", default="L2", choices=["L1", "L2", "L3a", "L3b", "L4"],
+        help="highest allowed intervention space for the post-loop fix module: "
+             "L1 prompt / L2 scaffold pipelines+tools (default) / L3a internals "
+             "read / L3b internals write / L4 retraining. No auto-escalation — "
+             "when nothing within the tier validates, the run prints a "
+             "recommendation to raise it.",
+    )
+    parser.add_argument(
         "--analysis-only", action="store_true",
         help="Run M1+M2 only (skip M3/M5/M4)",
     )
@@ -922,6 +930,33 @@ def main() -> None:
                 print("  SurgeryAgent returned None (no verified hypotheses to act on)")
         else:
             print("  No verified hypotheses — skipping M4.")
+
+    # ── Fix module: tiered, validated repair (allowed tier is an input) ──────
+    if surgery_agent is not None:
+        print(f"\n{'='*64}")
+        print(f"FIX  Tiered repair attempts (max tier = {args.fix_tier})")
+        print(f"{'='*64}")
+        outcome = loop.run_fix(report, cases, max_tier=args.fix_tier)
+        for entry in outcome.routed:
+            print(f"  routed     : {entry['min_tier']:4s} <- {entry['hypothesis'][:90]}")
+        for v in outcome.attempted:
+            tag = "FIXED" if v.fixed else "no"
+            print(f"  [{v.candidate.tier.label:3s}] {v.candidate.name:24s} "
+                  f"({v.candidate.source})  fixed={tag:5s} "
+                  f"repairs={v.n_fixed} breaks={v.n_broken}")
+            print(f"        {v.summary}")
+        if outcome.fixed and outcome.best is not None:
+            best = outcome.best
+            print(f"  VERDICT    : fixed by [{best.candidate.tier.label}] "
+                  f"{best.candidate.name} (effect={best.effect:+.3f}, "
+                  f"repaired {best.fixed_cases})")
+        elif outcome.recommendation is not None:
+            rec = outcome.recommendation
+            print(f"  VERDICT    : not fixed within {args.fix_tier}")
+            print(f"  RECOMMEND  : raise the intervention tier to {rec['recommend_tier']}")
+            print(f"               {rec['reason']}")
+        else:
+            print(f"  VERDICT    : not fixed; already at the highest tier ({args.fix_tier})")
 
     print("\nDone.")
 

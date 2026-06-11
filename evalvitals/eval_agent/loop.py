@@ -643,6 +643,8 @@ class VLDiagnoseReport:
         final_stats_report:   M2 report from the last cycle.
         fix_proposal:         Populated by :meth:`VLDiagnoseLoop.run_m4`
                               when called after :meth:`VLDiagnoseLoop.run`.
+        fix_outcome:          Populated by :meth:`VLDiagnoseLoop.run_fix` —
+                              tiered fix attempts + escalation recommendation.
         store:                Accumulated results and hypotheses.
     """
 
@@ -653,6 +655,7 @@ class VLDiagnoseReport:
     all_test_results: "list[HypothesisTestResult]" = field(default_factory=list)
     final_stats_report: "StatsAnalysisReport | None" = None
     fix_proposal: "Any | None" = None
+    fix_outcome: "Any | None" = None
     store: Store = field(default_factory=InMemoryStore)
     _run_id: str = field(default="", repr=False)
 
@@ -986,6 +989,45 @@ class VLDiagnoseLoop:
             except Exception as exc:  # logging must never break the fix step
                 logger.warning("run_m4: log_experiment failed: %s", exc)
         return iv
+
+    def run_fix(
+        self,
+        report: VLDiagnoseReport,
+        data: "CaseBatch",
+        max_tier: "str | Any" = "L2",
+        fix_agent: "Any | None" = None,
+    ) -> "Any":
+        """Post-loop fix module: tiered, validated repair attempts.
+
+        The allowed intervention tier is an **input** (default L2 — prompt +
+        scaffold pipelines); there is no automatic escalation.  When nothing
+        within the allowed tier validates, the returned
+        :class:`~evalvitals.eval_agent.stages.fix_agent.FixOutcome` carries a
+        recommendation to raise the tier, routed from the verified
+        hypotheses' mechanisms.
+
+        Args:
+            report:    Returned by :meth:`run` (uses ``verified_hypotheses``,
+                       falling back to the last cycle's proposals).
+            data:      Original case batch (candidates are validated on it
+                       with paired McNemar against the unmodified baseline).
+            max_tier:  Highest allowed tier: "L1", "L2", "L3a", "L3b", "L4".
+            fix_agent: Pre-configured FixAgent; built from the diagnosis
+                       agent's judge when ``None``.
+        """
+        from evalvitals.eval_agent.stages.fix_agent import FixAgent
+
+        agent = fix_agent or FixAgent(
+            judge=getattr(self.diagnosis_agent, "judge", None),
+            max_tier=max_tier,
+            run_logger=self.run_logger,
+        )
+        hypotheses = [tr.hypothesis for tr in report.verified_hypotheses]
+        if not hypotheses:
+            hypotheses = list(report.all_hypotheses)[-3:]
+        outcome = agent.propose_and_validate(self.model, data, hypotheses)
+        report.fix_outcome = outcome
+        return outcome
 
 
 # ---------------------------------------------------------------------------

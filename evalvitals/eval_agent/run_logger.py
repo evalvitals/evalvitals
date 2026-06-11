@@ -639,6 +639,18 @@ class RunLogger:
             entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.{span_suffix}")
 
+    def log_fix(self, outcome: "Any") -> None:
+        """Post-loop fix module: log the tiered repair attempt + recommendation.
+
+        *outcome* is a :class:`~evalvitals.eval_agent.stages.fix_agent.FixOutcome`;
+        its ``to_dict()`` carries every attempted candidate (tier, payload,
+        paired-stats verdict, repaired/broken case ids) and the escalation
+        recommendation when nothing validated.
+        """
+        entry: dict[str, Any] = {"event": "fix", "cycle": -1, "module": "fix"}
+        entry.update(outcome.to_dict())
+        self._log(entry, span_id="fix")
+
     def log_loop_end(
         self,
         report: "AutoDiagnoseReport",
