@@ -131,6 +131,13 @@ class ExperimentWriterResult:
         total_llm_calls:   Number of LLM calls made across all phases.
         total_sandbox_runs: Number of sandbox runs (initial + retries).
         validation_log:    Ordered list of events for debugging.
+        cli_raw_output:    First chars of the CLI agent's stdout — its narration
+                           / intermediate "thinking" while writing the code.
+                           Empty on the LLM path (use ``validation_log`` there).
+        provider:          Which backend wrote the code (``"llm"`` or the CLI
+                           provider name, e.g. ``"claude_code"``).
+        workdir:           Path to the working directory the agent operated in,
+                           so callers can snapshot it before sandbox cleanup.
     """
 
     code: str = ""
@@ -145,6 +152,9 @@ class ExperimentWriterResult:
     total_llm_calls: int = 0
     total_sandbox_runs: int = 0
     validation_log: list[str] = field(default_factory=list)
+    cli_raw_output: str = ""
+    provider: str = "llm"
+    workdir: str = ""
 
     @property
     def ok(self) -> bool:
@@ -571,6 +581,8 @@ class ExperimentWriter:
             total_llm_calls=self._calls,
             total_sandbox_runs=self._runs,
             validation_log=list(self._log),
+            provider="llm",
+            workdir=str(getattr(sandbox, "workdir", "")),
         )
 
     # ------------------------------------------------------------------
@@ -1370,6 +1382,9 @@ class ExperimentWriter:
         cli = create_cli_agent(cli_cfg)
         self._log_event(f"  invoking {cli._provider_name!r}")
         cli_result = cli.run(prompt=prompt, workdir=workdir, timeout_sec=cli_cfg.timeout_sec)
+        # The agent's stdout is its narration / intermediate thinking while it
+        # writes and self-repairs the script — keep it for the coding log.
+        cli_raw_output = cli_result.raw_output
         self._log_event(
             f"  CLI finished: ok={cli_result.ok}, "
             f"files={list(cli_result.files)}, elapsed={cli_result.elapsed_sec:.1f}s"
@@ -1383,6 +1398,9 @@ class ExperimentWriter:
                 validation_log=list(self._log),
                 total_llm_calls=0,
                 total_sandbox_runs=0,
+                cli_raw_output=cli_raw_output,
+                provider=cli_cfg.provider,
+                workdir=str(workdir),
             )
 
         code = cli_result.files.get("experiment.py") or next(iter(cli_result.files.values()))
@@ -1417,6 +1435,9 @@ class ExperimentWriter:
             total_llm_calls=0,
             total_sandbox_runs=self._runs,
             validation_log=list(self._log),
+            cli_raw_output=cli_raw_output,
+            provider=cli_cfg.provider,
+            workdir=str(workdir),
         )
 
     @staticmethod

@@ -121,6 +121,7 @@ class StatsToolGenerator:
         timeout_sec: int = 60,
         max_cpu_seconds: int | None = None,
         max_memory_bytes: int | None = None,
+        run_logger: "Any | None" = None,
     ) -> None:
         self._judge = judge
         self._cli_config = cli_config
@@ -129,6 +130,10 @@ class StatsToolGenerator:
             max_cpu_seconds=max_cpu_seconds,
             max_memory_bytes=max_memory_bytes,
         )
+        # Optional RunLogger — records each stats-tool code-writing attempt.
+        self.run_logger = run_logger
+        self._last_prompt: str = ""
+        self._last_raw: str = ""
 
     @property
     def available(self) -> bool:
@@ -163,10 +168,13 @@ class StatsToolGenerator:
             )
 
         self._write_input(inp)
+        self._last_prompt = ""
+        self._last_raw = ""
         try:
             code, source = self._write_code(need, inp)
         except Exception as exc:
             logger.warning("StatsToolGenerator: code writing failed: %s", exc)
+            self._emit_codegen(name, need, "", "", ok=False, error=f"code writing failed: {exc}")
             return (
                 StatsToolResult(
                     tool=f"generated:{name}", ok=False,
@@ -176,6 +184,7 @@ class StatsToolGenerator:
             )
 
         if not code.strip():
+            self._emit_codegen(name, need, source, "", ok=False, error="backend produced no code")
             return (
                 StatsToolResult(
                     tool=f"generated:{name}", ok=False,
@@ -185,11 +194,29 @@ class StatsToolGenerator:
             )
 
         result = self._run_code(code, name)
+        self._emit_codegen(
+            name, need, source, code, ok=result.ok,
+            error="" if result.ok else (result.error or "tool run failed"),
+        )
         tool = (
             GeneratedStatsTool(name=name, code=code, need=need, source=source)
             if result.ok else None
         )
         return result, tool
+
+    def _emit_codegen(
+        self, name: str, need: str, source: str, code: str, *, ok: bool, error: str = ""
+    ) -> None:
+        """Record one stats-tool code-writing attempt to the RunLogger."""
+        if self.run_logger is None:
+            return
+        try:
+            self.run_logger.log_tool_codegen(
+                module="m2_stats", name=name, need=need, source=source, ok=ok,
+                code=code, prompt=self._last_prompt, raw_output=self._last_raw, error=error,
+            )
+        except Exception as exc:  # logging must never break generation
+            logger.debug("StatsToolGenerator: log_tool_codegen failed: %s", exc)
 
     def run_cached(self, tool: GeneratedStatsTool, inp: StatsInput) -> StatsToolResult:
         """Re-run an already-generated tool on fresh *inp* (no LLM call)."""
@@ -218,15 +245,19 @@ class StatsToolGenerator:
                 return code, f"cli:{self._cli_config.provider}"
         # Single-pass LLM fallback
         prompt = self._build_prompt(need, inp, fenced=True)
+        self._last_prompt = prompt
         raw = self._judge.generate(prompt)  # type: ignore[union-attr]
+        self._last_raw = str(raw)
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str, inp: StatsInput) -> str:
         from evalvitals.eval_agent.cli_agent import create_cli_agent
 
         prompt = self._build_prompt(need, inp, fenced=False)
+        self._last_prompt = prompt
         agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
         res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
+        self._last_raw = res.raw_output
         if not res.ok:
             logger.debug("CLI codegen produced no files (%s)", res.error)
             return ""

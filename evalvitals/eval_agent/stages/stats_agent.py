@@ -244,6 +244,10 @@ class StatsAnalysisReport(AnalysisReport):
     stats_tool_results: list[dict[str, Any]] = field(default_factory=list)
     visualizations: list[dict[str, Any]] = field(default_factory=list)
     protocol: "ExperimentProtocol | None" = None
+    # Judge I/O for the LLM-guided path (empty on the threshold-rules path).
+    # Surfaced so RunLogger can persist exactly what the M2 judge was shown.
+    llm_prompt: str = ""
+    llm_raw: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
@@ -289,6 +293,7 @@ class StatsAnalysisAgent:
         allow_codegen: bool = False,
         codegen_config: "CliAgentConfig | None" = None,
         tool_generator: "StatsToolGenerator | None" = None,
+        run_logger: "Any | None" = None,
     ) -> None:
         self._base = AnalysisModule(extra_rules)
         self._judge = judge
@@ -304,6 +309,9 @@ class StatsAnalysisAgent:
         # Tier (c): generated tools are cached here and re-run on later cycles
         # without a second LLM call.
         self._generated_tools: list[GeneratedStatsTool] = []
+        # Optional RunLogger forwarded to the tool generator so its code-writing
+        # attempts surface as "tool_codegen" events.  The loop sets this if unset.
+        self.run_logger = run_logger
 
     def analyze(
         self,
@@ -478,11 +486,18 @@ class StatsAnalysisAgent:
     def _get_generator(self) -> "StatsToolGenerator | None":
         """Lazily build the tool generator from the judge / codegen config."""
         if self._tool_generator is not None:
+            if self.run_logger is not None and getattr(self._tool_generator, "run_logger", None) is None:
+                try:
+                    self._tool_generator.run_logger = self.run_logger
+                except Exception:  # noqa: BLE001
+                    pass
             return self._tool_generator
         if self._judge is None and self._codegen_config is None:
             return None
         from evalvitals.eval_agent.stages.stats_tool_generator import StatsToolGenerator
-        gen = StatsToolGenerator(judge=self._judge, cli_config=self._codegen_config)
+        gen = StatsToolGenerator(
+            judge=self._judge, cli_config=self._codegen_config, run_logger=self.run_logger
+        )
         if not gen.available:
             return None
         self._tool_generator = gen
@@ -654,6 +669,8 @@ class StatsAnalysisAgent:
         if qualitative:
             report.qualitative_findings = qualitative
         report.stats_tool = "llm_guided"
+        report.llm_prompt = prompt
+        report.llm_raw = str(raw)
         return report
 
 
