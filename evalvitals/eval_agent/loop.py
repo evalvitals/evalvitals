@@ -708,12 +708,14 @@ class VLDiagnoseLoop:
         diagnosis_agent: "Any | None" = None,
         hypothesis_tester: "HypothesisTester | None" = None,
         surgery_agent: "Any | None" = None,
+        fix_agent: "Any | None" = None,
         store: Store | None = None,
         max_cycles: int = 5,
         run_logger: "Any | None" = None,
         token_budget: int = 0,
         analysis_only: bool = False,
     ) -> None:
+        from evalvitals.eval_agent.stages.fix_agent import FixAgent
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
         from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
         from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
@@ -726,6 +728,7 @@ class VLDiagnoseLoop:
         self.diagnosis_agent = diagnosis_agent  # None = lazy default on first call
         self.hypothesis_tester = hypothesis_tester or HypothesisTester()
         self.surgery_agent = surgery_agent or SurgeryAgent()
+        self.fix_agent = fix_agent or FixAgent(run_logger=run_logger)
         self.store = store or InMemoryStore()
         self.max_cycles = max_cycles
         self.run_logger = run_logger
@@ -994,7 +997,7 @@ class VLDiagnoseLoop:
         self,
         report: VLDiagnoseReport,
         data: "CaseBatch",
-        max_tier: "str | Any" = "L2",
+        max_tier: "str | Any | None" = None,
         fix_agent: "Any | None" = None,
     ) -> "Any":
         """Post-loop fix module: tiered, validated repair attempts.
@@ -1011,17 +1014,17 @@ class VLDiagnoseLoop:
                        falling back to the last cycle's proposals).
             data:      Original case batch (candidates are validated on it
                        with paired McNemar against the unmodified baseline).
-            max_tier:  Highest allowed tier: "L1", "L2", "L3a", "L3b", "L4".
-            fix_agent: Pre-configured FixAgent; built from the diagnosis
-                       agent's judge when ``None``.
+            max_tier:  Optional override of the agent's allowed tier for this
+                       call: "L1", "L2", "L3a", "L3b", "L4".  ``None`` keeps
+                       the tier the agent was constructed with.
+            fix_agent: Per-call override of :attr:`fix_agent` (the loop-level
+                       agent injected via ``__init__``, like every other stage).
         """
-        from evalvitals.eval_agent.stages.fix_agent import FixAgent
+        from evalvitals.eval_agent.stages.fix_tiers import parse_tier
 
-        agent = fix_agent or FixAgent(
-            judge=getattr(self.diagnosis_agent, "judge", None),
-            max_tier=max_tier,
-            run_logger=self.run_logger,
-        )
+        agent = fix_agent or self.fix_agent
+        if max_tier is not None:
+            agent.max_tier = parse_tier(max_tier)
         hypotheses = [tr.hypothesis for tr in report.verified_hypotheses]
         if not hypotheses:
             hypotheses = list(report.all_hypotheses)[-3:]

@@ -11,10 +11,18 @@ There is **no automatic escalation**: when no candidate within the allowed
 tier validates, the outcome carries a *recommendation* to raise the tier,
 routed from the verified hypotheses' mechanisms (:func:`route_min_tier`).
 
-v1 executors cover L1 (prompt transforms) and L2 (tool-catalog pipelines,
-:mod:`fix_tools`).  L3a/L3b/L4 exist as routing/recommendation targets; their
-executors need host-side internals hooks / training infrastructure and land
-separately.
+Executors by tier:
+
+* **L1** — prompt transforms (judge-proposed templates).
+* **L2 declarative** — catalog-tool pipelines (:mod:`fix_tools`): cheap,
+  deterministic, validated first.
+* **L2 coded** — the coding agent (CLI agent first, judge fallback) writes a
+  brand-new pipeline as Python: multiple model calls per case, branching on
+  intermediate outputs — only the model itself is unchanged.  The code runs
+  sandboxed with bridged model access (:mod:`fix_pipeline`); labels and
+  rubrics never reach it, so it cannot cheat by echoing gold answers.
+* **L3a/L3b/L4** — routing/recommendation targets only; their executors need
+  host-side internals hooks / training infrastructure and land separately.
 
 A *fixed* verdict means: paired McNemar rejects with positive net effect —
 the candidate repairs significantly more cases than it breaks.
@@ -29,17 +37,23 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+from evalvitals.eval_agent.stages.fix_pipeline import (
+    run_coded_pipeline,
+    score_outputs,
+)
 from evalvitals.eval_agent.stages.fix_tiers import FixTier, parse_tier, route_min_tier
 from evalvitals.eval_agent.stages.fix_tools import (
     PipelineSpec,
     catalog_text,
     run_pipeline,
 )
+from evalvitals.eval_agent.stages.probe_generator import _extract_code
 from evalvitals.stats import compare
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
     from evalvitals.core.model import Model
+    from evalvitals.eval_agent.cli_agent import CliAgentConfig
     from evalvitals.eval_agent.hypothesis import Hypothesis
 
 logger = logging.getLogger(__name__)
@@ -85,6 +99,37 @@ Propose up to {k} pipelines.  Each may chain image tools, rewrite the prompt
    "image_ops": [{{"tool": "<catalog name>", "params": {{}}}}],
    "prompt_template": "{{prompt}}", "n_samples": 1}}]"""
 
+_L2_CODE_PROMPT = """\
+You are writing a PYTHON PIPELINE (tier L2: a scaffold around the unchanged \
+vision-language model) that repairs the failures described below.  Design any
+pipeline you want — the only constraint is that the model itself is unchanged.
+
+VERIFIED FAILURE HYPOTHESES:
+{hypotheses}
+
+EXAMPLE FAILING PROMPTS:
+{examples}
+
+EXECUTION CONTRACT:
+- "{cases_file}" in the current directory: {{"cases": [{{"id": str, "prompt": str}}]}}
+- A function  model_generate(case_id, prompt=None, image_ops=None) -> str  is
+  ALREADY DEFINED in your namespace (do NOT import or redefine it).  It runs
+  the ORIGINAL model on that case: optional prompt override, optional image
+  transforms applied to the case's image first.  Available image tools:
+{catalog}
+- You may call the model SEVERAL times per case (budget ~6 calls/case) and
+  branch on its outputs — e.g. ask where the finding could be, zoom there,
+  re-ask; describe first, then decide; vote over variants.
+- The LAST line of stdout MUST be exactly:
+  {marker}{{"per_case": [{{"sample_id": "<case id>", "output": "<final answer text>"}}]}}
+- Emit an entry for EVERY case.  The "output" is scored externally against the
+  original question, so it must answer that question faithfully (e.g. contain
+  a clear yes/no for yes/no questions).
+- Standard library + numpy only.  No network, no file writes.  Keep it under
+  ~80 lines.
+
+Return ONLY the Python code{fences_hint}."""
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -97,14 +142,18 @@ class FixCandidate:
     Attributes:
         tier:        Intervention space the candidate lives in.
         name:        Short identifier.
-        payload:     Tier-specific spec — L1: ``{"prompt_template": ...}``;
-                     L2: a :class:`~.fix_tools.PipelineSpec` dict.
-        source:      ``"judge"`` or ``"default"`` (deterministic fallback).
+        kind:        ``"template"`` (L1) | ``"spec"`` (L2 declarative) |
+                     ``"code"`` (L2 agent-written pipeline).
+        payload:     Kind-specific — template: ``{"prompt_template": ...}``;
+                     spec: a :class:`~.fix_tools.PipelineSpec` dict;
+                     code: ``{"code": "<python source>"}``.
+        source:      ``"judge"``, ``"cli:<provider>"`` or ``"default"``.
     """
 
     tier: FixTier
     name: str
     payload: "dict[str, Any]"
+    kind: str = "spec"
     source: str = "judge"
 
 
@@ -148,6 +197,7 @@ class FixOutcome:
                 {
                     "tier": v.candidate.tier.label,
                     "name": v.candidate.name,
+                    "kind": v.candidate.kind,
                     "source": v.candidate.source,
                     "payload": v.candidate.payload,
                     "n_pairs": v.n_pairs,
@@ -176,12 +226,22 @@ class FixAgent:
     """Propose and validate tiered fixes for the loop's verified hypotheses.
 
     Args:
-        judge:      LLM proposing candidates (deterministic defaults when
-                    ``None`` or unparseable).
-        max_tier:   Highest allowed intervention tier (input, default L2).
-        score_fn:   ``(case, output) -> bool | None``; defaults to the
-                    rubric scorer shared with prompt_contrast.
-        run_logger: Optional RunLogger — records the outcome as a ``fix`` event.
+        judge:            LLM proposing candidates (deterministic defaults
+                          when ``None`` or unparseable).
+        max_tier:         Highest allowed intervention tier (input, default L2).
+        score_fn:         ``(case, output) -> bool | None``; defaults to the
+                          rubric scorer shared with prompt_contrast.
+        run_logger:       Optional RunLogger — records the outcome as a
+                          ``fix`` event and coded pipelines as ``tool_codegen``.
+        cli_config:       CLI coding-agent config; when set (provider != "llm")
+                          it writes the L2 coded pipeline (judge fallback).
+        allow_codegen:    Gate for the L2 coded-pipeline path (sandboxed,
+                          bridged model access).  Declarative candidates do
+                          not depend on this.
+        sandbox:          Workdir provider for coded pipelines (fresh temp
+                          dir when ``None``).
+        exec_timeout_sec: Wall-clock limit for one coded-pipeline session
+                          (includes the bridged model calls).
     """
 
     def __init__(
@@ -190,11 +250,27 @@ class FixAgent:
         max_tier: "str | FixTier" = FixTier.L2_SCAFFOLD,
         score_fn: "Callable[[FailureCase, str], Optional[bool]] | None" = None,
         run_logger: "Any | None" = None,
+        cli_config: "CliAgentConfig | None" = None,
+        allow_codegen: bool = True,
+        sandbox: "Any | None" = None,
+        exec_timeout_sec: int = 600,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
         self._score = score_fn or _default_score
         self.run_logger = run_logger
+        self._cli_config = cli_config
+        self._allow_codegen = allow_codegen
+        self._sandbox = sandbox
+        self._exec_timeout_sec = exec_timeout_sec
+
+    @property
+    def codegen_available(self) -> bool:
+        """True when the L2 coded-pipeline path has a code-writing backend."""
+        return self._allow_codegen and (
+            self._judge is not None
+            or (self._cli_config is not None and self._cli_config.provider != "llm")
+        )
 
     # -- public ---------------------------------------------------------
 
@@ -256,6 +332,8 @@ class FixAgent:
         candidates = self._l1_candidates(hyp_lines, examples)
         if self.max_tier >= FixTier.L2_SCAFFOLD:
             candidates += self._l2_candidates(hyp_lines, examples)
+            if self.codegen_available:
+                candidates += self._l2_coded_candidate(hyp_lines, examples)
         if self.max_tier >= FixTier.L3A_INTERNALS_READ:
             logger.info(
                 "FixAgent: tiers above L2 are allowed (max=%s) but their "
@@ -273,11 +351,12 @@ class FixAgent:
             name = str(p.get("name", "")).strip()
             if name and "{prompt}" in template:
                 out.append(FixCandidate(
-                    tier=FixTier.L1_PROMPT, name=name,
+                    tier=FixTier.L1_PROMPT, name=name, kind="template",
                     payload={"prompt_template": template}))
         if not out:
             out = [FixCandidate(
-                tier=FixTier.L1_PROMPT, name="attend_carefully", source="default",
+                tier=FixTier.L1_PROMPT, name="attend_carefully", kind="template",
+                source="default",
                 payload={"prompt_template": (
                     "Examine the image carefully, including small, subtle and "
                     "low-contrast regions, before answering. {prompt}")})]
@@ -309,6 +388,85 @@ class FixAgent:
                                    {"tool": "sharpen", "params": {"factor": 2.0}}]).to_dict()),
             ]
         return out[:_MAX_JUDGE_CANDIDATES]
+
+    def _l2_coded_candidate(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
+        """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
+        from evalvitals.eval_agent.stages.fix_pipeline import (
+            CASES_FILENAME,
+            RESULT_MARKER,
+        )
+
+        code, source, prompt, raw = "", "", "", ""
+        base = dict(hypotheses=hyp_lines, examples=examples, catalog=catalog_text(),
+                    cases_file=CASES_FILENAME, marker=RESULT_MARKER)
+        if self._cli_config is not None and self._cli_config.provider != "llm":
+            prompt = _L2_CODE_PROMPT.format(
+                fences_hint=", written to a file named pipeline.py", **base)
+            code, raw = self._write_code_cli(prompt)
+            source = f"cli:{self._cli_config.provider}"
+        if not code.strip() and self._judge is not None:
+            prompt = _L2_CODE_PROMPT.format(
+                fences_hint=" inside a ```python code block", **base)
+            try:
+                raw = str(self._judge.generate(prompt))
+            except Exception as exc:
+                logger.warning("FixAgent: code-writing judge call failed: %s", exc)
+                raw = ""
+            code = _extract_code(raw)
+            # Syntax gate: a judge that answered in prose must not become a
+            # "coded pipeline" candidate (the CLI path returns real files).
+            if code.strip():
+                import ast
+
+                try:
+                    ast.parse(code)
+                except SyntaxError:
+                    logger.warning("FixAgent: judge code failed to parse; dropped")
+                    code = ""
+            source = "judge"
+        self._emit_codegen("coded_pipeline", prompt, source, code, raw,
+                           ok=bool(code.strip()))
+        if not code.strip():
+            return []
+        return [FixCandidate(tier=FixTier.L2_SCAFFOLD, name="coded_pipeline",
+                             kind="code", payload={"code": code}, source=source)]
+
+    def _write_code_cli(self, prompt: str) -> "tuple[str, str]":
+        from pathlib import Path
+
+        from evalvitals.eval_agent.cli_agent import create_cli_agent
+
+        workdir = Path(self._workdir())
+        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
+        res = agent.run(prompt, workdir=workdir,
+                        timeout_sec=self._cli_config.timeout_sec)  # type: ignore[union-attr]
+        if not res.ok:
+            return "", res.raw_output
+        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
+        if "pipeline.py" in py_files:
+            return py_files["pipeline.py"], res.raw_output
+        return (max(py_files.values(), key=len) if py_files else ""), res.raw_output
+
+    def _workdir(self) -> str:
+        if self._sandbox is None:
+            from evalvitals.eval_agent.sandbox import ExperimentSandbox
+
+            self._sandbox = ExperimentSandbox()
+        return str(self._sandbox.workdir)
+
+    def _emit_codegen(
+        self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool
+    ) -> None:
+        if self.run_logger is None:
+            return
+        try:
+            self.run_logger.log_tool_codegen(
+                module="fix_pipeline", name=name, need="L2 coded repair pipeline",
+                source=source, ok=ok, code=code, prompt=prompt, raw_output=raw,
+                error="" if ok else "no code produced",
+            )
+        except Exception as exc:  # logging must never break the fix step
+            logger.debug("FixAgent: log_tool_codegen failed: %s", exc)
 
     def _ask_judge(self, prompt: str) -> "list[dict[str, Any]]":
         if self._judge is None:
@@ -345,7 +503,7 @@ class FixAgent:
 
     def _strategy(self, candidate: FixCandidate) -> "Callable[[Model, FailureCase], Optional[bool]]":
         """Compile a candidate to a per-case success function (ab_runner shape)."""
-        if candidate.tier == FixTier.L1_PROMPT:
+        if candidate.kind == "template":
             template = candidate.payload["prompt_template"]
 
             def l1(model: "Model", case: "FailureCase") -> "Optional[bool]":
@@ -366,6 +524,22 @@ class FixAgent:
             return lambda model, case: None
         return lambda model, case: run_pipeline(model, case, spec, self._score)
 
+    def _candidate_scores(
+        self, candidate: FixCandidate, model: "Model", data: "CaseBatch"
+    ) -> "dict[str, Optional[bool]]":
+        """Per-case success of one candidate (batch path for coded pipelines)."""
+        if candidate.kind == "code":
+            result = run_coded_pipeline(
+                candidate.payload["code"], model, data,
+                workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+            )
+            if not result.ok:
+                logger.warning("FixAgent: coded pipeline produced no result: %s",
+                               result.error)
+            return score_outputs(result, data, self._score)
+        strategy = self._strategy(candidate)
+        return {case.id: strategy(model, case) for case in data}
+
     def _validate(
         self,
         candidate: FixCandidate,
@@ -373,13 +547,13 @@ class FixAgent:
         data: "CaseBatch",
         baseline: "dict[str, Optional[bool]]",
     ) -> FixValidation:
-        strategy = self._strategy(candidate)
+        scores = self._candidate_scores(candidate, model, data)
         v = FixValidation(candidate=candidate)
         base_vec: "list[bool]" = []
         cand_vec: "list[bool]" = []
         for case in data:
             b = baseline.get(case.id)
-            c = strategy(model, case)
+            c = scores.get(case.id)
             if b is None or c is None:
                 continue
             base_vec.append(b)
