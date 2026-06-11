@@ -278,6 +278,152 @@ loop = AutoDiagnoseLoop(
 )
 ```
 
+## Input Modes
+
+There are two ways to trigger the diagnosis agent.
+
+---
+
+### Mode 1 — Container submission (reproduce a known failure)
+
+Write a `run.py` that defines your failure cases as `FailureCase` objects,
+then package it into a Docker container.  The agent runs the M1→M5 loop
+inside the container and writes findings to `outputs/`.
+
+**Step-by-step:**
+
+1. **Define failure cases** in `run.py`:
+
+```python
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+protocol = ExperimentProtocol(
+    description="The model gives wrong left/right positions in spatial questions.",
+    task_domain="spatial reasoning",
+)
+
+cases = CaseBatch([
+    FailureCase(
+        id="case_0",
+        inputs=Inputs(prompt="Is the red box to the left or right of the blue box?",
+                      image=my_image),
+        expected="left",
+    ),
+    # ... more cases ...
+])
+```
+
+2. **Run the loop** (same `run.py`):
+
+```python
+from evalvitals import compose
+from evalvitals.core.capability import Capability
+from evalvitals.eval_agent import VLDiagnoseLoop, AgyModel, RunLogger
+from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
+
+model = compose("qwen2.5-vl-7b-instruct", "hf_local",
+                want={Capability.GENERATE, Capability.ATTENTION})
+judge = AgyModel()
+
+loop = VLDiagnoseLoop(
+    model=model,
+    probe_agent=ProbeAgent(max_analyzers=3),
+    stats_agent=StatsAnalysisAgent(judge=judge),
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    max_cycles=2,
+    protocol=protocol,
+    run_logger=RunLogger(),
+)
+report = loop.run(cases)
+print(report.final_hypotheses)
+```
+
+3. **Add a Dockerfile + docker-compose.yml** mirroring any `examples/` subdirectory.
+
+4. **Submit the container:**
+
+```bash
+docker compose up
+```
+
+Outputs (logs, analyzer artifacts, hypotheses) are written to `outputs/` in the
+container, mounted to your local directory via the compose volume.
+
+See `examples/qwen_loop_agy/` and `examples/qwen_video_temporal/` for complete
+working examples.
+
+---
+
+### Mode 2 — Natural-language description (agent writes the container)
+
+Describe the failure in plain English.  The scaffold generator produces a
+ready-to-run Docker experiment with a `run.py`, `Dockerfile`, and
+`docker-compose.yml`.  A CLI coding agent (Claude Code, Gemini CLI, …) can
+write a fully customised `run.py`; otherwise a template is used as a starting
+point.
+
+**Python API:**
+
+```python
+from evalvitals.eval_agent import scaffold_from_description
+
+out = scaffold_from_description(
+    description="My VLM frequently confuses left and right when answering "
+                "spatial relationship questions about images.",
+    model_key="qwen2.5-vl-7b-instruct",
+    output_dir="./my_experiment",
+)
+# cd my_experiment && docker compose up
+```
+
+With a CLI coding agent (generates a bespoke `run.py` tailored to the description):
+
+```python
+out = scaffold_from_description(
+    description="...",
+    model_key="qwen2.5-vl-7b-instruct",
+    output_dir="./my_experiment",
+    provider="claude_code",   # or "gemini_cli", "codex", "opencode", …
+    cli_model="sonnet",
+)
+```
+
+**CLI:**
+
+```bash
+# Template mode (no API key needed for scaffolding)
+python -m evalvitals.eval_agent.nl_runner \
+    --description "My VLM confuses left and right in spatial questions" \
+    --model qwen2.5-vl-7b-instruct \
+    --out ./my_experiment
+
+# CLI agent mode (Claude Code writes a customised run.py)
+python -m evalvitals.eval_agent.nl_runner \
+    --description "My VLM confuses left and right in spatial questions" \
+    --model qwen2.5-vl-7b-instruct \
+    --out ./my_experiment \
+    --provider claude_code \
+    --cli-model sonnet
+
+# Then launch:
+cd my_experiment && docker compose up
+```
+
+The generated scaffold contains:
+
+| File | Purpose |
+|---|---|
+| `run.py` | Diagnosis script with `ExperimentProtocol` pre-filled from your description |
+| `Dockerfile` | Builds the evalvitals image with GPU + local-weights support |
+| `docker-compose.yml` | Mounts HF cache, GPU, outputs, and agy binary |
+| `.gitignore` | Excludes `outputs/` from version control |
+
+In template mode, edit the `CASES` list in `run.py` to add your own
+failure examples before running `docker compose up`.
+
 ## Install
 
 ```bash
@@ -492,18 +638,13 @@ pytest --run-gpu
 Each `examples/` subdirectory has its own `docker-compose.yml`:
 
 ```bash
-cd examples/qwen_attention  && docker compose up
-cd examples/hallucination   && docker compose up
-cd examples/mm_shap         && docker compose up
-cd examples/logprob_entropy && docker compose up
-cd examples/stats_compare   && docker compose up
-cd examples/eval_agent      && docker compose up
+cd examples/qwen_attention       && docker compose up   # attention analysis on a text LLM
+cd examples/hallucination        && docker compose up   # POPE / CHAIR hallucination
+cd examples/mm_shap              && docker compose up   # multimodal SHAP attribution
+cd examples/logprob_entropy      && docker compose up   # logprob uncertainty
+cd examples/stats_compare        && docker compose up   # A/B statistical comparison
+cd examples/eval_agent           && docker compose up   # AutoDiagnoseLoop M1→M4
+cd examples/qwen_loop_agy        && docker compose up   # VLDiagnoseLoop M1→M5 (VLM)
+cd examples/qwen_video_temporal  && docker compose up   # video temporal diagnosis
+cd examples/vlm_research_topics  && docker compose up   # research topic discovery
 ```
-Partial 1 - Close-loop
-Partial 2 - self-envolving 
-
-
-1. M1 agent probing tool (agent, VLM, LLM), launch each analyze in the container.
-2. M2 statistical testing (self-envolving agent to provide initial insight).
-3. M3 propose hypothesis.
-4. M4 perform intervention. (self-envolving)

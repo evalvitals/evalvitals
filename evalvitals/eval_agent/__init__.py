@@ -137,6 +137,7 @@ from evalvitals.eval_agent.stages.whitebox_probe_generator import (
     GeneratedWhiteboxProbe,
     WhiteboxProbeGenerator,
 )
+from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 
 __all__ = [
@@ -225,6 +226,8 @@ __all__ = [
     "SandboxConfig",
     "SandboxFactoryConfig",
     "create_sandbox",
+    # NL scaffold
+    "scaffold_from_description",
     # Git versioning
     "ExperimentGitManager",
     # Evolution store
