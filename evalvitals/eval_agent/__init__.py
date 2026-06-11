@@ -82,6 +82,7 @@ from evalvitals.eval_agent.loop import (
     VLDiagnoseLoop,
     VLDiagnoseReport,
 )
+from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
     DataSplit,
@@ -137,7 +138,6 @@ from evalvitals.eval_agent.stages.whitebox_probe_generator import (
     GeneratedWhiteboxProbe,
     WhiteboxProbeGenerator,
 )
-from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 
 __all__ = [

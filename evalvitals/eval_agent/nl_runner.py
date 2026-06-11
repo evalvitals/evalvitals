@@ -26,8 +26,6 @@ Template   (default, no extra binary needed)
 from __future__ import annotations
 
 import argparse
-import shutil
-import textwrap
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
