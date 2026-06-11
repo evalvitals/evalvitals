@@ -215,25 +215,124 @@ report = EvalOrchestrator().run(cases, hyp, strategy_a, strategy_b)   # register
 LOGPROBS are black-box-retrievable (OpenAI-style): wire `RuntimeConfig(logprobs_fn=...)`
 and run `LogprobEntropyAnalyzer` (perplexity + predictive entropy) on an API model.
 
-## AutoDiagnoseLoop — automated false-attribution pipeline
+## Automated failure attribution
 
-`AutoDiagnoseLoop` runs a four-module cycle that selects analyzers, executes
-them, asks an LLM to propose hypotheses, and verifies each one through
-intervention — looping back if the problem is not yet resolved.
+Two diagnosis loops are available.  `VLDiagnoseLoop` is the current
+architecture for VL and LLM tasks.  `AutoDiagnoseLoop` is kept for
+backward compatibility.
+
+### `VLDiagnoseLoop` — M1 → M2 → M3 → M5 (current)
 
 ```
-M1 StrategyProbe   → select analyzers for this model kind (VLM / agent / LLM)
-M2 Execution       → run via ExperimentRunner (content-hash cached)
-M3 DiagnosisAgent  → LLM judge reads findings, proposes HYPOTHESIS:/FAILURE_MODE: pairs
-M4 SurgeryAgent     → correlate per-case signals with PASS/FAIL labels; refocus data
-     ↑_______________________________________________________________|  (repeat)
+M1  ProbeAgent         protocol-guided analyzer selection + execute
+M2  StatsAnalysisAgent stats tools + e-BH FDR correction + LLM evidence chain
+M3  DiagnosisAgent     "AI scientist" hypothesis generation
+M5  HypothesisTester   stats test + protocol consistency check
+     ↑___________________________________|
+     stop when M5 finds a verified, protocol-consistent hypothesis
+```
+
+M4 (`SurgeryAgent`) runs **after** the loop via `loop.run_m4()` to propose
+(Plan A) or execute (Plan B) a targeted fix for the best verified hypothesis.
+
+```python
+from evalvitals import compose
+from evalvitals.core.capability import Capability
+from evalvitals.eval_agent import VLDiagnoseLoop, AgyModel, RunLogger
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
+
+protocol = ExperimentProtocol(
+    description="The VLM gives wrong left/right positions in spatial questions.",
+    task_domain="spatial reasoning",
+    success_criteria="Positions must match what is visible in the image.",
+)
+
+model = compose("qwen2.5-vl-7b-instruct", "hf_local",
+                want={Capability.GENERATE, Capability.ATTENTION})
+judge = AgyModel()   # or any Model with Capability.GENERATE
+
+loop = VLDiagnoseLoop(
+    model=model,
+    probe_agent=ProbeAgent(max_analyzers=3),
+    stats_agent=StatsAnalysisAgent(judge=judge),
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    max_cycles=3,
+    protocol=protocol,
+    run_logger=RunLogger(),
+)
+report = loop.run(failure_cases)
+
+print(report.resolved)           # True when M5 finds a supported, consistent hypothesis
+print(report.final_hypotheses)   # list[Hypothesis] — status SUPPORTED/REFUTED/INCONCLUSIVE
+
+fix = loop.run_m4(report, failure_cases)   # post-loop fix proposal
+```
+
+**`ExperimentProtocol`** is the human prior that anchors the loop.  M1 uses it
+to select analyzers relevant to the task; M5 uses it to reject hypotheses that
+drift from what the user was investigating:
+
+```python
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+protocol = ExperimentProtocol(
+    description="free text — what the experiment tests and what failure looks like",
+    task_domain="spatial reasoning",      # short label
+    success_criteria="what counts as a pass",
+    failure_patterns="observations already noticed (optional)",
+    target_modalities=frozenset({"text", "image"}),
+)
+```
+
+**`ProbeAgent` / `StrategyProbe`** — M1 selects analyzers in two tiers:
+
+- **Tier (a)** `StrategyProbe` ranks analyzers by diagnostic value for the detected model kind, guided by the protocol description via an LLM judge:
+
+| Kind detected | Priority analyzers |
+|---|---|
+| VLM (image/video) | `pope`, `chair`, `attention`, `attention_rollout`, `attention_sink`, `prompt_contrast`, `mm_shap`, `logprob_entropy` |
+| Agent (`TOOL_CALLS`) | `loop_detect`, `ignored_obs`, `first_error_judge`, `counterfactual` |
+| LLM (text-only) | `attention`, `logit_lens`, `token_entropy`, `logprob_entropy`, `attention_sink`, `prompt_contrast`, `cka` |
+
+- **Tier (b)** `ProbeGenerator` / `WhiteboxProbeGenerator` — when no standard analyzer covers the failure mode, an LLM or CLI agent writes a bespoke probe and runs it in a sandbox.
+
+**`StatsAnalysisAgent`** (M2) runs a catalog of statistical tools
+(`signal_label_assoc`, `mcnemar_evalue`, `bootstrap_diff`, `friedman`,
+`rank_corr`, `single_rate_evalue`) over the analyzer findings, applies
+e-BH FDR correction, and produces a `StatsAnalysisReport` with a structured
+evidence chain for M3.
+
+**`HypothesisTester`** (M5) asks two questions per hypothesis:
+
+1. *Statistical support* — does the signal group fail at a significantly higher
+   rate than the control group? Consumes M2's FDR-corrected stats when present;
+   falls back to a clustered-bootstrap `stats.compare` call.
+2. *Protocol consistency* — does the hypothesis match what the user described?
+   Keyword-based by default; an optional `judge=` runs an LLM critic.
+
+**`SurgeryAgent`** (M4) has three verification strategies (first match wins):
+
+1. **Injected `verify_fn`** — full caller control.
+2. **`analyzer_params`** — re-run named analyzers with modified settings; returns before/after findings.
+3. **Default label correlation** — extract per-case signals, split into signal vs. control, compare FAIL rates. When `SUPPORTED`, produces `new_data` for the next M1 cycle.
+
+---
+
+### `AutoDiagnoseLoop` — M1 → M2 → M3 → M4 (legacy)
+
+```
+M1  ProbeAgent     analyzer selection + execute
+M2  AnalysisModule threshold rules → structured report
+M3  DiagnosisAgent LLM judge proposes hypotheses
+M4  SurgeryAgent   correlate signals, verify, refocus data
+     ↑_____________|  (repeat until resolved or max_cycles)
 ```
 
 ```python
 from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
-
-# Any model with Capability.GENERATE as the judge (Claude, GPT-4o, local chat model, …)
-judge = compose("qwen3-8b", "api", RuntimeConfig(generate_fn=my_generate))
 
 loop = AutoDiagnoseLoop(
     model=my_vlm,
@@ -242,31 +341,10 @@ loop = AutoDiagnoseLoop(
     max_analyzers=4,
 )
 report = loop.run(failure_cases)
-
-print(report.resolved)           # True when an intervention eliminated the failures
-print(report.final_hypotheses)   # list[Hypothesis] with status SUPPORTED/REFUTED/INCONCLUSIVE
-print(report.final_results)      # {analyzer_name: Result} from the last cycle
+print(report.resolved, report.final_hypotheses)
 ```
 
-**`StrategyProbe`** ranks analyzers by diagnostic value for the model kind it
-detects:
-
-| Kind detected | First analyzers selected |
-|---|---|
-| VLM (image modality) | `pope`, `chair`, `attention`, `attention_rollout`, `mm_shap` |
-| Agent (`TOOL_CALLS`) | `loop_detect`, `ignored_obs`, `first_error_judge`, `counterfactual` |
-| LLM (text-only) | `attention`, `logit_lens`, `token_entropy`, `logprob_entropy` |
-
-**`SurgeryAgent`** has three verification strategies (first match wins):
-
-1. **Injected `verify_fn`** — full caller control.
-2. **`analyzer_params`** — re-run named analyzers with modified settings; returns before/after findings.
-3. **Default label correlation** — extracts per-case signals (e.g. `has_loop`, `n_ignored`) from findings,
-   splits cases into signal vs. control groups, compares FAIL rates with a 10 % gap threshold.
-   When `SUPPORTED`, produces `new_data` (the non-signal cases) for the next M1 cycle.
-
-Analyzers that require mandatory constructor arguments (e.g. `CounterfactualReplay`) are
-passed via `analyzer_overrides`:
+Analyzers requiring constructor arguments are passed via `analyzer_overrides`:
 
 ```python
 from evalvitals.analyzers.agent.counterfactual import CounterfactualReplay
@@ -277,6 +355,152 @@ loop = AutoDiagnoseLoop(
     analyzer_overrides={"counterfactual": CounterfactualReplay(rerun_fn=my_rerun, n_replays=5)},
 )
 ```
+
+## Input Modes
+
+There are two ways to trigger the diagnosis agent.
+
+---
+
+### Mode 1 — Container submission (reproduce a known failure)
+
+Write a `run.py` that defines your failure cases as `FailureCase` objects,
+then package it into a Docker container.  The agent runs the M1→M5 loop
+inside the container and writes findings to `outputs/`.
+
+**Step-by-step:**
+
+1. **Define failure cases** in `run.py`:
+
+```python
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+protocol = ExperimentProtocol(
+    description="The model gives wrong left/right positions in spatial questions.",
+    task_domain="spatial reasoning",
+)
+
+cases = CaseBatch([
+    FailureCase(
+        id="case_0",
+        inputs=Inputs(prompt="Is the red box to the left or right of the blue box?",
+                      image=my_image),
+        expected="left",
+    ),
+    # ... more cases ...
+])
+```
+
+2. **Run the loop** (same `run.py`):
+
+```python
+from evalvitals import compose
+from evalvitals.core.capability import Capability
+from evalvitals.eval_agent import VLDiagnoseLoop, AgyModel, RunLogger
+from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
+
+model = compose("qwen2.5-vl-7b-instruct", "hf_local",
+                want={Capability.GENERATE, Capability.ATTENTION})
+judge = AgyModel()
+
+loop = VLDiagnoseLoop(
+    model=model,
+    probe_agent=ProbeAgent(max_analyzers=3),
+    stats_agent=StatsAnalysisAgent(judge=judge),
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    max_cycles=2,
+    protocol=protocol,
+    run_logger=RunLogger(),
+)
+report = loop.run(cases)
+print(report.final_hypotheses)
+```
+
+3. **Add a Dockerfile + docker-compose.yml** mirroring any `examples/` subdirectory.
+
+4. **Submit the container:**
+
+```bash
+docker compose up
+```
+
+Outputs (logs, analyzer artifacts, hypotheses) are written to `outputs/` in the
+container, mounted to your local directory via the compose volume.
+
+See `examples/qwen_loop_agy/` and `examples/qwen_video_temporal/` for complete
+working examples.
+
+---
+
+### Mode 2 — Natural-language description (agent writes the container)
+
+Describe the failure in plain English.  The scaffold generator produces a
+ready-to-run Docker experiment with a `run.py`, `Dockerfile`, and
+`docker-compose.yml`.  A CLI coding agent (Claude Code, Gemini CLI, …) can
+write a fully customised `run.py`; otherwise a template is used as a starting
+point.
+
+**Python API:**
+
+```python
+from evalvitals.eval_agent import scaffold_from_description
+
+out = scaffold_from_description(
+    description="My VLM frequently confuses left and right when answering "
+                "spatial relationship questions about images.",
+    model_key="qwen2.5-vl-7b-instruct",
+    output_dir="./my_experiment",
+)
+# cd my_experiment && docker compose up
+```
+
+With a CLI coding agent (generates a bespoke `run.py` tailored to the description):
+
+```python
+out = scaffold_from_description(
+    description="...",
+    model_key="qwen2.5-vl-7b-instruct",
+    output_dir="./my_experiment",
+    provider="claude_code",   # or "gemini_cli", "codex", "opencode", …
+    cli_model="sonnet",
+)
+```
+
+**CLI:**
+
+```bash
+# Template mode (no API key needed for scaffolding)
+python -m evalvitals.eval_agent.nl_runner \
+    --description "My VLM confuses left and right in spatial questions" \
+    --model qwen2.5-vl-7b-instruct \
+    --out ./my_experiment
+
+# CLI agent mode (Claude Code writes a customised run.py)
+python -m evalvitals.eval_agent.nl_runner \
+    --description "My VLM confuses left and right in spatial questions" \
+    --model qwen2.5-vl-7b-instruct \
+    --out ./my_experiment \
+    --provider claude_code \
+    --cli-model sonnet
+
+# Then launch:
+cd my_experiment && docker compose up
+```
+
+The generated scaffold contains:
+
+| File | Purpose |
+|---|---|
+| `run.py` | Diagnosis script with `ExperimentProtocol` pre-filled from your description |
+| `Dockerfile` | Builds the evalvitals image with GPU + local-weights support |
+| `docker-compose.yml` | Mounts HF cache, GPU, outputs, and agy binary |
+| `.gitignore` | Excludes `outputs/` from version control |
+
+In template mode, edit the `CASES` list in `run.py` to add your own
+failure examples before running `docker compose up`.
 
 ## Install
 
@@ -424,29 +648,40 @@ evalvitals/
 │   ├── evalue.py
 │   └── subset_sampling.py
 │
-└── eval_agent/                    ← Experiment automation loop (M1→M4)
-    ├── orchestrator.py  top-level driver
-    ├── loop.py          run loop (cycles, checkpoint resume)
-    ├── experiment_harness.py
-    ├── experiment_writer.py  LLM → experiment code
+└── eval_agent/                    ← Automated failure attribution (M1→M5)
+    ├── loop.py          AutoDiagnoseLoop (legacy M1→M4), VLDiagnoseLoop (M1→M5)
+    ├── nl_runner.py     NL → Docker scaffold (scaffold_from_description)
     ├── cli_agent.py     CLI coding-agent backends
-    │                    (claude_code, codex, opencode, gemini_cli, kimi_cli)
+    │                    (claude_code, codex, opencode, gemini_cli, kimi_cli, antigravity)
+    ├── run_logger.py    structured JSONL event log + artifact sink
+    ├── hypothesis.py    Hypothesis, HypothesisStatus, serialization
+    ├── orchestrator.py  EvalOrchestrator — pre-registered A/B comparison
     ├── ab_runner.py     A/B experiment runner
-    ├── evolution.py     EvolutionStore, build_overlay
-    ├── store.py         artifact store
-    ├── run_logger.py    structured event log (trace_id, span_id)
-    ├── hypothesis.py    hypothesis tracking
-    ├── probe.py / probe_agent.py
-    ├── diagnosis.py
-    ├── analysis.py
-    ├── report.py
-    ├── surgery.py       model weight surgery
-    ├── sandbox.py
-    ├── preregister.py
-    ├── factory.py
-    ├── git_manager.py
-    ├── _docker_runner.py
-    └── _tools.py
+    ├── evolution.py     EvolutionStore — JSONL lesson store (30-day half-life decay)
+    ├── store.py         Store / InMemoryStore / JsonlStore
+    ├── sandbox.py       ExperimentSandbox, SandboxProtocol
+    ├── factory.py       sandbox factory (subprocess / docker backends)
+    ├── git_manager.py   git-native experiment versioning (eval/{run_id} branches)
+    ├── preregister.py   DataSplit, PreregisteredHypothesis, PreregistrationLog
+    ├── report.py        DiagnosticReport
+    ├── experiment_harness.py  immutable evaluation harness injected into projects
+    ├── _docker_runner.py      Docker worker (reads JSON payload from stdin)
+    └── stages/                ← M1–M5 stage implementations
+        ├── protocol.py        ExperimentProtocol — NL description anchoring M1 + M5
+        ├── probe.py           M1 · StrategyProbe — model-kind detection + analyzer ranking
+        ├── probe_agent.py     M1 · ProbeAgent — execute ranked analyzers (direct / Docker)
+        ├── probe_generator.py M1 tier(b) · ProbeGenerator — LLM/CLI writes bespoke probe
+        ├── whitebox_probe_generator.py  M1 tier(b) · WhiteboxProbeGenerator
+        ├── analysis.py        M2 · AnalysisModule — threshold rules → AnalysisReport
+        ├── stats_agent.py     M2 · StatsAnalysisAgent — stats tools + FDR + LLM chain
+        ├── stats_tools.py     M2 · stats tool catalog (signal_label_assoc, mcnemar, …)
+        ├── stats_tool_agent.py        M2 · legacy deterministic stats tools
+        ├── stats_tool_generator.py    M2 tier(b) · LLM/CLI writes new stats script
+        ├── diagnosis.py       M3 · DiagnosisAgent — hypothesis generation
+        ├── surgery.py         M4 · SurgeryAgent — verify / correlate / ExperimentWriter
+        ├── experiment_writer.py  M4 · multi-phase LLM/CLI agent writes + runs fix scripts
+        ├── hypothesis_tester.py  M5 · HypothesisTester — stats test + protocol consistency
+        └── case_discovery.py  Data · CaseDiscoveryAgent — run model + label PASS/FAIL
 ```
 
 **Data flow:**
@@ -460,13 +695,6 @@ Dataset  →  Model (blackbox | whitebox)  →  Case
                                               ↓
                                   stats.compare() / eval_agent loop
 ```
-
-## The automated diagnosis loop
-
-`eval_agent/` provides both the concrete `AutoDiagnoseLoop` (M1→M4 implemented)
-and `SelfEvolveLoop` (original propose→record skeleton, kept for backward
-compatibility).  The agent acts only through `eval_agent/tools.py` (discovery +
-run + memory), so the package's public API *is* the agent's action space.
 
 ## Testing Principles & Running Tests
 
@@ -492,18 +720,13 @@ pytest --run-gpu
 Each `examples/` subdirectory has its own `docker-compose.yml`:
 
 ```bash
-cd examples/qwen_attention  && docker compose up
-cd examples/hallucination   && docker compose up
-cd examples/mm_shap         && docker compose up
-cd examples/logprob_entropy && docker compose up
-cd examples/stats_compare   && docker compose up
-cd examples/eval_agent      && docker compose up
+cd examples/qwen_attention       && docker compose up   # attention analysis on a text LLM
+cd examples/hallucination        && docker compose up   # POPE / CHAIR hallucination
+cd examples/mm_shap              && docker compose up   # multimodal SHAP attribution
+cd examples/logprob_entropy      && docker compose up   # logprob uncertainty
+cd examples/stats_compare        && docker compose up   # A/B statistical comparison
+cd examples/eval_agent           && docker compose up   # AutoDiagnoseLoop M1→M4
+cd examples/qwen_loop_agy        && docker compose up   # VLDiagnoseLoop M1→M5 (VLM)
+cd examples/qwen_video_temporal  && docker compose up   # video temporal diagnosis
+cd examples/vlm_research_topics  && docker compose up   # research topic discovery
 ```
-Partial 1 - Close-loop
-Partial 2 - self-envolving 
-
-
-1. M1 agent probing tool (agent, VLM, LLM), launch each analyze in the container.
-2. M2 statistical testing (self-envolving agent to provide initial insight).
-3. M3 propose hypothesis.
-4. M4 perform intervention. (self-envolving)

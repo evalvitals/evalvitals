@@ -117,7 +117,7 @@ class RelativeAttentionAnalyzer(Analyzer):
 
     name = "relative_attention"
     requires = frozenset({Capability.ATTENTION})
-    applies_to_modalities = frozenset({"image"})
+    applies_to_modalities = frozenset({"image", "video"})
 
     def __init__(
         self,
@@ -229,8 +229,12 @@ class RelativeAttentionAnalyzer(Analyzer):
         # Forward pass 1: task-specific prompt
         specific_trace = model.forward(case.inputs, capture={Capability.ATTENTION})
 
-        # Forward pass 2: generic baseline — same image, generic question
-        general_inputs = Inputs(prompt=self.general_prompt, image=case.inputs.image)
+        # Forward pass 2: generic baseline — same image/video, generic question
+        general_inputs = Inputs(
+            prompt=self.general_prompt,
+            image=case.inputs.image,
+            video=getattr(case.inputs, "video", None),
+        )
         general_trace = model.forward(general_inputs, capture={Capability.ATTENTION})
 
         # Image-token masks — each trace reports its own positions because the

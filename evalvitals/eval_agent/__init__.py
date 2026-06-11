@@ -90,6 +90,7 @@ from evalvitals.eval_agent.loop import (
     VLDiagnoseLoop,
     VLDiagnoseReport,
 )
+from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
     DataSplit,
@@ -251,6 +252,8 @@ __all__ = [
     "SandboxConfig",
     "SandboxFactoryConfig",
     "create_sandbox",
+    # NL scaffold
+    "scaffold_from_description",
     # Git versioning
     "ExperimentGitManager",
     # Evolution store
