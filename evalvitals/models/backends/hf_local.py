@@ -310,25 +310,42 @@ class HFLocalModel(Model):
         return ChatTurn(text=gen, raw_tool_calls=None)
 
     def _encode_vlm(self, inputs, model, processor):
-        """Encode an (image, text) input for a VLM and build its TokenTypeMap.
+        """Encode an (image/video, text) input for a VLM and build its TokenTypeMap.
 
         Builds the TokenTypeMap from the processor output BEFORE moving to device,
         using the live config (image_token_id, vision_config.spatial_merge_size) +
         the spec's VisionSpec — so token ids / merge sizes are never hard-coded.
+
+        ``inputs.video`` (list of PIL frames) takes priority over ``inputs.image``:
+        each frame gets its own ``{"type": "image"}`` content slot so the processor
+        inserts a separate image-token block per frame, enabling multi-frame /
+        temporal inputs without a native video tower.
         """
         from evalvitals.core.tokentype import build_token_type_map
 
         tok = getattr(processor, "tokenizer", processor)
         prompt = self._as_prompt(inputs)
         image = getattr(inputs, "image", None) if isinstance(inputs, Inputs) else None
-        content = ([{"type": "image"}] if image is not None else []) + [{"type": "text", "text": prompt}]
+        video = getattr(inputs, "video", None) if isinstance(inputs, Inputs) else None
+
+        if video is not None:
+            # Multi-frame path: one <image> placeholder per frame, frames passed in order.
+            content = [{"type": "image"} for _ in video] + [{"type": "text", "text": prompt}]
+            images = list(video)
+        elif image is not None:
+            content = [{"type": "image"}, {"type": "text", "text": prompt}]
+            images = [image]
+        else:
+            content = [{"type": "text", "text": prompt}]
+            images = []
+
         text = processor.apply_chat_template(
             [{"role": "user", "content": content}],
             add_generation_prompt=True, tokenize=False, **self.spec.chat_template_kwargs,
         )
         proc_kwargs = {"text": [text], "return_tensors": "pt"}
-        if image is not None:
-            proc_kwargs["images"] = [image]
+        if images:
+            proc_kwargs["images"] = images
         enc = processor(**proc_kwargs)
         ttm = build_token_type_map(enc["input_ids"], enc, model.config, self.spec.vision)
         enc = enc.to(next(model.parameters()).device)
@@ -352,7 +369,8 @@ class HFLocalModel(Model):
         extras: dict = {"attn_semantics": self.spec.attn_semantics.value}
         if self.spec.is_vlm and self.spec.vision is not None:
             image = getattr(inputs, "image", None) if isinstance(inputs, Inputs) else None
-            if image is not None:
+            video = getattr(inputs, "video", None) if isinstance(inputs, Inputs) else None
+            if image is not None or video is not None:
                 _populate_vision_extras(
                     extras, torch.tensor(token_ids), enc, model.config, self.spec.vision
                 )
