@@ -614,6 +614,8 @@ class ClaudeModel:
         model:       Model identifier forwarded via ``--model`` (e.g.
                      ``"claude-fable-5"``, ``"sonnet"``, ``"haiku"``).  Empty
                      uses the CLI session default.
+        effort:      Effort level forwarded via ``--effort`` (e.g. ``"high"``).
+                     Empty uses the CLI session default.
     """
 
     key = "claude"
@@ -623,6 +625,7 @@ class ClaudeModel:
         binary_path: str = "",
         timeout_sec: int = 240,
         model: str = "",
+        effort: str = "",
     ) -> None:
         from evalvitals.core.capability import Capability
 
@@ -636,6 +639,7 @@ class ClaudeModel:
         self._binary = binary
         self._timeout_sec = timeout_sec
         self._model = model
+        self._effort = effort
         self.capabilities = frozenset({Capability.GENERATE})
         self.modalities = frozenset({"text"})
 
@@ -678,6 +682,8 @@ class ClaudeModel:
                 cmd += ["--add-dir", img_dir]
             if self._model:
                 cmd += ["--model", self._model]
+            if self._effort:
+                cmd += ["--effort", self._effort]
 
             try:
                 proc = subprocess.run(
@@ -713,7 +719,7 @@ class ClaudeModel:
                 shutil.rmtree(img_dir, ignore_errors=True)
 
     def __repr__(self) -> str:
-        return f"ClaudeModel(binary={self._binary!r}, model={self._model!r})"
+        return f"ClaudeModel(binary={self._binary!r}, model={self._model!r}, effort={self._effort!r})"
 
 
 def create_cli_agent(config: CliAgentConfig) -> _CliAgentBase:

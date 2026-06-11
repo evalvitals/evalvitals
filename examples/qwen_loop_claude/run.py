@@ -423,9 +423,10 @@ def _resolve_judge(args):
         name = args.judge_model
         if name == "auto":
             name = _pick_claude_model()
-        judge = ClaudeModel(model=name, timeout_sec=240)
+        judge = ClaudeModel(model=name, timeout_sec=240, effort=args.judge_effort)
+        effort_tag = f" effort={args.judge_effort}" if args.judge_effort else ""
         print(f"\n  judge : claude CLI ({judge._binary})  "
-              f"model={name or 'session default'}  [M1–M5, no API key]")
+              f"model={name or 'session default'}{effort_tag}  [M1–M5, no API key]")
         return judge, "claude_code", name
 
     attempts = {"agy": (_try_agy,), "claude": (_try_claude,),
@@ -625,6 +626,11 @@ def main() -> None:
              "loaded model. Both CLIs reuse your local OAuth session.",
     )
     parser.add_argument(
+        "--judge-effort", default="",
+        help="claude effort level forwarded via --effort (e.g. 'high'); also "
+             "applied to the claude_code coder. Empty = CLI session default.",
+    )
+    parser.add_argument(
         "--judge-model", default="auto",
         help="Judge model name for the chosen provider. agy: a name from "
              "`agy models`; claude: a model id/alias (e.g. 'claude-fable-5', "
@@ -669,9 +675,11 @@ def main() -> None:
         help="Use the demo Wikimedia image instead of the synthetic labeled image.",
     )
     parser.add_argument(
-        "--allow-codegen", action="store_true",
-        help="M2 tier(b): let the agent write+run a bespoke stats tool in a "
-             "sandbox when no built-in tool fits (uses antigravity to write code).",
+        "--allow-codegen", action=argparse.BooleanOptionalAction, default=True,
+        help="tier(b) code generation: M1 black-box/white-box probe generation "
+             "and M2 bespoke stats tools, written by the judge CLI and run in a "
+             "sandbox when no catalog tool fits. ON by default in this example; "
+             "disable with --no-allow-codegen.",
     )
     parser.add_argument(
         "--analysis-only", action="store_true",
@@ -785,6 +793,10 @@ def main() -> None:
     # ── M1: ProbeAgent — agy selects analyzers from the protocol ─────────────
     # With --allow-codegen, M1 also generates a bespoke black-box probe (run in a
     # sandbox over the model's outputs) when no catalog analyzer fits the failure.
+    _coder_extra = (
+        ("--effort", args.judge_effort)
+        if (coder_provider == "claude_code" and args.judge_effort) else ()
+    )
     _m1_codegen = args.allow_codegen and not args.analysis_only
     if args.analyzers.strip():
         # Pinned analyzer list — deterministic M1 for reproducible experiments.
@@ -803,7 +815,7 @@ def main() -> None:
             max_analyzers=args.max_analyzers,
             allow_codegen=_m1_codegen,
             codegen_config=(
-                CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model) if _m1_codegen else None
+                CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model, extra_args=_coder_extra) if _m1_codegen else None
             ),
         )
 
@@ -821,7 +833,7 @@ def main() -> None:
         max_signal_tools=16,
         allow_codegen=args.allow_codegen and not args.analysis_only,
         codegen_config=(
-            CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model)
+            CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model, extra_args=_coder_extra)
             if args.allow_codegen and not args.analysis_only
             else None
         ),
@@ -843,7 +855,7 @@ def main() -> None:
     surgery_agent = None
     if not args.analysis_only:
         writer_cfg = ExperimentWriterConfig(
-            cli_agent=CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model),
+            cli_agent=CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model, extra_args=_coder_extra),
             exec_fix_timeout_sec=60,
         )
         surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)

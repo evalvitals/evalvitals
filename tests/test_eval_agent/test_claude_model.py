@@ -102,3 +102,13 @@ def test_utf8_output_decodes_under_any_locale(tmp_path, monkeypatch):
     judge = ClaudeModel(binary_path=binary)
     out = judge.generate("hi")
     assert "café — fine" in out
+
+
+def test_effort_flag_forwarded(tmp_path):
+    binary = _fake_claude(tmp_path, 'echo "$@"')
+    judge = ClaudeModel(binary_path=binary, model="claude-fable-5", effort="high")
+    out = judge.generate("q")
+    assert "--effort high" in out
+    # empty effort → flag omitted
+    judge2 = ClaudeModel(binary_path=binary)
+    assert "--effort" not in judge2.generate("q")
