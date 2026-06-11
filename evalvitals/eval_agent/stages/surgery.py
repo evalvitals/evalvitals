@@ -65,6 +65,13 @@ class InterventionResult:
     new_data: CaseBatch | None = None
     confidence_score: float = 0.0
     evidence_dimensions: dict[str, float] = field(default_factory=dict)
+    # Rich experiment payload from the experiment-writer strategy (strategy 3):
+    # generated source files, run stdout/stderr, blueprint, verdict, the agent's
+    # intermediate thinking and the working directory.  Kept separate from
+    # ``evidence`` (which is logged inline) so RunLogger.log_experiment can
+    # persist the heavy parts to disk instead of bloating the JSONL event.
+    # ``None`` for the passive strategies (label correlation / param sweep).
+    experiment: dict[str, Any] | None = None
 
 
 # Keys that carry diagnostic meaning in per-case finding entries.
@@ -369,6 +376,27 @@ class SurgeryAgent:
             "validation_log": writer_result.validation_log,
         }
 
+        # Full experiment payload for RunLogger.log_experiment — the generated
+        # script(s), the run's output, the agent's thinking, and the workspace.
+        experiment: dict[str, Any] = {
+            "module": "m4",
+            "provider": writer_result.provider,
+            "code": writer_result.code,
+            "files": writer_result.files,
+            "blueprint": writer_result.blueprint,
+            "stdout": writer_result.stdout,
+            "stderr": writer_result.stderr,
+            "verdict": writer_result.verdict,
+            "metrics": writer_result.metrics,
+            "returncode": writer_result.returncode,
+            "timed_out": writer_result.timed_out,
+            "validation_log": writer_result.validation_log,
+            "cli_raw_output": writer_result.cli_raw_output,
+            "llm_calls": writer_result.total_llm_calls,
+            "sandbox_runs": writer_result.total_sandbox_runs,
+            "workdir": writer_result.workdir,
+        }
+
         # Crashed or timed out with no metrics → inconclusive
         if not writer_result.ok and not writer_result.metrics:
             return InterventionResult(
@@ -376,6 +404,7 @@ class SurgeryAgent:
                 status=HypothesisStatus.INCONCLUSIVE,
                 fixed=False,
                 evidence={**evidence, "reason": "script did not produce metrics"},
+                experiment=experiment,
             )
 
         verdict = writer_result.verdict
@@ -385,6 +414,7 @@ class SurgeryAgent:
                 status=HypothesisStatus.INCONCLUSIVE,
                 fixed=False,
                 evidence={**evidence, "reason": "no verdict line in output"},
+                experiment=experiment,
             )
 
         if verdict >= 0.5:
@@ -401,6 +431,7 @@ class SurgeryAgent:
             status=status,
             fixed=fixed,
             evidence=evidence,
+            experiment=experiment,
         )
 
     def _param_sweep(

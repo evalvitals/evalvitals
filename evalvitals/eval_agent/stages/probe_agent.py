@@ -134,6 +134,7 @@ class ProbeAgent:
         probe_generator: "Any | None" = None,
         whitebox_generator: "Any | None" = None,
         case_examples: tuple[int, int] = (4, 2),
+        run_logger: "Any | None" = None,
     ) -> None:
         self.selector = probe or StrategyProbe()
         self.judge = judge
@@ -163,6 +164,14 @@ class ProbeAgent:
         # prompt.  More examples = more specialised selection, less generalisable
         # (the generalization–specialization trade-off).  ``(0, 0)`` disables it.
         self._case_examples = case_examples
+        # Optional RunLogger forwarded to the probe generators so their
+        # code-writing attempts surface as "tool_codegen" events.  The loop sets this
+        # when it is left unset, so wiring it here is optional for callers.
+        self.run_logger = run_logger
+        # Last LLM analyzer-selection judge I/O, surfaced for RunLogger.  Empty
+        # when selection used the static fallback (no judge / LLM call failed).
+        self.last_selection_prompt: str = ""
+        self.last_selection_raw: str = ""
 
     # ------------------------------------------------------------------
     # Public interface
@@ -379,6 +388,8 @@ class ProbeAgent:
             max_n=max_n,
         )
 
+        self.last_selection_prompt = prompt
+        self.last_selection_raw = ""
         try:
             sig = inspect.signature(self.judge.generate)
             if "temperature" in sig.parameters:
@@ -389,6 +400,7 @@ class ProbeAgent:
             logger.warning("ProbeAgent LLM selection failed (%s) — using static fallback", exc)
             return self._static_fallback(model), "static fallback (LLM call failed)"
 
+        self.last_selection_raw = str(raw)
         return self._parse_llm_response(str(raw), set(catalog), max_n, model)
 
     def _parse_llm_response(
@@ -559,11 +571,13 @@ class ProbeAgent:
     def _get_generator(self) -> "Any | None":
         """Lazily build the black-box probe generator from the judge / config."""
         if self._probe_generator is not None:
-            return self._probe_generator
+            return self._attach_logger(self._probe_generator)
         if self.judge is None and self._codegen_config is None:
             return None
         from evalvitals.eval_agent.stages.probe_generator import ProbeGenerator
-        gen = ProbeGenerator(judge=self.judge, cli_config=self._codegen_config)
+        gen = ProbeGenerator(
+            judge=self.judge, cli_config=self._codegen_config, run_logger=self.run_logger
+        )
         if not gen.available:
             return None
         self._probe_generator = gen
@@ -572,16 +586,27 @@ class ProbeAgent:
     def _get_whitebox_generator(self) -> "Any | None":
         """Lazily build the white-box (capture-then-compute) probe generator."""
         if self._whitebox_generator is not None:
-            return self._whitebox_generator
+            return self._attach_logger(self._whitebox_generator)
         if self.judge is None and self._codegen_config is None:
             return None
         from evalvitals.eval_agent.stages.whitebox_probe_generator import (
             WhiteboxProbeGenerator,
         )
-        gen = WhiteboxProbeGenerator(judge=self.judge, cli_config=self._codegen_config)
+        gen = WhiteboxProbeGenerator(
+            judge=self.judge, cli_config=self._codegen_config, run_logger=self.run_logger
+        )
         if not gen.available:
             return None
         self._whitebox_generator = gen
+        return gen
+
+    def _attach_logger(self, gen: "Any") -> "Any":
+        """Ensure a pre-built / cached generator points at the current RunLogger."""
+        if self.run_logger is not None and getattr(gen, "run_logger", None) is None:
+            try:
+                gen.run_logger = self.run_logger
+            except Exception:  # noqa: BLE001
+                pass
         return gen
 
     # ------------------------------------------------------------------

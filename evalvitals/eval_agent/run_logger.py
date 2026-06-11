@@ -184,6 +184,16 @@ class _VerboseFormatter(logging.Formatter):
         event = p.get("event", "")
         cycle = p.get("cycle", "?")
 
+        if event == "run_start":
+            lines = ["\n[START] run configuration"]
+            for k in (
+                "model", "judge", "coder", "max_cycles", "depth",
+                "allow_codegen", "n_cases", "evalvitals_version", "git_commit",
+            ):
+                if p.get(k) is not None:
+                    lines.append(f"     {k:18s}: {p[k]}")
+            return "\n".join(lines)
+
         if event == "probe":
             lines = [f"\n[M1] cycle={cycle}  analyzers={p.get('analyzers', [])}"]
             rationale = p.get("selection_rationale", "")
@@ -256,6 +266,49 @@ class _VerboseFormatter(logging.Formatter):
                     lines.append(f"     evidence: {dict(list(ev.items())[:4])}")
             return "\n".join(lines)
 
+        if event == "experiment":
+            module = p.get("module", "m4").upper()
+            lines = [f"\n[{module}] cycle={cycle}  experiment run"]
+            lines.append(f"     hypothesis : {p.get('hypothesis', '')[:70]}")
+            lines.append(
+                f"     status={p.get('status')}  verdict={p.get('verdict')}"
+                f"  fixed={p.get('fixed')}  rc={p.get('returncode')}"
+                f"  provider={p.get('provider')}"
+            )
+            code_paths = p.get("code_paths") or {}
+            if code_paths:
+                lines.append(f"     code       : {list(code_paths.values())}")
+            ws = p.get("workspace_snapshot") or {}
+            if ws.get("dir"):
+                lines.append(
+                    f"     workspace  : {ws['dir']} ({len(ws.get('files', []))} files)"
+                )
+            return "\n".join(lines)
+
+        if event == "tool_codegen":
+            ok = "OK" if p.get("ok") else "FAILED"
+            lines = [
+                f"\n[TOOL] cycle={cycle}  {p.get('module')}/{p.get('tool_name')}  "
+                f"{ok}  source={p.get('source')}"
+            ]
+            if p.get("need"):
+                lines.append(f"     need       : {p['need'][:72]}")
+            if p.get("error"):
+                lines.append(f"     error      : {p['error'][:72]}")
+            paths = p.get("artifact_paths") or {}
+            if paths.get("code"):
+                lines.append(f"     code       : {paths['code']}")
+            return "\n".join(lines)
+
+        if event == "tool_registry":
+            lines = [
+                f"\n[TOOL] cycle={cycle}  {p.get('module')}  "
+                f"{p.get('n_tools', 0)} active synthesised tool(s)"
+            ]
+            for t in p.get("tools") or []:
+                lines.append(f"     tool       : {t.get('name')} (source={t.get('source')})")
+            return "\n".join(lines)
+
         if event == "loop_end":
             stopped_by = p.get("stopped_by")
             if stopped_by is not None:
@@ -310,9 +363,30 @@ class RunLogger:
             run_dir = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_dir = Path(run_dir)
         self.artifact_dir = self.run_dir / "artifacts"
+        # Dedicated, human-navigable sinks for the heavier event payloads.
+        #   experiments/  — M4 experiment scripts, run stdout/stderr, the agent's
+        #                   intermediate thinking (CLI narration / LLM phase log)
+        #   tools/        — code the agent synthesised for new probes / stats tools
+        #   workspace/    — per-event snapshots of the sandbox working directory
+        self.experiments_dir = self.run_dir / "experiments"
+        self.tools_dir = self.run_dir / "tools"
+        self.workspace_dir = self.run_dir / "workspace"
+        # prompts/ — the verbatim prompt and raw response of every LLM judge
+        #            call (M1 analyzer selection, M2 analysis, M3 diagnosis), so
+        #            each conclusion can be traced back to exactly what the judge
+        #            was shown and what it returned.
+        self.prompts_dir = self.run_dir / "prompts"
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.artifact_dir.mkdir(exist_ok=True)
         self.log_path = self.run_dir / "run_log.jsonl"
+
+        # The loop stamps this at the top of every cycle so generator-level
+        # events (which have no cycle of their own) can be correlated with the
+        # M1→M5 events around them.  -1 means "outside any cycle" (e.g. post-loop M4).
+        self.current_cycle: int = -1
+        # Monotonic counter so codegen artifacts written in the same cycle never
+        # collide on filename.
+        self._codegen_seq: int = 0
 
         # trace_id ties all events from a single AutoDiagnoseLoop.run() call
         # together — including events from any recursive or nested sub-loops.
@@ -335,6 +409,70 @@ class RunLogger:
             self.logger.addHandler(self._console_handler)
 
     # ------------------------------------------------------------------
+    # Run provenance
+    # ------------------------------------------------------------------
+
+    def log_run_start(self, config: "dict[str, Any] | None" = None) -> None:
+        """Record a ``run_start`` event with the settings that produced this run.
+
+        *config* is whatever the caller knows (model, protocol, judge/coder
+        provider+model, max_cycles, cases…).  This method auto-enriches it with
+        the evalvitals + Python versions and the current git commit so a run can
+        be reproduced from ``run_log.jsonl`` alone.  Always written first.
+        """
+        import platform
+
+        entry: dict[str, Any] = {"event": "run_start"}
+        if config:
+            entry.update(config)
+        entry.setdefault("python_version", platform.python_version())
+        try:
+            from evalvitals import __version__ as _ver  # type: ignore
+            entry.setdefault("evalvitals_version", _ver)
+        except Exception:  # noqa: BLE001
+            pass
+        commit = self._git_commit()
+        if commit:
+            entry.setdefault("git_commit", commit)
+        self._log(entry, span_id="run_start")
+
+    @staticmethod
+    def _git_commit() -> "str | None":
+        """Best-effort current git commit hash (short), or None outside a repo."""
+        import subprocess
+        try:
+            out = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+            return out.stdout.strip() or None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _save_judge_io(
+        self, stem: str, prompt: "str | None", raw: "str | None"
+    ) -> "dict[str, Any] | None":
+        """Persist a judge prompt + raw response under ``prompts/``; return summary.
+
+        Returns ``{prompt_path, prompt_chars, raw_path, raw_chars}`` (paths
+        relative to the run dir) or ``None`` when neither is present.
+        """
+        if not prompt and not raw:
+            return None
+        info: dict[str, Any] = {}
+        if prompt:
+            p = self._save_text(self.prompts_dir, f"{stem}.prompt.txt", str(prompt))
+            if p is not None:
+                info["prompt_path"] = p
+                info["prompt_chars"] = len(str(prompt))
+        if raw:
+            p = self._save_text(self.prompts_dir, f"{stem}.response.txt", str(raw))
+            if p is not None:
+                info["raw_path"] = p
+                info["raw_chars"] = len(str(raw))
+        return info or None
+
+    # ------------------------------------------------------------------
     # Event hooks — called by AutoDiagnoseLoop at each stage
     # ------------------------------------------------------------------
 
@@ -343,6 +481,10 @@ class RunLogger:
         cycle: int,
         results: dict[str, "Result"],
         schema: "Any | None" = None,
+        *,
+        judge_prompt: "str | None" = None,
+        judge_raw: "str | None" = None,
+        duration_sec: "float | None" = None,
     ) -> "list[Path]":
         """M1: log findings (JSON) and persist heavy artifacts to disk.
 
@@ -360,6 +502,11 @@ class RunLogger:
         }
         if schema is not None:
             entry["selection_rationale"] = getattr(schema, "rationale", "")
+        judge_io = self._save_judge_io(f"c{cycle}_m1_selection", judge_prompt, judge_raw)
+        if judge_io:
+            entry["judge_io"] = judge_io
+        if duration_sec is not None:
+            entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.m1")
 
         # Collect PNG heatmap paths saved alongside the .npy arrays.
@@ -372,7 +519,13 @@ class RunLogger:
                 png_figures.append(png)
         return png_figures
 
-    def log_analysis(self, cycle: int, report: "AnalysisReport") -> None:
+    def log_analysis(
+        self,
+        cycle: int,
+        report: "AnalysisReport",
+        *,
+        duration_sec: "float | None" = None,
+    ) -> None:
         """M2: log severity, flagged anomalies, and the narrative sent to M3."""
         entry: dict[str, Any] = {
             "event": "analysis",
@@ -408,34 +561,59 @@ class RunLogger:
         figures = getattr(report, "figures", None)
         if figures:
             entry["figures"] = list(figures)
+        # M2 LLM-guided judge I/O (present when StatsAnalysisAgent has a judge).
+        judge_io = self._save_judge_io(
+            f"c{cycle}_m2_analysis",
+            getattr(report, "llm_prompt", None),
+            getattr(report, "llm_raw", None),
+        )
+        if judge_io:
+            entry["judge_io"] = judge_io
+        if duration_sec is not None:
+            entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.m2")
 
-    def log_diagnosis(self, cycle: int, diag: "DiagnosisResult") -> None:
-        """M3: log raw LLM output and every parsed hypothesis."""
-        self._log(
-            {
-                "event": "diagnosis",
-                "cycle": cycle,
-                "model_name": diag.model_name,
-                "n_hypotheses": len(diag.hypotheses),
-                "hypotheses": [
-                    {
-                        "statement": h.statement,
-                        "failure_mode": h.predicted_failure_mode,
-                        "status": h.status.value if h.status else None,
-                    }
-                    for h in diag.hypotheses
-                ],
-                "raw_judge_output": diag.raw_judge_output,
-            },
-            span_id=f"c{cycle}.m3",
+    def log_diagnosis(
+        self,
+        cycle: int,
+        diag: "DiagnosisResult",
+        *,
+        duration_sec: "float | None" = None,
+    ) -> None:
+        """M3: log raw LLM output, the prompt, and every parsed hypothesis."""
+        entry: dict[str, Any] = {
+            "event": "diagnosis",
+            "cycle": cycle,
+            "model_name": diag.model_name,
+            "n_hypotheses": len(diag.hypotheses),
+            "hypotheses": [
+                {
+                    "statement": h.statement,
+                    "failure_mode": h.predicted_failure_mode,
+                    "status": h.status.value if h.status else None,
+                }
+                for h in diag.hypotheses
+            ],
+            "raw_judge_output": diag.raw_judge_output,
+        }
+        judge_io = self._save_judge_io(
+            f"c{cycle}_m3_diagnosis",
+            getattr(diag, "prompt", None),
+            diag.raw_judge_output,
         )
+        if judge_io:
+            entry["judge_io"] = judge_io
+        if duration_sec is not None:
+            entry["duration_sec"] = round(duration_sec, 3)
+        self._log(entry, span_id=f"c{cycle}.m3")
 
     def log_surgery(
         self,
         cycle: int,
         hypothesis: "Hypothesis",
         iv: "InterventionResult",
+        *,
+        duration_sec: "float | None" = None,
     ) -> None:
         """M4/M5: log intervention outcome for one hypothesis.
 
@@ -444,34 +622,48 @@ class RunLogger:
         """
         is_m5 = "m5_test_name" in (iv.evidence or {})
         span_suffix = "m5" if is_m5 else "m4"
-        self._log(
-            {
-                "event": "surgery",
-                "cycle": cycle,
-                "module": span_suffix,
-                "hypothesis": hypothesis.statement,
-                "failure_mode": hypothesis.predicted_failure_mode,
-                "status": iv.status.value,
-                "fixed": iv.fixed,
-                "confidence_score": iv.confidence_score,
-                "evidence_dimensions": iv.evidence_dimensions,
-                "evidence": iv.evidence,
-                "n_refocused_cases": len(iv.new_data) if iv.new_data else None,
-            },
-            span_id=f"c{cycle}.{span_suffix}",
-        )
+        entry: dict[str, Any] = {
+            "event": "surgery",
+            "cycle": cycle,
+            "module": span_suffix,
+            "hypothesis": hypothesis.statement,
+            "failure_mode": hypothesis.predicted_failure_mode,
+            "status": iv.status.value,
+            "fixed": iv.fixed,
+            "confidence_score": iv.confidence_score,
+            "evidence_dimensions": iv.evidence_dimensions,
+            "evidence": iv.evidence,
+            "n_refocused_cases": len(iv.new_data) if iv.new_data else None,
+        }
+        if duration_sec is not None:
+            entry["duration_sec"] = round(duration_sec, 3)
+        self._log(entry, span_id=f"c{cycle}.{span_suffix}")
 
-    def log_loop_end(self, report: "AutoDiagnoseReport") -> None:
+    def log_loop_end(
+        self,
+        report: "AutoDiagnoseReport",
+        *,
+        tokens_used: "int | None" = None,
+        timings: "dict[str, float] | None" = None,
+    ) -> None:
         """Final summary entry — written and file closed when the loop exits.
 
         Accepts both :class:`AutoDiagnoseReport` (``resolved``,
         ``final_hypotheses``) and :class:`VLDiagnoseReport` (``stopped_by``,
         ``verified_hypotheses``, ``all_hypotheses``) via duck typing.
+
+        *tokens_used* and *timings* (per-stage wall-clock totals in seconds)
+        record the run's cost/latency profile when the loop supplies them.
         """
         entry: dict[str, Any] = {
             "event": "loop_end",
             "cycles": report.cycles,
         }
+        if tokens_used is not None:
+            entry["tokens_used"] = tokens_used
+        if timings:
+            entry["timings_sec"] = {k: round(v, 3) for k, v in timings.items()}
+            entry["total_duration_sec"] = round(sum(timings.values()), 3)
         # AutoDiagnoseReport shape
         if hasattr(report, "resolved"):
             entry["resolved"] = report.resolved
@@ -506,6 +698,202 @@ class RunLogger:
         self.close()
 
     # ------------------------------------------------------------------
+    # Experiment log (M4) + workspace snapshot
+    # ------------------------------------------------------------------
+
+    def log_experiment(
+        self,
+        cycle: int,
+        hypothesis: "Hypothesis",
+        iv: "InterventionResult",
+        *,
+        module: str = "m4",
+    ) -> None:
+        """M4: log the *experiment* the agent wrote and ran to test *hypothesis*.
+
+        Consumes the rich ``iv.experiment`` payload attached by
+        :class:`~evalvitals.eval_agent.stages.surgery.SurgeryAgent` (the
+        generated script(s), the run's stdout/stderr, the verdict, and the
+        agent's intermediate thinking — the CLI agent's narration or the
+        multi-phase LLM ``validation_log``).  Heavy text is written under
+        ``experiments/`` and the sandbox working directory is snapshotted under
+        ``workspace/``; the JSONL event records the verdict, metrics and the
+        paths to those artifacts so ``run_log.jsonl`` stays lean.
+
+        Falls back gracefully (logs only the scalar evidence) when
+        ``iv.experiment`` is absent, so passive / label-correlation
+        interventions still produce an experiment event.
+        """
+        exp = getattr(iv, "experiment", None) or {}
+        prefix = f"c{cycle}" if cycle >= 0 else "post"
+        stem = f"{prefix}_{module}"
+
+        # 1. Generated source files (the "changes").
+        file_paths: dict[str, str] = {}
+        files = exp.get("files") or {}
+        if not files and exp.get("code"):
+            files = {"main.py": exp["code"]}
+        for fname, src in files.items():
+            p = self._save_text(self.experiments_dir, f"{stem}_{fname}", str(src))
+            if p is not None:
+                file_paths[fname] = p
+
+        # 2. Output + the agent's intermediate thinking.
+        text_paths: dict[str, str] = {}
+        for key, suffix in (
+            ("stdout", "stdout.txt"),
+            ("stderr", "stderr.txt"),
+            ("blueprint", "blueprint.yaml"),
+            ("cli_raw_output", "agent_thinking.txt"),
+        ):
+            val = exp.get(key)
+            if val:
+                p = self._save_text(self.experiments_dir, f"{stem}_{suffix}", str(val))
+                if p is not None:
+                    text_paths[key] = p
+        vlog = exp.get("validation_log")
+        if vlog:
+            p = self._save_text(
+                self.experiments_dir, f"{stem}_phase_log.txt",
+                "\n".join(str(x) for x in vlog),
+            )
+            if p is not None:
+                text_paths["validation_log"] = p
+
+        # 3. Snapshot the workspace the agent operated in (the "workspace snapshot").
+        workspace = None
+        workdir = exp.get("workdir")
+        if workdir:
+            workspace = self._snapshot_workspace(stem, workdir)
+
+        entry: dict[str, Any] = {
+            "event": "experiment",
+            "cycle": cycle,
+            "module": module,
+            "hypothesis": hypothesis.statement,
+            "failure_mode": hypothesis.predicted_failure_mode,
+            "status": iv.status.value if iv.status else None,
+            "fixed": iv.fixed,
+            "provider": exp.get("provider"),
+            "verdict": exp.get("verdict"),
+            "metrics": exp.get("metrics"),
+            "returncode": exp.get("returncode"),
+            "timed_out": exp.get("timed_out"),
+            "llm_calls": exp.get("llm_calls"),
+            "sandbox_runs": exp.get("sandbox_runs"),
+            "code_paths": file_paths,
+            "output_paths": text_paths,
+            "workspace_snapshot": workspace,
+        }
+        self._log(entry, span_id=f"{prefix}.{module}")
+
+    # ------------------------------------------------------------------
+    # Tool synthesis — agent generates new probes / stats tools on demand
+    # ------------------------------------------------------------------
+
+    def log_tool_codegen(
+        self,
+        *,
+        module: str,
+        name: str,
+        need: str,
+        source: str,
+        ok: bool,
+        code: str = "",
+        prompt: str = "",
+        raw_output: str = "",
+        error: str = "",
+        stdout: str = "",
+        cycle: "int | None" = None,
+        extra: "dict[str, Any] | None" = None,
+    ) -> None:
+        """Log one tool-synthesis *attempt* (success OR failure).
+
+        Called from inside a generator (ProbeGenerator / WhiteboxProbeGenerator
+        / StatsToolGenerator) the moment it writes code, so the prompt, the raw
+        code produced, the backend used (``cli:<provider>`` vs ``llm``) and the
+        validation outcome are captured even when the attempt fails to compile
+        or run — exactly the cases that vanish today.  The code/prompt/agent
+        output are written under ``tools/``; the JSONL event records the paths
+        plus the pass/fail outcome.
+
+        ``module`` is e.g. ``"m1_probe"``, ``"m1_whitebox"`` or ``"m2_stats"``.
+        """
+        cyc = self.current_cycle if cycle is None else cycle
+        self._codegen_seq += 1
+        prefix = f"c{cyc}" if cyc >= 0 else "post"
+        stem = f"{prefix}_{module}_{name}_{self._codegen_seq:02d}"
+
+        paths: dict[str, str] = {}
+        for key, content, suffix in (
+            ("code", code, "code.py"),
+            ("prompt", prompt, "prompt.txt"),
+            ("raw_output", raw_output, "agent_thinking.txt"),
+            ("stdout", stdout, "stdout.txt"),
+        ):
+            if content:
+                p = self._save_text(self.tools_dir, f"{stem}_{suffix}", str(content))
+                if p is not None:
+                    paths[key] = p
+
+        entry: dict[str, Any] = {
+            "event": "tool_codegen",
+            "cycle": cyc,
+            "module": module,
+            "tool_name": name,
+            "need": need,
+            "source": source,
+            "ok": ok,
+            "error": error or None,
+            "artifact_paths": paths,
+        }
+        if extra:
+            entry.update(extra)
+        self._log(entry, span_id=f"{prefix}.{module}.codegen")
+
+    def log_tool_registry(
+        self,
+        cycle: int,
+        module: str,
+        generated: "list[Any]",
+    ) -> None:
+        """Snapshot which synthesised tools are registered/active for *cycle*.
+
+        *generated* is a list of objects carrying ``name``/``code``/``need``/
+        ``source`` attributes (``GeneratedProbe`` / ``GeneratedStatsTool``).
+        Records the active tool registry for the cycle and persists each tool's
+        source under ``tools/`` (idempotent by name).
+        """
+        if not generated:
+            return
+        prefix = f"c{cycle}" if cycle >= 0 else "post"
+        tools: list[dict[str, Any]] = []
+        for g in generated:
+            name = getattr(g, "name", "tool")
+            code = getattr(g, "code", "")
+            code_path = None
+            if code:
+                code_path = self._save_text(
+                    self.tools_dir, f"{module}_{name}.code.py", str(code)
+                )
+            tools.append({
+                "name": name,
+                "need": getattr(g, "need", ""),
+                "source": getattr(g, "source", ""),
+                "code_path": code_path,
+            })
+        self._log(
+            {
+                "event": "tool_registry",
+                "cycle": cycle,
+                "module": module,
+                "n_tools": len(tools),
+                "tools": tools,
+            },
+            span_id=f"{prefix}.{module}.registry",
+        )
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -536,6 +924,74 @@ class RunLogger:
         if span_id is not None:
             entry["span_id"] = span_id
         self.logger.info("run_event", extra={"_payload": entry})
+
+    def _save_text(self, directory: Path, stem: str, text: str) -> "str | None":
+        """Write *text* to ``directory/stem`` (creating *directory*); return rel path.
+
+        ``stem`` already carries the extension (e.g. ``c0_m4_main.py``).  Returns
+        the path relative to :attr:`run_dir` for embedding in the JSONL event, or
+        ``None`` if writing fails.
+        """
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / stem
+            path.write_text(text, encoding="utf-8")
+            return str(path.relative_to(self.run_dir))
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(f"RunLogger: could not save text artifact {stem!r}: {exc}")
+            return None
+
+    # Files worth keeping in a workspace snapshot — code, data, prose, logs.
+    # Heavy binaries (weights, tensors, images) are skipped to keep snapshots
+    # small; the .npy/.png analyzer artifacts are already saved under artifacts/.
+    _SNAPSHOT_SUFFIXES = frozenset(
+        {".py", ".json", ".jsonl", ".md", ".txt", ".yaml", ".yml", ".csv", ".log", ".toml"}
+    )
+    _SNAPSHOT_MAX_BYTES = 2_000_000  # skip any single file larger than 2 MB
+
+    def _snapshot_workspace(self, stem: str, workdir: "str | Path") -> "dict[str, Any] | None":
+        """Copy text/code/data files from *workdir* into ``workspace/<stem>/``.
+
+        Returns a manifest ``{"dir": <rel path>, "files": [...], "skipped": n}``
+        or ``None`` when *workdir* does not exist.  The sandbox deletes its
+        working directory on success, so this is best-effort: callers should
+        snapshot promptly after the run.
+        """
+        import shutil
+
+        src = Path(workdir)
+        if not src.exists() or not src.is_dir():
+            return None
+        dest = self.workspace_dir / stem
+        kept: list[str] = []
+        skipped = 0
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for f in sorted(src.rglob("*")):
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() not in self._SNAPSHOT_SUFFIXES:
+                    skipped += 1
+                    continue
+                try:
+                    if f.stat().st_size > self._SNAPSHOT_MAX_BYTES:
+                        skipped += 1
+                        continue
+                    rel = f.relative_to(src)
+                    target = dest / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(f, target)
+                    kept.append(str(rel))
+                except Exception:  # noqa: BLE001
+                    skipped += 1
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(f"RunLogger: workspace snapshot failed for {stem!r}: {exc}")
+            return None
+        return {
+            "dir": str(dest.relative_to(self.run_dir)),
+            "files": kept,
+            "skipped": skipped,
+        }
 
     def _save_probe_artifacts(
         self,

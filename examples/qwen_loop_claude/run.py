@@ -17,8 +17,20 @@ Pipeline:
                              (called separately AFTER the loop)
 
 Outputs written to --run-dir (default: ./outputs/):
-    logs/run_log.jsonl          ← one JSON line per M1/M2/M3/M5 event
+    logs/run_log.jsonl          ← one JSON line per event: run_start (config +
+                                  git commit), probe (M1), analysis (M2),
+                                  diagnosis (M3), surgery (M5), tool_codegen +
+                                  tool_registry (tool synthesis), experiment (M4),
+                                  loop_end (tokens + per-stage timings)
     logs/artifacts/             ← per-cycle analyzer artifacts (.npy / .json)
+    logs/prompts/               ← verbatim prompt + raw response of every LLM
+                                  judge call (M1 selection / M2 / M3)
+    logs/tools/                 ← code the agent synthesised for new probes /
+                                  stats tools, with the prompt + agent thinking
+    logs/experiments/           ← M4 generated script(s), run stdout/stderr, the
+                                  agent's intermediate thinking, the verdict
+    logs/workspace/             ← snapshot of the sandbox working directory per
+                                  experiment run (changes + inputs + outputs)
 
 Usage (via Docker — preferred):
     export CLAUDE_PATH=$(ls -d ~/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude | sort -V | tail -1)
@@ -838,8 +850,12 @@ def main() -> None:
 
     # ── Run directory + verbose logger ────────────────────────────────────────
     print(f"\nOutput directory: {run_dir.resolve()}")
-    print("  logs/run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
+    print("  logs/run_log.jsonl   ← one JSON line per event (run_start/M1/M2/M3/M5 + tool_codegen + experiment)")
     print("  logs/artifacts/      ← per-cycle analyzer artifacts (.npy / .json)")
+    print("  logs/prompts/        ← verbatim judge prompt + raw response per LLM call")
+    print("  logs/tools/          ← agent-synthesised probe / stats-tool code + prompts")
+    print("  logs/experiments/    ← M4 generated script, output, thinking, verdict")
+    print("  logs/workspace/      ← per-experiment workspace snapshot")
 
     logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
 
