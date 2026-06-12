@@ -37,7 +37,17 @@ CFG = yaml.safe_load((Path(__file__).parent / "config.yaml").read_text())
 # 1. Frozen manifest -> CaseBatch (mixed PASS/FAIL — M2/M5 need both groups)
 # ---------------------------------------------------------------------------
 
-def load_manifest(model_key: str):
+def load_manifest(model_key: str, max_clean_images: int = 0, seed: int = 42):
+    """Build the CaseBatch; optionally shrink it BY IMAGE for faster runs.
+
+    max_clean_images > 0 keeps every image with >=1 FAIL (full triplets, so
+    all failures and their same-image controls survive) plus a split-stratified
+    random sample of clean images. Pairing/cluster structure is intact; only
+    the absolute fail rate is enriched — fine for group contrasts and paired
+    McNemar, meaningless for tests against an absolute base rate.
+    """
+    import random as _random
+
     from PIL import Image
 
     from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
@@ -47,6 +57,18 @@ def load_manifest(model_key: str):
         raise SystemExit(f"{path} missing — run `python mine_cases.py --model {model_key}` first "
                          f"(see TODO.md Step 1)")
     raw = json.loads(path.read_text())
+    if max_clean_images:
+        fail_imgs = {r["image_id"] for r in raw["cases"] if r["label"] == "fail"}
+        split_of = {r["image_id"]: r["split"] for r in raw["cases"]}
+        clean = sorted({r["image_id"] for r in raw["cases"]} - fail_imgs)
+        rng = _random.Random(seed)
+        keep = set(fail_imgs)
+        for split, frac in (("explore", 0.6), ("validate", 0.4)):
+            pool = [i for i in clean if split_of[i] == split]
+            keep |= set(rng.sample(pool, min(round(max_clean_images * frac), len(pool))))
+        raw["cases"] = [r for r in raw["cases"] if r["image_id"] in keep]
+        print(f"subset: kept {len(keep)} images ({len(fail_imgs)} with fails + "
+              f"{len(keep) - len(fail_imgs)} clean) -> {len(raw['cases'])} cases")
     cases = []
     pil_cache: dict[str, object] = {}  # the processor rejects str paths; one PIL per image
     for r in raw["cases"]:
@@ -136,6 +158,9 @@ def main() -> None:
     ap.add_argument("--skip-m4", action="store_true")
     ap.add_argument("--judge-model", default=CFG.get("judge_model", "claude-fable-5"))
     ap.add_argument("--judge-effort", default=CFG.get("judge_effort", "low"))
+    ap.add_argument("--max-clean-images", type=int, default=0,
+                    help="shrink input by image: keep all fail-images + this many "
+                         "clean images (0 = use the full manifest)")
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
 
@@ -165,7 +190,7 @@ def main() -> None:
     model = compose(args.model, "hf_local",
                     want={Capability.GENERATE, Capability.HIDDEN_STATES,
                           Capability.ATTENTION})
-    cases, raw = load_manifest(args.model)
+    cases, raw = load_manifest(args.model, max_clean_images=args.max_clean_images)
     print(f"cases={len(list(cases))} yields={raw['yields']}")
     drift_check(model, cases)
 
