@@ -147,7 +147,15 @@ def main() -> None:
 
     from evalvitals import compose
     from evalvitals.core.capability import Capability
-    from evalvitals.eval_agent import RunLogger, VLDiagnoseLoop
+    from evalvitals.eval_agent import (
+        CliAgentConfig,
+        ExperimentWriterConfig,
+        FixAgent,
+        RunLogger,
+        SurgeryAgent,
+        VLDiagnoseLoop,
+        WhiteboxProbeGenerator,
+    )
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
@@ -161,19 +169,38 @@ def main() -> None:
     print(f"cases={len(list(cases))} yields={raw['yields']}")
     drift_check(model, cases)
 
-    # TODO(Step 3): if tier-(a) analyzers don't surface the layer-suppression
-    # signal, pass a WhiteboxProbeGenerator to ProbeAgent, or point the loop at
-    # ./deco_probe.py (spec in DESIGN.md §6). Window/tau/alpha grid: config.yaml.
+    # PIPELINE AUTONOMY: this run.py only provides inputs (frozen cases +
+    # protocol). Detection, custom probing (tier-(b) codegen), diagnosis and
+    # repair are all done by the loop's own agents. Reference analyses are
+    # kept OUTSIDE this repository so the loop's coding agents cannot read
+    # them (DESIGN.md §6: they grade the loop's conclusions, not feed them).
+    codegen = CliAgentConfig(provider="claude_code",
+                             model=str(CFG.get("codegen_model", "sonnet")),
+                             max_budget_usd=float(CFG.get("codegen_budget_usd", 2.0)),
+                             timeout_sec=int(CFG.get("codegen_timeout_sec", 240)))
+    run_logger = RunLogger(run_dir=OUT / "logs", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,
         # judge => LLM-guided analyzer selection anchored on the protocol
-        # (static StrategyProbe picks generic attention analyzers, not pope)
-        probe_agent=ProbeAgent(judge=judge, max_analyzers=args.max_analyzers),
-        stats_agent=StatsAnalysisAgent(judge=judge),
+        # (static StrategyProbe picks generic attention analyzers, not pope);
+        # probe_generator => tier-(b): the loop writes its own probe when the
+        # catalog can't surface the mechanism (need_custom signal).
+        probe_agent=ProbeAgent(
+            judge=judge, max_analyzers=args.max_analyzers,
+            probe_generator=WhiteboxProbeGenerator(
+                judge=judge, cli_config=codegen, run_logger=run_logger),
+        ),
+        stats_agent=StatsAnalysisAgent(judge=judge, allow_codegen=True,
+                                       codegen_config=codegen),
         diagnosis_agent=DiagnosisAgent(judge=judge),
+        surgery_agent=SurgeryAgent(
+            judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen)),
+        fix_agent=FixAgent(judge=judge,
+                           max_tier=str(CFG.get("fix_max_tier", "L3b")),
+                           cli_config=codegen, run_logger=run_logger),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
-        run_logger=RunLogger(run_dir=OUT / "logs", verbose=True),
+        run_logger=run_logger,
     )
     report = loop.run(cases)
     print(f"cycles={report.cycles} stopped_by={report.stopped_by} "
@@ -183,10 +210,14 @@ def main() -> None:
         print(f" - [{t.status}] conf={t.confidence:.2f} grade={t.evidence_grade} {stmt[:110]}")
 
     if not args.skip_m4:
-        # TODO(Step 4): inject verify_fn wrapping ./deco_fix.py:deco_rescore_answer
-        # so M4 verifies the DeCo fix (flip vs regression + guards, DESIGN.md §6).
+        # Repair is the loop's job too: M4 surgery on the best verified
+        # hypothesis (no-op when none verified), then the tiered fix module
+        # (falls back to the last cycle's proposals; validates candidates
+        # with paired McNemar against the unmodified baseline).
         fix = loop.run_m4(report, cases)
         print("m4:", fix)
+        outcome = loop.run_fix(report, cases)
+        print("fix outcome:", getattr(outcome, "recommendation", None) or outcome)
 
 
 if __name__ == "__main__":

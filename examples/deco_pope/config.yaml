@@ -19,3 +19,11 @@ explore_frac: 0.6
 # Judge for M2/M3/M5 (agy quota exhausted -> claude CLI; sonnet/haiku for tests)
 judge_model: claude-fable-5
 judge_effort: low
+
+# Pipeline-autonomy codegen (tier-(b) probe generator, stats tools, M4
+# experiment writer, fix module) — the loop writes its own code via this CLI
+# agent; deliberately a cheaper model than the judge.
+codegen_model: sonnet
+codegen_budget_usd: 2.0
+codegen_timeout_sec: 240
+fix_max_tier: L3b      # allow decoding/internals-write interventions (DeCo-class)
