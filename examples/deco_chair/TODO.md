@@ -114,3 +114,30 @@
   归一化边角如 "vase-like"、decode→re-encode 漂移、bf16 近平翻转），
   探针/修复阶段排除
 - judge：同 deco_pope，`ClaudeModel(claude-fable-5, effort=low)`
+
+### 2026-06-12 mention 级机理探针（Step 3 完成）— Finding-2 不复现
+
+`deco_probe.py`：重喂 `prompt_ids + caption_token_ids[:k]`（ids 直读 manifest，
+非重建文本），final-norm lens @ pos=-1；out=mention 首 token，gt=该图其余
+在场物体首 token ∩ 末层 top-k(20)→top-p(0.9) 候选集（Eq.2 前提）；
+grounded mention 同公式作对照（排除自身类目，保持对称）；只用
+`verified=true` 的 mention。
+
+| 尺寸 | 探测 | 被 Eq.2 前提排除 | 幻觉可用 n | 激活率 幻觉/对照 | delta_final 幻觉/对照 | 峰值在 [0.55N,0.85N] |
+|---|---|---|---|---|---|---|
+| 2B | 330 | 228 (69%) | 23 | 0.13 / 0.18 | 0.12 / 0.13 | 8.7% |
+| 4B | 399 | 344 (86%) | 17 | 0.06 / 0.08 | 0.16 / 0.09 | 5.9% |
+| 8B | 357 | 313 (88%) | 11 | 0.09 / 0.15 | 0.28 / 0.14 | 45.5% |
+
+- 所有组间检验（图像聚类 bootstrap）不显著；幻觉 vs grounded 无分离
+- **核心负结果（三尺寸一致）**：在 Qwen3-VL 的幻觉 mention 位置，
+  真实在场物体的 token 大多（69–88%）根本不在末层候选集——论文 Eq.2
+  的前提在本模型上普遍不成立；前提成立的少数样本中也没有
+  "GT 中层激活、末层被反超"的形态（峰值不聚集在论文带内）
+- 与 deco_pope Step 3 合并的总结论：**Qwen3-VL 的物体插入型幻觉是
+  全栈一致的承诺（非"看见但被压制"）；seen-but-suppressed 机理真实存在
+  但表现为漏检**（POPE present→假No：中层 p(Yes)→0.9 后末层压灭，
+  三尺寸 100% 激活）。开放描述下 stepwise DeCo 预期收益有限，
+  且按论文 "no free lunch" 警告，α 过大反而先伤 grounded 召回——
+  Step 4 前需与论文设定（LLaVA-1.5，幻觉率高一个量级）对照解读
+- 产物：outputs/probe_{model}.json（逐 mention 全层轨迹）

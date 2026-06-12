@@ -116,3 +116,43 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
 - judge：agy 配额耗尽，2026-06-12 起默认
   `ClaudeModel(model="claude-fable-5", effort="low")`（探活通过）；
   测试可 `--judge-model sonnet|haiku`
+
+### 2026-06-12 loop（Step 2 完成）
+
+- 2B、max_cycles=2、fable-low judge、--skip-m4；漂移校验 10/10 复现
+- 静态 `StrategyProbe` 选了 attention/attention_rollout（非 pope）→ 改为
+  `ProbeAgent(judge=...)` LLM 引导选择：选中 logit_lens / prompt_contrast /
+  relative_attention，理由直指 DeCo 机理 ✓
+- 包内 `logit_lens` 在本环境 cpu/cuda device mismatch 崩溃（DESIGN §3.4
+  预言的缺口）；analyzer 子采样 n=32 → M5 全部 inconclusive（诚实），
+  4 条假设均切题（late-layer suppression / 先验主导 / 仪器偏差 / 标签疑误）
+- 结论：tier-(a) 功效不足，逐层证据走本目录 deco_probe.py（Step 3）
+
+### 2026-06-12 机理探针（Step 3 完成）— 主结论
+
+`deco_probe.py`：final-norm logit lens，全量 1500 case/尺寸，pos=-1，
+gold vs 互补答案集，窗口 [0.55N,0.80N]、τ=0.05，图像聚类 bootstrap。
+
+| 尺寸 | 组 | n | 窗口激活率 | 任意层激活 | delta_final |
+|---|---|---|---|---|---|
+| 2B | fail/present（漏检） | 59 | 1.00 | 1.00 | 0.746 |
+| 2B | fail/adversarial（幻觉） | 41 | 0.00 | 0.29 | 0.227 |
+| 4B | fail/present | 70 | 1.00 | 1.00 | 0.907 |
+| 4B | fail/adversarial | 35 | 0.00 | 0.00 | 0.038 |
+| 8B | fail/present | 68 | 1.00 | 1.00 | 0.929 |
+| 8B | fail/adversarial | 50 | 0.00 | 0.00 | 0.002 |
+| 全部 | pass 三组 | ~1395/尺寸 | — | ≈1.00 | ≤0.018 |
+
+- fail-vs-pass 的 delta_final 差在 explore/validate 双侧显著
+  （如 2B explore +0.534 CI[0.45,0.62]；8B +0.42 CI[0.32,0.53]）
+- **机理二分（三尺寸一致）**：
+  - 漏检（present→假No）= 教科书 DeCo："Yes" 在 ~0.6N–0.8N 层达峰
+    （2B 峰值在 6–7 分位层，正对论文 20–28/32 带）后被末层压灭
+    （p_gold 从峰值 ~0.9 跌到 ~0.07）——**seen but suppressed 成立**
+  - 幻觉（adversarial→假Yes）= **非 DeCo 型**：gold "No" 在 4B/8B 上
+    任意层激活率为 0（2B 29%）——中层从未偏向正确答案，
+    不存在可被 DeCo 拯救的被压制知识
+- **对 M4 的指向**：DeCo 重打分预期能翻转漏检（anchor 层信号强）、
+  翻转不了假Yes 幻觉（无 anchor 信号）；护栏重点 = 别把 pass 组
+  （末层 p_gold≥0.98）打翻。α 网格留待确认后跑（deco_fix.py 未实现）
+- 产物：outputs/probe_{model}.json（含逐 case 全层轨迹，outputs/ 不进 git）
