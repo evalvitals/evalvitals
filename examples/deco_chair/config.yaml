@@ -1,0 +1,12 @@
+# deco_chair — Finding-2 replication + stepwise DeCo fix (DESIGN.md)
+model: qwen3-vl-8b-instruct
+
+window: [0.55, 0.80]   # fractions of depth; reuse deco_pope's tuned value
+tau: 0.05
+alpha: 0.4             # start lower than POPE: long generation amplifies the
+                       # "no free lunch" repetition side-effect (paper App. A)
+top_k: 20
+top_p: 0.9
+
+min_effect: 0.03       # CHAIR deltas will be small on Qwen3-VL (low base rate)
+explore_frac: 0.6
