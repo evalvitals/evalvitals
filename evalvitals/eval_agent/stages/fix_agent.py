@@ -21,8 +21,15 @@ Executors by tier:
   intermediate outputs — only the model itself is unchanged.  The code runs
   sandboxed with bridged model access (:mod:`fix_pipeline`); labels and
   rubrics never reach it, so it cannot cheat by echoing gold answers.
-* **L3a/L3b/L4** — routing/recommendation targets only; their executors need
-  host-side internals hooks / training infrastructure and land separately.
+* **L3a** — internals read (:mod:`fix_internals`): attention-guided crop
+  (capture host-side, crop at the attention peak, re-ask); coded pipelines
+  additionally get a bridged ``model_attend()`` when the tier allows.
+* **L3b** — internals write (:mod:`fix_internals`): pre-audited intervention
+  primitives (v1: visual embedding boost via a forward hook) — the judge
+  selects and parameterises; never free codegen against the model handle.
+* **L4** — parameter space: **defined, executor TODO** — the judge writes a
+  :class:`~.fix_internals.FinetuneSpec` recipe which is recorded (never
+  executed) so an escalation decision has something concrete to act on.
 
 A *fixed* verdict means: paired McNemar rejects with positive net effect —
 the candidate repairs significantly more cases than it breaks.
@@ -37,6 +44,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+from evalvitals.eval_agent.stages.fix_internals import (
+    INTERNALS_PRIMITIVES,
+    FinetuneSpec,
+    primitives_catalog_text,
+)
 from evalvitals.eval_agent.stages.fix_pipeline import (
     run_coded_pipeline,
     score_outputs,
@@ -116,7 +128,7 @@ EXECUTION CONTRACT:
   ALREADY DEFINED in your namespace (do NOT import or redefine it).  It runs
   the ORIGINAL model on that case: optional prompt override, optional image
   transforms applied to the case's image first.  Available image tools:
-{catalog}
+{catalog}{attend_hint}
 - You may call the model SEVERAL times per case (budget ~6 calls/case) and
   branch on its outputs — e.g. ask where the finding could be, zoom there,
   re-ask; describe first, then decide; vote over variants.
@@ -129,6 +141,35 @@ EXECUTION CONTRACT:
   ~80 lines.
 
 Return ONLY the Python code{fences_hint}."""
+
+_L3_PROMPT = """\
+You are configuring WHITE-BOX intervention primitives (tier L3: the model's \
+internals) against the failures below.  The primitives are pre-audited host \
+code — you choose which to run and with what parameters.
+
+VERIFIED FAILURE HYPOTHESES:
+{hypotheses}
+
+AVAILABLE PRIMITIVES:
+{catalog}
+
+Propose up to {k} configurations.  Reply with ONLY a JSON array:
+[{{"primitive": "<name from the list>", "params": {{...}}}}]"""
+
+_L4_PROMPT = """\
+You are writing a PARAMETER-SPACE repair recipe (tier L4: fine-tuning) for \
+the failures below.  The recipe is RECORDED for a human decision — it will \
+not be executed automatically.
+
+VERIFIED FAILURE HYPOTHESES:
+{hypotheses}
+
+Reply with ONLY a JSON object:
+{{"dataset_recipe": "<how to build training data that generalises the failure
+   mechanism — never just the observed failing cases>",
+  "method": "lora|sft", "target": "vision_encoder|llm|projector|full",
+  "eval_protocol": "<held-out repair effect + regression battery>",
+  "rationale": "<why parameter-space change is the minimum effective tier>"}}"""
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +342,7 @@ class FixAgent:
             self._emit(outcome)
             return outcome
 
-        for candidate in self._propose(hypotheses, data):
+        for candidate in self._propose(hypotheses, data, model):
             validation = self._validate(candidate, model, data, baseline)
             outcome.attempted.append(validation)
 
@@ -317,7 +358,7 @@ class FixAgent:
     # -- candidate generation --------------------------------------------
 
     def _propose(
-        self, hypotheses: "list[Hypothesis]", data: "CaseBatch"
+        self, hypotheses: "list[Hypothesis]", data: "CaseBatch", model: "Model"
     ) -> "list[FixCandidate]":
         hyp_lines = "\n".join(
             f"- [{getattr(h, 'predicted_failure_mode', '')}] {getattr(h, 'statement', h)}"
@@ -333,13 +374,11 @@ class FixAgent:
         if self.max_tier >= FixTier.L2_SCAFFOLD:
             candidates += self._l2_candidates(hyp_lines, examples)
             if self.codegen_available:
-                candidates += self._l2_coded_candidate(hyp_lines, examples)
+                candidates += self._l2_coded_candidate(hyp_lines, examples, model)
         if self.max_tier >= FixTier.L3A_INTERNALS_READ:
-            logger.info(
-                "FixAgent: tiers above L2 are allowed (max=%s) but their "
-                "executors are not implemented yet; attempting L1/L2 only",
-                self.max_tier.label,
-            )
+            candidates += self._l3_candidates(hyp_lines, model)
+        if self.max_tier >= FixTier.L4_PARAMETERS:
+            candidates += self._l4_candidates(hyp_lines)
         return candidates
 
     def _l1_candidates(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
@@ -389,16 +428,31 @@ class FixAgent:
             ]
         return out[:_MAX_JUDGE_CANDIDATES]
 
-    def _l2_coded_candidate(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
+    def _l2_coded_candidate(
+        self, hyp_lines: str, examples: str, model: "Model"
+    ) -> "list[FixCandidate]":
         """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
+        from evalvitals.core.capability import Capability
         from evalvitals.eval_agent.stages.fix_pipeline import (
             CASES_FILENAME,
             RESULT_MARKER,
         )
 
+        enable_attend = (
+            self.max_tier >= FixTier.L3A_INTERNALS_READ
+            and Capability.ATTENTION in getattr(model, "capabilities", frozenset())
+        )
+        attend_hint = (
+            "\n- A function  model_attend(case_id, prompt=None) -> "
+            '{\"grid\": [[float,...],...], \"shape\": [H, W]}  is ALSO defined: '
+            "the model's attention heatmap over image patches (read-only "
+            "internals). Use it e.g. to find where the model looks, then "
+            "crop_region there and re-ask."
+        ) if enable_attend else ""
         code, source, prompt, raw = "", "", "", ""
         base = dict(hypotheses=hyp_lines, examples=examples, catalog=catalog_text(),
-                    cases_file=CASES_FILENAME, marker=RESULT_MARKER)
+                    cases_file=CASES_FILENAME, marker=RESULT_MARKER,
+                    attend_hint=attend_hint)
         if self._cli_config is not None and self._cli_config.provider != "llm":
             prompt = _L2_CODE_PROMPT.format(
                 fences_hint=", written to a file named pipeline.py", **base)
@@ -428,8 +482,11 @@ class FixAgent:
                            ok=bool(code.strip()))
         if not code.strip():
             return []
-        return [FixCandidate(tier=FixTier.L2_SCAFFOLD, name="coded_pipeline",
-                             kind="code", payload={"code": code}, source=source)]
+        tier = FixTier.L3A_INTERNALS_READ if enable_attend else FixTier.L2_SCAFFOLD
+        return [FixCandidate(tier=tier, name="coded_pipeline",
+                             kind="code",
+                             payload={"code": code, "enable_attend": enable_attend},
+                             source=source)]
 
     def _write_code_cli(self, prompt: str) -> "tuple[str, str]":
         from pathlib import Path
@@ -467,6 +524,77 @@ class FixAgent:
             )
         except Exception as exc:  # logging must never break the fix step
             logger.debug("FixAgent: log_tool_codegen failed: %s", exc)
+
+    def _l3_candidates(self, hyp_lines: str, model: "Model") -> "list[FixCandidate]":
+        """Judge-parameterised configs of the pre-audited internals primitives."""
+        catalog = primitives_catalog_text(model, self.max_tier)
+        if not catalog:
+            logger.info("FixAgent: no L3 primitive is available for %r", model)
+            return []
+        out: "list[FixCandidate]" = []
+        for p in self._ask_judge(_L3_PROMPT.format(
+                hypotheses=hyp_lines, catalog=catalog, k=_MAX_JUDGE_CANDIDATES)):
+            prim = INTERNALS_PRIMITIVES.get(str(p.get("primitive", "")))
+            if prim is None or prim.tier > self.max_tier or not prim.available(model):
+                continue
+            out.append(FixCandidate(
+                tier=prim.tier, name=prim.name, kind="primitive",
+                payload={"primitive": prim.name, "params": dict(p.get("params") or {})}))
+        if not out:
+            defaults = {
+                "attention_guided_crop": {"layer": -1, "crop_frac": 0.5},
+                "visual_embedding_boost": {"gamma": 1.5},
+            }
+            for name, params in defaults.items():
+                prim = INTERNALS_PRIMITIVES[name]
+                if prim.tier <= self.max_tier and prim.available(model):
+                    out.append(FixCandidate(
+                        tier=prim.tier, name=name, kind="primitive", source="default",
+                        payload={"primitive": name, "params": params}))
+        return out[:_MAX_JUDGE_CANDIDATES]
+
+    def _l4_candidates(self, hyp_lines: str) -> "list[FixCandidate]":
+        """L4 recipe — recorded for the escalation decision; executor is TODO."""
+        spec: "FinetuneSpec | None" = None
+        if self._judge is not None:
+            raw = self._ask_judge_object(_L4_PROMPT.format(hypotheses=hyp_lines))
+            if raw:
+                spec = FinetuneSpec(
+                    dataset_recipe=str(raw.get("dataset_recipe", "")),
+                    method=str(raw.get("method", "lora")),
+                    target=str(raw.get("target", "llm")),
+                    eval_protocol=str(raw.get("eval_protocol", "")) or
+                                  FinetuneSpec("").eval_protocol,
+                    rationale=str(raw.get("rationale", "")),
+                )
+        if spec is None or not spec.dataset_recipe:
+            spec = FinetuneSpec(
+                dataset_recipe="TODO: synthesise training data generalising the "
+                               "verified failure mechanism",
+                rationale="default skeleton — no judge recipe available",
+            )
+        return [FixCandidate(tier=FixTier.L4_PARAMETERS, name="finetune_recipe",
+                             kind="finetune_spec", payload=spec.to_dict(),
+                             source="judge" if self._judge is not None else "default")]
+
+    def _ask_judge_object(self, prompt: str) -> "dict[str, Any]":
+        """Single-JSON-object variant of :meth:`_ask_judge`."""
+        if self._judge is None:
+            return {}
+        try:
+            raw = str(self._judge.generate(prompt))
+        except Exception as exc:
+            logger.warning("FixAgent: judge call failed: %s", exc)
+            return {}
+        match = re.search(r"\{.*\}", re.sub(r"<think>.*?</think>", "", raw,
+                                              flags=re.DOTALL), flags=re.DOTALL)
+        if not match:
+            return {}
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _ask_judge(self, prompt: str) -> "list[dict[str, Any]]":
         if self._judge is None:
@@ -528,10 +656,14 @@ class FixAgent:
         self, candidate: FixCandidate, model: "Model", data: "CaseBatch"
     ) -> "dict[str, Optional[bool]]":
         """Per-case success of one candidate (batch path for coded pipelines)."""
+        if candidate.kind == "primitive":
+            prim = INTERNALS_PRIMITIVES[candidate.payload["primitive"]]
+            return prim.run(model, data, self._score, candidate.payload.get("params"))
         if candidate.kind == "code":
             result = run_coded_pipeline(
                 candidate.payload["code"], model, data,
                 workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+                enable_attend=bool(candidate.payload.get("enable_attend")),
             )
             if not result.ok:
                 logger.warning("FixAgent: coded pipeline produced no result: %s",
@@ -547,8 +679,12 @@ class FixAgent:
         data: "CaseBatch",
         baseline: "dict[str, Optional[bool]]",
     ) -> FixValidation:
-        scores = self._candidate_scores(candidate, model, data)
         v = FixValidation(candidate=candidate)
+        if candidate.kind == "finetune_spec":
+            v.summary = ("L4 executor TODO — fine-tune recipe recorded, "
+                         "not executed (see candidate payload)")
+            return v
+        scores = self._candidate_scores(candidate, model, data)
         base_vec: "list[bool]" = []
         cand_vec: "list[bool]" = []
         for case in data:

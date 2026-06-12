@@ -460,3 +460,208 @@ def test_fix_agent_codegen_gate():
     agent2 = FixAgent(judge=CodeWritingJudge(), max_tier="L1")
     out2 = agent2.propose_and_validate(HopelessModel(), _gold_yes_batch(), [_hyp("x")])
     assert all(v.candidate.kind == "template" for v in out2.attempted)
+
+
+# ── L3a: attention-guided crop ───────────────────────────────────────────────
+
+
+def _bright_corner_img():
+    """64x48 dark image with a bright square in the top-left quadrant."""
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    img = Image.new("L", (64, 48), color=10)
+    for x in range(4, 20):
+        for y in range(4, 16):
+            img.putpixel((x, y), 250)
+    return img
+
+
+class AttnCropVLM(Model):
+    """White-box fake: attention peaks at the top-left patch; answers "yes"
+    only when the (cropped) image is bright enough on average."""
+
+    capabilities = frozenset({Capability.GENERATE, Capability.ATTENTION})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        import numpy as np
+
+        img = getattr(inputs, "image", None)
+        if img is None:
+            return "No."
+        mean = float(np.asarray(img.convert("L"), dtype=float).mean())
+        return "Yes." if mean > 60 else "No."
+
+    def forward(self, inputs, capture, spec=None):
+        import torch
+
+        from evalvitals.core.model import Trace
+
+        h, w = 3, 4                      # patch grid
+        seq = 2 + h * w + 1              # 2 structural + 12 image + 1 query
+        row = torch.full((seq,), 0.01)
+        row[2] = 0.8                     # peak at image patch (0, 0)
+        layer = torch.zeros(1, seq, seq)
+        layer[:, -1, :] = row
+        mask = torch.zeros(seq, dtype=torch.bool)
+        mask[2:2 + h * w] = True
+        return Trace(tokens=["t"] * seq, token_ids=list(range(seq)),
+                     provided={Capability.ATTENTION},
+                     attentions=[layer.clone() for _ in range(2)],
+                     extras={"image_token_mask": mask,
+                             "image_spatial_shape": (h, w)})
+
+
+def test_attention_heatmap_and_peak_box():
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap, peak_box
+
+    case = FailureCase(id="x", inputs=Inputs(prompt="q", image=_bright_corner_img()))
+    grid = attention_heatmap(AttnCropVLM(), case)
+    assert grid is not None and grid.shape == (3, 4)
+    assert np.unravel_index(grid.argmax(), grid.shape) == (0, 0)
+    box = peak_box(grid, crop_frac=0.5)
+    assert box[0] == 0.0 and box[1] == 0.0  # clamped to the top-left corner
+    assert box[2] == 0.5 and box[3] == 0.5
+
+
+def test_attention_guided_crop_repairs_peripheral_finding():
+    pytest.importorskip("PIL")
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_internals import run_attention_guided_crop
+
+    model = AttnCropVLM()
+    cases = CaseBatch([
+        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
+                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
+        for i in range(4)
+    ])
+    # Baseline fails: full image is mostly dark.
+    assert model.generate(cases[0].inputs) == "No."
+    scores = run_attention_guided_crop(model, cases, _default_score,
+                                       {"crop_frac": 0.5})
+    assert all(scores[c.id] is True for c in cases)  # crop at peak -> bright -> yes
+
+
+def test_l3a_candidate_fixes_via_fix_agent():
+    pytest.importorskip("PIL")
+    agent = FixAgent(judge=None, max_tier="L3a", allow_codegen=False)
+    # 8 cases: 6/6 repairs only reaches e=9.1 (< 20) — honest inconclusive;
+    # 8/8 clears the e-value threshold.
+    cases = CaseBatch([
+        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
+                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
+        for i in range(8)
+    ])
+    out = agent.propose_and_validate(AttnCropVLM(), cases,
+                                     [_hyp("attention is on the finding but the answer "
+                                           "ignores it", mode="attention_mislocalization")])
+    prim = [v for v in out.attempted if v.candidate.kind == "primitive"]
+    assert len(prim) == 1 and prim[0].candidate.name == "attention_guided_crop"
+    assert prim[0].fixed is True and out.fixed is True
+    assert out.recommendation is None
+
+
+# ── L3b: visual embedding boost ──────────────────────────────────────────────
+
+
+def test_visual_embedding_boost_hook_scales_image_tokens():
+    torch = pytest.importorskip("torch")
+    import types
+
+    from evalvitals.eval_agent.stages.fix_internals import visual_embedding_boost
+
+    emb = torch.nn.Embedding(10, 4)
+    hf = types.SimpleNamespace(config=types.SimpleNamespace(image_token_id=7),
+                               get_input_embeddings=lambda: emb)
+    model = types.SimpleNamespace(_hf=(hf, None))
+    ids = torch.tensor([[1, 7, 7, 2]])
+    base = emb(ids).detach().clone()
+    with visual_embedding_boost(model, gamma=2.0):
+        boosted = emb(ids).detach()
+    after = emb(ids).detach()
+    assert torch.allclose(boosted[0, 1], base[0, 1] * 2.0)
+    assert torch.allclose(boosted[0, 0], base[0, 0])      # non-image untouched
+    assert torch.allclose(after, base)                     # hook removed
+
+
+def test_boost_unavailable_yields_none_scores():
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_internals import (
+        boost_available,
+        run_visual_embedding_boost,
+    )
+
+    model = HopelessModel()  # no ._hf backend internals
+    assert boost_available(model) is False
+    scores = run_visual_embedding_boost(model, _gold_yes_batch(n=2), _default_score)
+    assert set(scores.values()) == {None}
+
+
+# ── L4: defined, executor TODO ───────────────────────────────────────────────
+
+
+def test_l4_recipe_recorded_not_executed():
+    judge = ScriptedJudge(json.dumps({
+        "dataset_recipe": "synthesise small-lesion radiographs with paired labels",
+        "method": "lora", "target": "vision_encoder",
+        "eval_protocol": "held-out McNemar + regression battery",
+        "rationale": "resolution ceiling is parameter-bound",
+    }))
+    agent = FixAgent(judge=judge, max_tier="L4", allow_codegen=False)
+    out = agent.propose_and_validate(HopelessModel(), _gold_yes_batch(),
+                                     [_hyp("requires retraining", mode="prior")])
+    ft = [v for v in out.attempted if v.candidate.kind == "finetune_spec"]
+    assert len(ft) == 1
+    assert "TODO" in ft[0].summary and ft[0].fixed is False
+    assert ft[0].candidate.payload["target"] == "vision_encoder"
+    assert out.fixed is False
+    assert out.recommendation is None  # already at the top tier
+
+
+# ── bridged model_attend (coded L3a) ─────────────────────────────────────────
+
+
+_ATTEND_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    att = model_attend(c["id"])
+    h, w = att["shape"]
+    grid = att["grid"]
+    best = max(range(h * w), key=lambda i: grid[i // w][i % w])
+    r, cl = best // w, best % w
+    box = [max(0.0, cl / w - 0.25), max(0.0, r / h - 0.25),
+           min(1.0, cl / w + 0.35), min(1.0, r / h + 0.35)]
+    ans = model_generate(c["id"], image_ops=[{"tool": "crop_region", "params": {"box": box}}])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+
+def test_bridged_attend_enables_coded_l3a(tmp_path):
+    pytest.importorskip("PIL")
+    pytest.importorskip("torch")
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_pipeline import (
+        run_coded_pipeline,
+        score_outputs,
+    )
+
+    cases = CaseBatch([
+        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
+                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
+        for i in range(2)
+    ])
+    ok = run_coded_pipeline(_ATTEND_PIPELINE, AttnCropVLM(), cases,
+                            workdir=tmp_path / "on", timeout_sec=30, enable_attend=True)
+    assert ok.ok
+    assert all(v is True for v in score_outputs(ok, cases, _default_score).values())
+    # Disabled -> model_attend errors -> pipeline crashes -> no result.
+    off = run_coded_pipeline(_ATTEND_PIPELINE, AttnCropVLM(), cases,
+                             workdir=tmp_path / "off", timeout_sec=30,
+                             enable_attend=False)
+    assert off.ok is False

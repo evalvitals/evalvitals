@@ -65,6 +65,24 @@ def model_generate(case_id, prompt=None, image_ops=None):
         raise RuntimeError(resp["error"])
     return resp.get("output", "")
 
+
+def model_attend(case_id, prompt=None):
+    """Read the model's attention heatmap over image patches (host-mediated).
+
+    Returns {{"grid": [[float, ...], ...], "shape": [H, W]}} — only available
+    when the fix tier allows internals read (L3a+) on a white-box model.
+    """
+    _sys.stdout.write("{call_marker}" + _json.dumps(
+        {{"op": "attend", "case_id": case_id, "prompt": prompt}}) + "\\n")
+    _sys.stdout.flush()
+    line = _sys.stdin.readline()
+    if not line:
+        raise RuntimeError("model bridge closed")
+    resp = _json.loads(line)
+    if resp.get("error"):
+        raise RuntimeError(resp["error"])
+    return resp
+
 '''
 
 
@@ -93,6 +111,7 @@ def run_coded_pipeline(
     workdir: "Path | str",
     timeout_sec: int = 600,
     max_calls: "int | None" = None,
+    enable_attend: bool = False,
 ) -> CodedPipelineResult:
     """Execute agent-written pipeline *code* with bridged model access.
 
@@ -149,7 +168,8 @@ def run_coded_pipeline(
                     res.error = f"model-call budget exhausted ({budget} calls)"
                     proc.kill()
                     break
-                reply = _service_call(stripped[len(CALL_MARKER):], case_by_id, model, Inputs)
+                reply = _service_call(stripped[len(CALL_MARKER):], case_by_id,
+                                      model, Inputs, enable_attend)
                 try:
                     proc.stdin.write(json.dumps(reply) + "\n")  # type: ignore[union-attr]
                     proc.stdin.flush()  # type: ignore[union-attr]
@@ -187,13 +207,24 @@ def _service_call(
     case_by_id: "dict[str, Any]",
     model: "Model",
     inputs_cls: "type",
-) -> "dict[str, str]":
+    enable_attend: bool = False,
+) -> "dict[str, Any]":
     """Handle one bridged model call; never raises (errors travel as JSON)."""
     try:
         req = json.loads(raw)
         case = case_by_id.get(str(req.get("case_id", "")))
         if case is None:
             return {"error": f"unknown case_id {req.get('case_id')!r}"}
+        if req.get("op") == "attend":
+            if not enable_attend:
+                return {"error": "model_attend requires fix tier >= L3a on a "
+                                 "white-box model"}
+            from evalvitals.eval_agent.stages.fix_internals import attention_heatmap
+
+            grid = attention_heatmap(model, case)
+            if grid is None:
+                return {"error": "attention capture failed for this case"}
+            return {"grid": grid.tolist(), "shape": list(grid.shape)}
         inp = getattr(case, "inputs", None)
         prompt = req.get("prompt") or str(getattr(inp, "prompt", ""))
         image = getattr(inp, "image", None)

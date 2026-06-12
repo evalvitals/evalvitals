@@ -685,9 +685,10 @@ def main() -> None:
         "--fix-tier", default="L2", choices=["L1", "L2", "L3a", "L3b", "L4"],
         help="highest allowed intervention space for the post-loop fix module: "
              "L1 prompt / L2 scaffold pipelines+tools (default) / L3a internals "
-             "read / L3b internals write / L4 retraining. No auto-escalation — "
-             "when nothing within the tier validates, the run prints a "
-             "recommendation to raise it.",
+             "read (attention-guided crop, bridged model_attend) / L3b internals "
+             "write (visual embedding boost hook) / L4 fine-tune recipe (recorded "
+             "only; executor TODO). No auto-escalation — when nothing within the "
+             "tier validates, the run prints a recommendation to raise it.",
     )
     parser.add_argument(
         "--analysis-only", action="store_true",
