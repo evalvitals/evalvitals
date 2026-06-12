@@ -15,3 +15,7 @@ top_p: 0.9
 # Stats
 min_effect: 0.05              # pre-registered minimum effect for the fix
 explore_frac: 0.6
+
+# Judge for M2/M3/M5 (agy quota exhausted -> claude CLI; sonnet/haiku for tests)
+judge_model: claude-fable-5
+judge_effort: low

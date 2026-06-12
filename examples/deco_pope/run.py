@@ -38,6 +38,8 @@ CFG = yaml.safe_load((Path(__file__).parent / "config.yaml").read_text())
 # ---------------------------------------------------------------------------
 
 def load_manifest(model_key: str):
+    from PIL import Image
+
     from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
 
     path = DATA / "cases" / f"{model_key}.json"
@@ -46,10 +48,13 @@ def load_manifest(model_key: str):
                          f"(see TODO.md Step 1)")
     raw = json.loads(path.read_text())
     cases = []
+    pil_cache: dict[str, object] = {}  # the processor rejects str paths; one PIL per image
     for r in raw["cases"]:
+        if r["file_name"] not in pil_cache:
+            pil_cache[r["file_name"]] = Image.open(DATA / "images" / r["file_name"]).convert("RGB")
         cases.append(FailureCase(
             inputs=Inputs(prompt=raw["prompt_template"].format(obj=r["object"]),
-                          image=str(DATA / "images" / r["file_name"])),
+                          image=pil_cache[r["file_name"]]),
             expected=r["pope_label"],
             observed=r["observed"],
             label=Label.FAIL if r["label"] == "fail" else Label.PASS,
@@ -76,6 +81,23 @@ def drift_check(model, cases, n: int = 10) -> None:
 # ---------------------------------------------------------------------------
 # 2. Protocol — the human prior anchoring the loop (verbatim from DESIGN.md §5)
 # ---------------------------------------------------------------------------
+
+def build_judge(model_name: str, effort: str):
+    """Claude CLI judge for M2/M3/M5 (agy quota exhausted — swapped 2026-06-12).
+
+    Default claude-fable-5 at low effort; pass --judge-model sonnet|haiku for
+    cheap wiring tests. A tiny generation probe catches dead sessions early
+    (an empty response means rate-limit/quota, not an error exit).
+    """
+    from evalvitals.eval_agent import ClaudeModel
+
+    judge = ClaudeModel(model=model_name, effort=effort)
+    if not judge.generate("Reply with exactly the word OK").strip():
+        raise SystemExit(f"judge probe: claude --model {model_name} returned empty "
+                         f"(rate-limited?) — try --judge-model sonnet or haiku")
+    print(f"judge: claude model={model_name} effort={effort or 'default'}")
+    return judge
+
 
 def build_protocol():
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
@@ -112,6 +134,8 @@ def main() -> None:
     ap.add_argument("--max-analyzers", type=int, default=3)
     ap.add_argument("--smoke-test", action="store_true")
     ap.add_argument("--skip-m4", action="store_true")
+    ap.add_argument("--judge-model", default=CFG.get("judge_model", "claude-fable-5"))
+    ap.add_argument("--judge-effort", default=CFG.get("judge_effort", "low"))
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
 
@@ -123,10 +147,12 @@ def main() -> None:
 
     from evalvitals import compose
     from evalvitals.core.capability import Capability
-    from evalvitals.eval_agent import AgyModel, RunLogger, VLDiagnoseLoop
+    from evalvitals.eval_agent import RunLogger, VLDiagnoseLoop
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+
+    judge = build_judge(args.judge_model, args.judge_effort)  # probe BEFORE weights load
 
     model = compose(args.model, "hf_local",
                     want={Capability.GENERATE, Capability.HIDDEN_STATES,
@@ -135,26 +161,26 @@ def main() -> None:
     print(f"cases={len(list(cases))} yields={raw['yields']}")
     drift_check(model, cases)
 
-    # TODO(Step 0): judge — AgyModel needs the agy binary mounted (see
-    # docker-compose.yml); swap for any GENERATE-capable Model if preferred.
-    judge = AgyModel()
-
     # TODO(Step 3): if tier-(a) analyzers don't surface the layer-suppression
     # signal, pass a WhiteboxProbeGenerator to ProbeAgent, or point the loop at
     # ./deco_probe.py (spec in DESIGN.md §6). Window/tau/alpha grid: config.yaml.
     loop = VLDiagnoseLoop(
         model=model,
-        probe_agent=ProbeAgent(max_analyzers=args.max_analyzers),
+        # judge => LLM-guided analyzer selection anchored on the protocol
+        # (static StrategyProbe picks generic attention analyzers, not pope)
+        probe_agent=ProbeAgent(judge=judge, max_analyzers=args.max_analyzers),
         stats_agent=StatsAnalysisAgent(judge=judge),
         diagnosis_agent=DiagnosisAgent(judge=judge),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
-        run_logger=RunLogger(),  # TODO(verify): out_dir kwarg -> OUT / "logs"
+        run_logger=RunLogger(run_dir=OUT / "logs", verbose=True),
     )
     report = loop.run(cases)
-    print("resolved:", report.resolved)
-    for h in report.final_hypotheses:
-        print(" -", getattr(h, "status", "?"), getattr(h, "statement", h))
+    print(f"cycles={report.cycles} stopped_by={report.stopped_by} "
+          f"verified={len(report.verified_hypotheses)}/{len(report.all_test_results)}")
+    for t in report.all_test_results:
+        stmt = getattr(t.hypothesis, "statement", str(t.hypothesis))
+        print(f" - [{t.status}] conf={t.confidence:.2f} grade={t.evidence_grade} {stmt[:110]}")
 
     if not args.skip_m4:
         # TODO(Step 4): inject verify_fn wrapping ./deco_fix.py:deco_rescore_answer

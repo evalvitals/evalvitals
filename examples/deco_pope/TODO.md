@@ -9,9 +9,9 @@
 - [ ] GPU 可见（`nvidia-smi`），bf16 显存：2B ≈ 5GB / 4B ≈ 9GB / 8B ≈ 17GB
 - [ ] `pip install -e "/path/to/evalvitals[local,data]"`，transformers ≥ 4.57
 - [ ] `pytest`（包自带 fast tests）通过，确认环境没坏
-- [ ] 判别模型（M2/M3/M5 的 judge）可用：`AgyModel()` 需要挂 agy
-      （见 `examples/qwen_loop_agy/docker-compose.yml` 的 agy 卷挂载），
-      或换成任何带 GENERATE 的 `Model`（API key 走 `RuntimeConfig`）
+- [x] 判别模型（M2/M3/M5 的 judge）可用：默认 `ClaudeModel(model="claude-fable-5",
+      effort="low")`（agy 配额已耗尽，2026-06-12 切换；测试可
+      `--judge-model sonnet|haiku`），容器挂载见 docker-compose.yml
 
 ## Step 1 — 完成 mine_cases.py 并挖出冻结清单
 
@@ -86,3 +86,33 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
 - Qwen3-VL 是 DeepStack：早层（< 0.3N）轨迹不要拿去解读
 - 窗口/层号一律从 config 读层数换算，2B 与 4B/8B 层数不同
 - 漂移校验失败 ≠ 代码错：先查 transformers 版本是否与 manifest 记录一致
+- transformers 4.57 的 processor **不接受 str 图片路径**（`make_list_of_images`
+  无 str 分支）——`Inputs.image` 必须传 PIL（mine/run 均已如此）
+- PyPI 默认 torch 2.12 是 cu130，driver 550（CUDA 12.4）带不动 → 装
+  cu124 专用 wheel（torch 2.6.0，同 Dockerfile）
+
+## 运行记录
+
+### 2026-06-12 挖掘（Step 1 完成）
+
+- 环境：RTX A6000、torch 2.6.0+cu124、transformers 4.57.6、bf16、greedy
+  （`do_sample=False, max_new_tokens=8`）、seed 42
+- 数据：POPE COCO adversarial/random 全部 **500 图**（三元组完整率 100%），
+  commit 固定 `08d957b9`；三元组规则：各类型取文件序第一个可用 probe，
+  random-absent 强制 ≠ adversarial-absent
+- yields（cases = 1500/尺寸；FAIL 按 probe 类型细分）：
+
+| model | adversarial | present | random | explore F/P | validate F/P |
+|---|---|---|---|---|---|
+| 2B | **41F**/459P | 59F/441P | 5F/495P | 55/845 | 50/550 |
+| 4B | **35F**/465P | 70F/430P | 4F/496P | 61/839 | 48/552 |
+| 8B | **50F**/450P | 68F/432P | 5F/495P | 71/829 | 52/548 |
+
+- 全部尺寸 `parse_yes_no` 无法解析的回答 = 0
+- **共现先验梯度成立**：同为 absent，adversarial 失败率是 random 的 ~8–10×
+  （2B 8.2×、4B 8.8×、8B 10×）——与 DESIGN §4.2 的 H_deco 预期一致；
+  present 假 No（12–14%）是并存的另一失败模式（漏检），留给 loop 区分
+- explore fail 全部 ≥ 15 验收线（55/61/71）
+- judge：agy 配额耗尽，2026-06-12 起默认
+  `ClaudeModel(model="claude-fable-5", effort="low")`（探活通过）；
+  测试可 `--judge-model sonnet|haiku`

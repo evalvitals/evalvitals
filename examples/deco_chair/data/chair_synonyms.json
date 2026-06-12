@@ -1,0 +1,571 @@
+{
+  "_meta": {
+    "source": "https://raw.githubusercontent.com/LisaAnne/Hallucination/6e4d33c4bedf6dfcd24c61bf527f40714717be47/data/synonyms.txt",
+    "commit": "6e4d33c4bedf6dfcd24c61bf527f40714717be47"
+  },
+  "synonyms": {
+    "person": [
+      "adult",
+      "baby",
+      "baker",
+      "bicyclist",
+      "biker",
+      "boy",
+      "bride",
+      "buyer",
+      "caller",
+      "camper",
+      "chef",
+      "child",
+      "children",
+      "cop",
+      "cowboy",
+      "coworker",
+      "doctor",
+      "drinker",
+      "driver",
+      "father",
+      "female",
+      "foreigner",
+      "gentleman",
+      "girl",
+      "grandchild",
+      "groom",
+      "guy",
+      "hunter",
+      "kid",
+      "lady",
+      "male",
+      "man",
+      "mother",
+      "offender",
+      "officer",
+      "passenger",
+      "patient",
+      "people",
+      "person",
+      "pitcher",
+      "player",
+      "policeman",
+      "politician",
+      "rider",
+      "serviceman",
+      "shopper",
+      "sister",
+      "skateboarder",
+      "skater",
+      "skier",
+      "snowboarder",
+      "soldier",
+      "solider",
+      "student",
+      "teenager",
+      "thief",
+      "traveler",
+      "trespasser",
+      "villager",
+      "walker",
+      "woman",
+      "worker"
+    ],
+    "bicycle": [
+      "bicycle",
+      "bike",
+      "minibike",
+      "trike",
+      "unicycle"
+    ],
+    "car": [
+      "automobile",
+      "cab",
+      "car",
+      "coupe",
+      "hatchback",
+      "jeep",
+      "limo",
+      "minivan",
+      "sedan",
+      "suv",
+      "taxi",
+      "taxicab",
+      "van"
+    ],
+    "motorcycle": [
+      "moped",
+      "motor bike",
+      "motor cycle",
+      "motorbike",
+      "motorcycle",
+      "scooter"
+    ],
+    "airplane": [
+      "air plane",
+      "airbus",
+      "aircraft",
+      "airplane",
+      "biplane",
+      "jet",
+      "jetliner",
+      "monoplane",
+      "plane",
+      "seaplane"
+    ],
+    "bus": [
+      "bus",
+      "minibus",
+      "trolley"
+    ],
+    "train": [
+      "caboose",
+      "locomotive",
+      "train",
+      "tramway"
+    ],
+    "truck": [
+      "firetruck",
+      "hauler",
+      "lorry",
+      "pickup",
+      "truck"
+    ],
+    "boat": [
+      "barge",
+      "battleship",
+      "boat",
+      "canoe",
+      "catamaran",
+      "dinghy",
+      "ferry",
+      "ferryboat",
+      "freighter",
+      "houseboat",
+      "kayak",
+      "lifeboat",
+      "liner",
+      "motorboat",
+      "paddleboat",
+      "pontoon",
+      "powerboat",
+      "riverboat",
+      "rowboat",
+      "sailboard",
+      "sailboat",
+      "schooner",
+      "ship",
+      "skiff",
+      "speedboat",
+      "steamboat",
+      "steamship",
+      "trawler",
+      "tugboat",
+      "vessel",
+      "watercraft",
+      "yacht"
+    ],
+    "traffic light": [
+      "stop light",
+      "stoplight",
+      "street light",
+      "streetlight",
+      "traffic light",
+      "traffic signal"
+    ],
+    "fire hydrant": [
+      "fire hydrant",
+      "hydrant"
+    ],
+    "stop sign": [
+      "stop sign"
+    ],
+    "parking meter": [
+      "parking meter"
+    ],
+    "bench": [
+      "bench",
+      "pew"
+    ],
+    "bird": [
+      "bird",
+      "blackbird",
+      "bluebird",
+      "bluejay",
+      "buzzard",
+      "chickadee",
+      "cockatiel",
+      "cockatoo",
+      "condor",
+      "cormorant",
+      "cowbird",
+      "crow",
+      "duck",
+      "egret",
+      "falcon",
+      "finch",
+      "flamingo",
+      "fowl",
+      "goose",
+      "gosling",
+      "gull",
+      "heron",
+      "hummingbird",
+      "kingfisher",
+      "loon",
+      "lorikeet",
+      "macaw",
+      "magpie",
+      "mallard",
+      "oriole",
+      "osprey",
+      "ostrich",
+      "owl",
+      "parakeet",
+      "parrot",
+      "peacock",
+      "peafowl",
+      "pelican",
+      "pheasant",
+      "pigeon",
+      "puffin",
+      "quail",
+      "raven",
+      "robin",
+      "rooster",
+      "sandpiper",
+      "seabird",
+      "seagull",
+      "shorebird",
+      "songbird",
+      "sparrow",
+      "swan",
+      "turkey",
+      "vulture",
+      "warbler",
+      "waterbird",
+      "waterfowl",
+      "willet",
+      "woodpecker"
+    ],
+    "cat": [
+      "cat",
+      "feline",
+      "kitten",
+      "tabby"
+    ],
+    "dog": [
+      "beagle",
+      "brindle",
+      "bulldog",
+      "canine",
+      "chihuahua",
+      "cocker",
+      "collie",
+      "corgi",
+      "dachshund",
+      "doberman",
+      "dog",
+      "doggie",
+      "doggy",
+      "greyhound",
+      "hound",
+      "husky",
+      "labrador",
+      "mutt",
+      "pitbull",
+      "poodle",
+      "pug",
+      "pup",
+      "puppy",
+      "retriever",
+      "rottweiler",
+      "schnauzer",
+      "sheepdog",
+      "spaniel",
+      "terrier",
+      "weimaraner",
+      "whippet"
+    ],
+    "horse": [
+      "bronc",
+      "bronco",
+      "clydesdale",
+      "colt",
+      "equine",
+      "foal",
+      "horse",
+      "mare",
+      "mustang",
+      "palomino",
+      "pony",
+      "racehorse",
+      "stallion"
+    ],
+    "sheep": [
+      "ewe",
+      "goat",
+      "lamb",
+      "ram",
+      "sheep"
+    ],
+    "cow": [
+      "bison",
+      "buffalo",
+      "bull",
+      "calf",
+      "cattle",
+      "cow",
+      "heifer",
+      "holstein",
+      "ox",
+      "oxen",
+      "zebu"
+    ],
+    "elephant": [
+      "elephant"
+    ],
+    "bear": [
+      "bear",
+      "panda"
+    ],
+    "zebra": [
+      "zebra"
+    ],
+    "giraffe": [
+      "giraffe"
+    ],
+    "backpack": [
+      "backpack",
+      "knapsack"
+    ],
+    "umbrella": [
+      "umbrella"
+    ],
+    "handbag": [
+      "briefcase",
+      "handbag",
+      "purse",
+      "wallet"
+    ],
+    "tie": [
+      "bow",
+      "bow tie",
+      "tie"
+    ],
+    "suitcase": [
+      "luggage",
+      "suit case",
+      "suitcase"
+    ],
+    "frisbee": [
+      "frisbee"
+    ],
+    "skis": [
+      "ski",
+      "skis"
+    ],
+    "snowboard": [
+      "snowboard"
+    ],
+    "sports ball": [
+      "ball",
+      "sports ball"
+    ],
+    "kite": [
+      "kite"
+    ],
+    "baseball bat": [
+      "baseball bat"
+    ],
+    "baseball glove": [
+      "baseball glove"
+    ],
+    "skateboard": [
+      "skateboard"
+    ],
+    "surfboard": [
+      "longboard",
+      "shortboard",
+      "skimboard",
+      "surfboard",
+      "wakeboard"
+    ],
+    "tennis racket": [
+      "racket",
+      "tennis racket"
+    ],
+    "bottle": [
+      "bottle"
+    ],
+    "wine glass": [
+      "wine glass"
+    ],
+    "cup": [
+      "cup"
+    ],
+    "fork": [
+      "fork"
+    ],
+    "knife": [
+      "knife",
+      "knive",
+      "pocketknife"
+    ],
+    "spoon": [
+      "spoon"
+    ],
+    "bowl": [
+      "bowl",
+      "container"
+    ],
+    "banana": [
+      "banana"
+    ],
+    "apple": [
+      "apple"
+    ],
+    "sandwich": [
+      "burger",
+      "cheeseburger",
+      "hamburger",
+      "sandwich",
+      "sub"
+    ],
+    "orange": [
+      "orange"
+    ],
+    "broccoli": [
+      "broccoli"
+    ],
+    "carrot": [
+      "carrot"
+    ],
+    "hot dog": [
+      "hot dog"
+    ],
+    "pizza": [
+      "pizza"
+    ],
+    "donut": [
+      "bagel",
+      "donut",
+      "doughnut"
+    ],
+    "cake": [
+      "cake",
+      "cheesecake",
+      "coffeecake",
+      "cupcake",
+      "pancake",
+      "shortcake"
+    ],
+    "chair": [
+      "chair",
+      "seat",
+      "stool"
+    ],
+    "couch": [
+      "chesterfield",
+      "couch",
+      "futon",
+      "loveseat",
+      "recliner",
+      "settee",
+      "sofa"
+    ],
+    "potted plant": [
+      "houseplant",
+      "potted plant"
+    ],
+    "bed": [
+      "bed"
+    ],
+    "dining table": [
+      "desk",
+      "dining table",
+      "table"
+    ],
+    "toilet": [
+      "commode",
+      "lavatory",
+      "potty",
+      "toilet",
+      "urinal"
+    ],
+    "tv": [
+      "monitor",
+      "television",
+      "televison",
+      "tv"
+    ],
+    "laptop": [
+      "computer",
+      "laptop",
+      "laptop computer",
+      "lenovo",
+      "macbook",
+      "netbook",
+      "notebook"
+    ],
+    "mouse": [
+      "mouse"
+    ],
+    "remote": [
+      "remote"
+    ],
+    "keyboard": [
+      "keyboard"
+    ],
+    "cell phone": [
+      "cell phone",
+      "cellphone",
+      "iphone",
+      "mobile phone",
+      "phon",
+      "phone",
+      "smartphone",
+      "telephone"
+    ],
+    "microwave": [
+      "microwave"
+    ],
+    "oven": [
+      "oven",
+      "stove",
+      "stove top oven",
+      "stovetop"
+    ],
+    "toaster": [
+      "toaster"
+    ],
+    "sink": [
+      "sink"
+    ],
+    "refrigerator": [
+      "freezer",
+      "fridge",
+      "refrigerator"
+    ],
+    "book": [
+      "book"
+    ],
+    "clock": [
+      "clock"
+    ],
+    "vase": [
+      "vase"
+    ],
+    "scissors": [
+      "scissors"
+    ],
+    "teddy bear": [
+      "teddy bear",
+      "teddybear"
+    ],
+    "hair drier": [
+      "hair drier",
+      "hairdryer"
+    ],
+    "toothbrush": [
+      "toothbrush"
+    ]
+  }
+}

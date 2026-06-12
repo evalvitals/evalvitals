@@ -10,3 +10,7 @@ top_p: 0.9
 
 min_effect: 0.03       # CHAIR deltas will be small on Qwen3-VL (low base rate)
 explore_frac: 0.6
+
+# Judge for M2/M3/M5 (agy quota exhausted -> claude CLI; sonnet/haiku for tests)
+judge_model: claude-fable-5
+judge_effort: low
