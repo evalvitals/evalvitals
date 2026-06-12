@@ -60,6 +60,11 @@ stages/ (M1–M5 implementation):
                               + PipelineSpec executor around the unchanged model
   fix_agent.py         Fix — FixAgent: tiered candidates -> paired McNemar
                               validation -> FixOutcome (+ tier recommendation)
+  fix_pipeline.py      Fix — L2 coded pipelines: sandboxed agent code with
+                              bridged model access (model_generate/model_attend)
+  fix_internals.py     Fix — L3a attention-guided crop, L3b intervention
+                              primitives (visual embedding boost); L4
+                              FinetuneSpec (defined, executor TODO)
   hypothesis_tester.py M5 — HypothesisTester: statistical test + protocol consistency;
                               stopping_criteria_met() drives the VLDiagnoseLoop exit
 """
@@ -127,6 +132,11 @@ from evalvitals.eval_agent.stages.fix_agent import (
     FixOutcome,
     FixValidation,
 )
+from evalvitals.eval_agent.stages.fix_internals import (
+    INTERNALS_PRIMITIVES,
+    FinetuneSpec,
+    InternalsPrimitive,
+)
 from evalvitals.eval_agent.stages.fix_tiers import FixTier, parse_tier, route_min_tier
 from evalvitals.eval_agent.stages.fix_tools import PipelineSpec
 from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
@@ -178,6 +188,9 @@ __all__ = [
     "parse_tier",
     "route_min_tier",
     "PipelineSpec",
+    "INTERNALS_PRIMITIVES",
+    "InternalsPrimitive",
+    "FinetuneSpec",
     # M2
     "AnalysisModule",
     "AnalysisReport",

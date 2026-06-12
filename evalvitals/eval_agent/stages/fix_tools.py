@@ -81,6 +81,23 @@ def upscale(img, factor: float = 2.0):
     return img.resize((int(w * factor), int(h * factor)), Image.LANCZOS)
 
 
+def crop_region(img, box=(0.25, 0.25, 0.75, 0.75)):
+    """Crop a normalized (left, top, right, bottom) box, resize to original size.
+
+    Like :func:`zoom_center` but for an arbitrary region — the building block
+    for attention-guided cropping (L3a), also usable by coded pipelines.
+    """
+    from PIL import Image
+
+    w, h = img.size
+    left, top, right, bottom = (float(v) for v in box)
+    left, top = max(0.0, min(left, 0.95)), max(0.0, min(top, 0.95))
+    right, bottom = min(1.0, max(right, left + 0.05)), min(1.0, max(bottom, top + 0.05))
+    px = (int(left * w), int(top * h), max(int(right * w), int(left * w) + 1),
+          max(int(bottom * h), int(top * h) + 1))
+    return img.crop(px).resize((w, h), Image.LANCZOS)
+
+
 #: name -> (function, parameter hint for the judge prompt, description)
 IMAGE_TOOLS: "dict[str, tuple[Callable, str, str]]" = {
     "zoom_center": (zoom_center, "factor: float >= 1 (default 1.5)",
@@ -93,6 +110,8 @@ IMAGE_TOOLS: "dict[str, tuple[Callable, str, str]]" = {
                  "histogram equalization — compressed dynamic range"),
     "upscale": (upscale, "factor: float >= 1 (default 2.0)",
                 "resize up before encoding — more vision tokens per region"),
+    "crop_region": (crop_region, "box: [left, top, right, bottom] normalized 0..1",
+                    "crop an arbitrary region and resize back — magnify a known area"),
 }
 
 

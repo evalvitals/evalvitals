@@ -685,9 +685,10 @@ def main() -> None:
         "--fix-tier", default="L2", choices=["L1", "L2", "L3a", "L3b", "L4"],
         help="highest allowed intervention space for the post-loop fix module: "
              "L1 prompt / L2 scaffold pipelines+tools (default) / L3a internals "
-             "read / L3b internals write / L4 retraining. No auto-escalation — "
-             "when nothing within the tier validates, the run prints a "
-             "recommendation to raise it.",
+             "read (attention-guided crop, bridged model_attend) / L3b internals "
+             "write (visual embedding boost hook) / L4 fine-tune recipe (recorded "
+             "only; executor TODO). No auto-escalation — when nothing within the "
+             "tier validates, the run prints a recommendation to raise it.",
     )
     parser.add_argument(
         "--analysis-only", action="store_true",
@@ -880,6 +881,8 @@ def main() -> None:
     logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
 
     # ── VLDiagnoseLoop (M1→M2→M3→M5) ─────────────────────────────────────────
+    from evalvitals.eval_agent import FixAgent
+
     loop = VLDiagnoseLoop(
         model=model,
         protocol=protocol,
@@ -888,6 +891,19 @@ def main() -> None:
         diagnosis_agent=diagnosis_agent,
         hypothesis_tester=hypothesis_tester,
         surgery_agent=surgery_agent,   # stored but NOT called inside run()
+        fix_agent=FixAgent(
+            judge=judge,
+            max_tier=args.fix_tier,
+            run_logger=logger,
+            # L2 coded pipelines: the coding agent writes a brand-new repair
+            # pipeline (bridged model access); follows the judge's CLI.
+            cli_config=(
+                CliAgentConfig(provider=coder_provider, timeout_sec=420,
+                               model=coder_model, extra_args=_coder_extra)
+                if args.allow_codegen and not args.analysis_only else None
+            ),
+            allow_codegen=args.allow_codegen and not args.analysis_only,
+        ),
         max_cycles=args.max_cycles,
         run_logger=logger,
         analysis_only=args.analysis_only,
@@ -936,7 +952,7 @@ def main() -> None:
         print(f"\n{'='*64}")
         print(f"FIX  Tiered repair attempts (max tier = {args.fix_tier})")
         print(f"{'='*64}")
-        outcome = loop.run_fix(report, cases, max_tier=args.fix_tier)
+        outcome = loop.run_fix(report, cases)
         for entry in outcome.routed:
             print(f"  routed     : {entry['min_tier']:4s} <- {entry['hypothesis'][:90]}")
         for v in outcome.attempted:

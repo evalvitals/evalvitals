@@ -330,9 +330,338 @@ def test_run_fix_on_loop_report():
     )
     judge = ScriptedJudge(json.dumps([
         {"name": "careful", "prompt_template": "Look very carefully. {prompt}"}]))
+    # Constructor injection — symmetric with every other stage agent.
     loop = VLDiagnoseLoop(model=BaselineFailsModel(),
-                          protocol=ExperimentProtocol(description="d"))
-    out = loop.run_fix(report, _gold_yes_batch(), max_tier="L1",
-                       fix_agent=FixAgent(judge=judge, max_tier="L1"))
+                          protocol=ExperimentProtocol(description="d"),
+                          fix_agent=FixAgent(judge=judge, max_tier="L1"))
+    assert loop.fix_agent.max_tier is FixTier.L1_PROMPT
+    out = loop.run_fix(report, _gold_yes_batch())
     assert out.fixed is True
     assert report.fix_outcome is out
+
+    # Per-call max_tier override + per-call agent override still work.
+    out2 = loop.run_fix(report, _gold_yes_batch(), max_tier="L2",
+                        fix_agent=FixAgent(judge=judge, max_tier="L1"))
+    assert out2.max_tier is FixTier.L2_SCAFFOLD
+
+    # Default construction (no injection) builds a judge-less FixAgent.
+    bare = VLDiagnoseLoop(model=BaselineFailsModel(),
+                          protocol=ExperimentProtocol(description="d"))
+    assert bare.fix_agent is not None and bare.fix_agent._judge is None
+
+
+# ── L2 coded pipelines (bridged model access) ────────────────────────────────
+
+
+_UPSCALE_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    ans = model_generate(c["id"], image_ops=[{"tool": "upscale", "params": {"factor": 2.0}}])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+
+def test_cases_payload_never_leaks_labels_or_rubrics():
+    from evalvitals.eval_agent.stages.fix_pipeline import cases_payload
+
+    payload = cases_payload(_gold_yes_batch())
+    assert all(set(c) == {"id", "prompt"} for c in payload["cases"])
+
+
+def test_coded_pipeline_bridge_round_trip(tmp_path):
+    pytest.importorskip("PIL")
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_pipeline import (
+        run_coded_pipeline,
+        score_outputs,
+    )
+
+    cases = _gold_yes_batch(n=3, image=_img())
+    result = run_coded_pipeline(_UPSCALE_PIPELINE, ZoomSensitiveModel(), cases,
+                                workdir=tmp_path, timeout_sec=30)
+    assert result.ok and result.n_calls == 3
+    scores = score_outputs(result, cases, _default_score)
+    assert all(scores[c.id] is True for c in cases)  # upscale repairs every case
+
+
+def test_coded_pipeline_call_budget_kills_runaway(tmp_path):
+    runaway = '''
+while True:
+    model_generate("c0")
+'''
+    result = __import__(
+        "evalvitals.eval_agent.stages.fix_pipeline",
+        fromlist=["run_coded_pipeline"],
+    ).run_coded_pipeline(runaway, HopelessModel(), _gold_yes_batch(n=2),
+                         workdir=__import__("tempfile").mkdtemp(),
+                         timeout_sec=30, max_calls=5)
+    assert result.ok is False
+    assert "budget exhausted" in result.error
+
+
+def test_coded_pipeline_missing_marker_and_crash(tmp_path):
+    from evalvitals.eval_agent.stages.fix_pipeline import run_coded_pipeline
+
+    r1 = run_coded_pipeline('print("nothing")', HopelessModel(),
+                            _gold_yes_batch(n=1), workdir=tmp_path, timeout_sec=20)
+    assert r1.ok is False and "FIX_PIPELINE_RESULT_JSON" in r1.error
+    r2 = run_coded_pipeline("this is not python", HopelessModel(),
+                            _gold_yes_batch(n=1), workdir=tmp_path, timeout_sec=20)
+    assert r2.ok is False
+
+
+class CodeWritingJudge(Model):
+    """Garbage for JSON proposals; real pipeline code for the code prompt."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text"})
+
+    def generate(self, inputs, **kwargs) -> str:
+        if "EXECUTION CONTRACT" in str(inputs):
+            return f"```python\n{_UPSCALE_PIPELINE}\n```"
+        return "no json here"
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_fix_agent_coded_candidate_fixes_and_logs(tmp_path):
+    pytest.importorskip("PIL")
+    from evalvitals.eval_agent import RunLogger
+
+    logger = RunLogger(tmp_path / "logs")
+    agent = FixAgent(judge=CodeWritingJudge(), max_tier="L2", run_logger=logger,
+                     exec_timeout_sec=30)
+    out = agent.propose_and_validate(
+        ZoomSensitiveModel(), _gold_yes_batch(image=_img()),
+        [_hyp("small findings are destroyed by downsampling", mode="resolution_limit")])
+    coded = [v for v in out.attempted if v.candidate.kind == "code"]
+    assert len(coded) == 1 and coded[0].candidate.source == "judge"
+    assert coded[0].fixed is True and out.fixed is True
+    # The default upscale_sharpen spec also fixes this model with the same
+    # effect; best is whichever validated first among the tied winners.
+    assert out.best.candidate.name in {"coded_pipeline", "upscale_sharpen"}
+    log_text = (tmp_path / "logs" / "run_log.jsonl").read_text(encoding="utf-8")
+    events = [json.loads(line) for line in log_text.splitlines()]
+    cg = [e for e in events if e.get("event") == "tool_codegen"]
+    assert len(cg) == 1 and cg[0]["module"] == "fix_pipeline" and cg[0]["ok"] is True
+
+
+def test_fix_agent_codegen_gate():
+    pytest.importorskip("PIL")
+    agent = FixAgent(judge=CodeWritingJudge(), max_tier="L2", allow_codegen=False)
+    out = agent.propose_and_validate(HopelessModel(), _gold_yes_batch(image=_img()),
+                                     [_hyp("x")])
+    assert all(v.candidate.kind != "code" for v in out.attempted)
+    # L1-only tier never attempts coded pipelines either
+    agent2 = FixAgent(judge=CodeWritingJudge(), max_tier="L1")
+    out2 = agent2.propose_and_validate(HopelessModel(), _gold_yes_batch(), [_hyp("x")])
+    assert all(v.candidate.kind == "template" for v in out2.attempted)
+
+
+# ── L3a: attention-guided crop ───────────────────────────────────────────────
+
+
+def _bright_corner_img():
+    """64x48 dark image with a bright square in the top-left quadrant."""
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    img = Image.new("L", (64, 48), color=10)
+    for x in range(4, 20):
+        for y in range(4, 16):
+            img.putpixel((x, y), 250)
+    return img
+
+
+class AttnCropVLM(Model):
+    """White-box fake: attention peaks at the top-left patch; answers "yes"
+    only when the (cropped) image is bright enough on average."""
+
+    capabilities = frozenset({Capability.GENERATE, Capability.ATTENTION})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        import numpy as np
+
+        img = getattr(inputs, "image", None)
+        if img is None:
+            return "No."
+        mean = float(np.asarray(img.convert("L"), dtype=float).mean())
+        return "Yes." if mean > 60 else "No."
+
+    def forward(self, inputs, capture, spec=None):
+        import torch
+
+        from evalvitals.core.model import Trace
+
+        h, w = 3, 4                      # patch grid
+        seq = 2 + h * w + 1              # 2 structural + 12 image + 1 query
+        row = torch.full((seq,), 0.01)
+        row[2] = 0.8                     # peak at image patch (0, 0)
+        layer = torch.zeros(1, seq, seq)
+        layer[:, -1, :] = row
+        mask = torch.zeros(seq, dtype=torch.bool)
+        mask[2:2 + h * w] = True
+        return Trace(tokens=["t"] * seq, token_ids=list(range(seq)),
+                     provided={Capability.ATTENTION},
+                     attentions=[layer.clone() for _ in range(2)],
+                     extras={"image_token_mask": mask,
+                             "image_spatial_shape": (h, w)})
+
+
+def test_attention_heatmap_and_peak_box():
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap, peak_box
+
+    case = FailureCase(id="x", inputs=Inputs(prompt="q", image=_bright_corner_img()))
+    grid = attention_heatmap(AttnCropVLM(), case)
+    assert grid is not None and grid.shape == (3, 4)
+    assert np.unravel_index(grid.argmax(), grid.shape) == (0, 0)
+    box = peak_box(grid, crop_frac=0.5)
+    assert box[0] == 0.0 and box[1] == 0.0  # clamped to the top-left corner
+    assert box[2] == 0.5 and box[3] == 0.5
+
+
+def test_attention_guided_crop_repairs_peripheral_finding():
+    pytest.importorskip("PIL")
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_internals import run_attention_guided_crop
+
+    model = AttnCropVLM()
+    cases = CaseBatch([
+        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
+                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
+        for i in range(4)
+    ])
+    # Baseline fails: full image is mostly dark.
+    assert model.generate(cases[0].inputs) == "No."
+    scores = run_attention_guided_crop(model, cases, _default_score,
+                                       {"crop_frac": 0.5})
+    assert all(scores[c.id] is True for c in cases)  # crop at peak -> bright -> yes
+
+
+def test_l3a_candidate_fixes_via_fix_agent():
+    pytest.importorskip("PIL")
+    agent = FixAgent(judge=None, max_tier="L3a", allow_codegen=False)
+    # 8 cases: 6/6 repairs only reaches e=9.1 (< 20) — honest inconclusive;
+    # 8/8 clears the e-value threshold.
+    cases = CaseBatch([
+        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
+                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
+        for i in range(8)
+    ])
+    out = agent.propose_and_validate(AttnCropVLM(), cases,
+                                     [_hyp("attention is on the finding but the answer "
+                                           "ignores it", mode="attention_mislocalization")])
+    prim = [v for v in out.attempted if v.candidate.kind == "primitive"]
+    assert len(prim) == 1 and prim[0].candidate.name == "attention_guided_crop"
+    assert prim[0].fixed is True and out.fixed is True
+    assert out.recommendation is None
+
+
+# ── L3b: visual embedding boost ──────────────────────────────────────────────
+
+
+def test_visual_embedding_boost_hook_scales_image_tokens():
+    torch = pytest.importorskip("torch")
+    import types
+
+    from evalvitals.eval_agent.stages.fix_internals import visual_embedding_boost
+
+    emb = torch.nn.Embedding(10, 4)
+    hf = types.SimpleNamespace(config=types.SimpleNamespace(image_token_id=7),
+                               get_input_embeddings=lambda: emb)
+    model = types.SimpleNamespace(_hf=(hf, None))
+    ids = torch.tensor([[1, 7, 7, 2]])
+    base = emb(ids).detach().clone()
+    with visual_embedding_boost(model, gamma=2.0):
+        boosted = emb(ids).detach()
+    after = emb(ids).detach()
+    assert torch.allclose(boosted[0, 1], base[0, 1] * 2.0)
+    assert torch.allclose(boosted[0, 0], base[0, 0])      # non-image untouched
+    assert torch.allclose(after, base)                     # hook removed
+
+
+def test_boost_unavailable_yields_none_scores():
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_internals import (
+        boost_available,
+        run_visual_embedding_boost,
+    )
+
+    model = HopelessModel()  # no ._hf backend internals
+    assert boost_available(model) is False
+    scores = run_visual_embedding_boost(model, _gold_yes_batch(n=2), _default_score)
+    assert set(scores.values()) == {None}
+
+
+# ── L4: defined, executor TODO ───────────────────────────────────────────────
+
+
+def test_l4_recipe_recorded_not_executed():
+    judge = ScriptedJudge(json.dumps({
+        "dataset_recipe": "synthesise small-lesion radiographs with paired labels",
+        "method": "lora", "target": "vision_encoder",
+        "eval_protocol": "held-out McNemar + regression battery",
+        "rationale": "resolution ceiling is parameter-bound",
+    }))
+    agent = FixAgent(judge=judge, max_tier="L4", allow_codegen=False)
+    out = agent.propose_and_validate(HopelessModel(), _gold_yes_batch(),
+                                     [_hyp("requires retraining", mode="prior")])
+    ft = [v for v in out.attempted if v.candidate.kind == "finetune_spec"]
+    assert len(ft) == 1
+    assert "TODO" in ft[0].summary and ft[0].fixed is False
+    assert ft[0].candidate.payload["target"] == "vision_encoder"
+    assert out.fixed is False
+    assert out.recommendation is None  # already at the top tier
+
+
+# ── bridged model_attend (coded L3a) ─────────────────────────────────────────
+
+
+_ATTEND_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    att = model_attend(c["id"])
+    h, w = att["shape"]
+    grid = att["grid"]
+    best = max(range(h * w), key=lambda i: grid[i // w][i % w])
+    r, cl = best // w, best % w
+    box = [max(0.0, cl / w - 0.25), max(0.0, r / h - 0.25),
+           min(1.0, cl / w + 0.35), min(1.0, r / h + 0.35)]
+    ans = model_generate(c["id"], image_ops=[{"tool": "crop_region", "params": {"box": box}}])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+
+def test_bridged_attend_enables_coded_l3a(tmp_path):
+    pytest.importorskip("PIL")
+    pytest.importorskip("torch")
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+    from evalvitals.eval_agent.stages.fix_pipeline import (
+        run_coded_pipeline,
+        score_outputs,
+    )
+
+    cases = CaseBatch([
+        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
+                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
+        for i in range(2)
+    ])
+    ok = run_coded_pipeline(_ATTEND_PIPELINE, AttnCropVLM(), cases,
+                            workdir=tmp_path / "on", timeout_sec=30, enable_attend=True)
+    assert ok.ok
+    assert all(v is True for v in score_outputs(ok, cases, _default_score).values())
+    # Disabled -> model_attend errors -> pipeline crashes -> no result.
+    off = run_coded_pipeline(_ATTEND_PIPELINE, AttnCropVLM(), cases,
+                             workdir=tmp_path / "off", timeout_sec=30,
+                             enable_attend=False)
+    assert off.ok is False
