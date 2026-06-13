@@ -258,6 +258,28 @@ class CaseBatch:
         ]
         return CaseBatch(out)
 
+    def stratified_head(self, n: int) -> "list[FailureCase]":
+        """First *n* cases, but label-balanced: take FAIL and PASS in document
+        order and interleave so a capped subsample keeps minority-class (FAIL)
+        representation instead of whatever happens to sit at the head.
+
+        White-box analyzers cap how many cases they probe (one forward each);
+        on an enriched/curated batch a plain ``[:n]`` head is mostly PASS, which
+        starves the FAIL group and leaves downstream group contrasts
+        underpowered. Returns all cases unchanged when ``n >= len`` or ``n<=0``.
+        """
+        if n <= 0 or n >= len(self._cases):
+            return list(self._cases)
+        fails = [c for c in self._cases if c.label == Label.FAIL]
+        rest = [c for c in self._cases if c.label != Label.FAIL]
+        # Aim for a balanced split, but never drop available minority cases below
+        # what fits: give FAIL up to half the budget, fill the rest with others.
+        n_fail = min(len(fails), max(n // 2, n - len(rest)))
+        keep = fails[:n_fail] + rest[: n - n_fail]
+        # preserve original document order among the kept cases
+        kept = set(id(c) for c in keep)
+        return [c for c in self._cases if id(c) in kept]
+
     def __repr__(self) -> str:
         return f"CaseBatch(n={len(self)})"
 

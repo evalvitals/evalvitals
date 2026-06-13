@@ -69,8 +69,10 @@ class LogitLensAnalyzer(Analyzer):
         norm_dtype = next(norm.parameters()).dtype if norm is not None and any(
             True for _ in norm.parameters()) else None
 
+        # Label-stratified subsample: a plain head is mostly PASS on an enriched
+        # batch, starving the FAIL group that the downstream contrast needs.
         per_case, per_layer_top, n_layers = [], None, 0
-        for case in list(cases)[: self.max_cases]:
+        for case in cases.stratified_head(self.max_cases):
             trace = model.forward(case.inputs, capture={Capability.HIDDEN_STATES})
             hidden = trace.require(Capability.HIDDEN_STATES)  # list per layer: (seq, dim)
             n_layers = len(hidden)

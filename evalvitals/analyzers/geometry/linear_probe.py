@@ -72,10 +72,13 @@ class LinearProbeAnalyzer(Analyzer):
     def _run(self, model: "Model", cases: "CaseBatch") -> Result:
         import torch
 
-        from evalvitals.core.case import Label
+        from evalvitals.core.case import CaseBatch, Label
 
-        labelled = [c for c in cases
-                    if c.label in (Label.PASS, Label.FAIL)][: self.max_cases]
+        # Label-stratified subsample so the capped probe pool keeps enough FAIL
+        # cases (a plain head is mostly PASS on an enriched batch).
+        labelled_batch = CaseBatch([c for c in cases
+                                    if c.label in (Label.PASS, Label.FAIL)])
+        labelled = labelled_batch.stratified_head(self.max_cases)
         n_fail = sum(1 for c in labelled if c.label == Label.FAIL)
         n_pass = len(labelled) - n_fail
 

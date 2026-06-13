@@ -31,3 +31,6 @@ codegen_effort: low
 codegen_budget_usd: 2.0
 codegen_timeout_sec: 240
 fix_max_tier: L3b      # allow decoding/internals-write interventions (DeCo-class)
+fix_validation_cases: 60   # stratified subset for candidate validation (coded
+                           # pipelines call the model ~k×/case; full batch times out)
+fix_exec_timeout_sec: 900  # wall-clock per coded-pipeline session

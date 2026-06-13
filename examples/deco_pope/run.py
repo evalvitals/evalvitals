@@ -235,9 +235,15 @@ def main() -> None:
         diagnosis_agent=DiagnosisAgent(judge=judge),
         surgery_agent=SurgeryAgent(
             judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen)),
+        # Bound fix validation: a coded pipeline calls the model ~k times PER
+        # case, so validating on the full batch times out (run#2: 4418 calls,
+        # 600s kill). Validate on a label-stratified subset and allow more wall
+        # clock for the coded path.
         fix_agent=FixAgent(judge=judge,
                            max_tier=str(CFG.get("fix_max_tier", "L3b")),
-                           cli_config=codegen, run_logger=run_logger),
+                           cli_config=codegen, run_logger=run_logger,
+                           max_validation_cases=int(CFG.get("fix_validation_cases", 60)),
+                           exec_timeout_sec=int(CFG.get("fix_exec_timeout_sec", 900))),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
         run_logger=run_logger,
