@@ -140,8 +140,6 @@ def test_runtime_failure_recorded_and_triggers_codegen():
     # Inject a failed-selection: simulate the judge having picked an analyzer
     # that then crashed (e.g. logit_lens device bug) by recording it directly,
     # then probe with a non-empty result already present.
-    from evalvitals.core.result import Result
-
     def _stub_run_direct(analyzer, m, data):
         agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
         return None

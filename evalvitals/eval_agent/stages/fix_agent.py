@@ -50,6 +50,7 @@ from evalvitals.eval_agent.stages.fix_internals import (
     primitives_catalog_text,
 )
 from evalvitals.eval_agent.stages.fix_pipeline import (
+    CodedPipelineResult,
     run_coded_pipeline,
     score_outputs,
 )
