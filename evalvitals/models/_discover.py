@@ -65,6 +65,32 @@ def get_unembed(model: Any) -> Any:
     return head
 
 
+def get_final_norm(model: Any) -> Any:
+    """Return the final normalization module applied after the last decoder layer.
+
+    Found relative to the discovered decoder-layer list: its parent module's
+    norm child (``norm`` / ``final_layernorm`` / ``ln_f``, else any direct
+    child whose class name contains "Norm").  RMSNorm-family models (Llama,
+    Qwen, ...) need this applied before unembedding or logit-lens trajectories
+    distort.  Returns ``None`` when nothing can be discovered (lens callers
+    must degrade gracefully).
+    """
+    try:
+        _, layers_path = find_decoder_layers(model)
+    except Exception:
+        return None
+    parent = model if "." not in layers_path else resolve(model, layers_path.rsplit(".", 1)[0])
+    layers_attr = layers_path.rsplit(".", 1)[-1]
+    for attr in ("norm", "final_layernorm", "ln_f"):
+        mod = getattr(parent, attr, None)
+        if mod is not None and "norm" in type(mod).__name__.lower():
+            return mod
+    for name, mod in parent.named_children():
+        if name != layers_attr and "norm" in type(mod).__name__.lower():
+            return mod
+    return None
+
+
 def resolve(model: Any, dotted: str) -> Any:
     """Resolve a dotted attribute path (``a.b.c``) against *model*, raising clearly."""
     obj = model

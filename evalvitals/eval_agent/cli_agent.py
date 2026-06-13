@@ -26,6 +26,7 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -127,7 +128,15 @@ class CliAgentResult:
         provider_name: Short identifier of the provider that ran (e.g.
                        ``"claude_code"``).
         elapsed_sec:   Wall-clock seconds for the subprocess.
-        raw_output:    First 3 000 chars of stdout (for logging / debug).
+        raw_output:    The agent's narration for the coding log.  For providers
+                       that emit a structured event stream (Claude Code's
+                       ``stream-json``) this is the **rendered coding
+                       trajectory** — assistant text, every Bash/Edit/Write/Read
+                       tool call + result, and a token/cost footer.  For the
+                       others it is the first ``_RAW_OUTPUT_CAP`` chars of stdout.
+        usage:         Token/cost usage parsed from the stream (``cost_usd``,
+                       ``num_turns``, in/out/cache tokens), or ``None`` when the
+                       provider does not report it.
         error:         Non-``None`` when the agent timed out or exited non-zero
                        **and** produced no files.
     """
@@ -136,6 +145,7 @@ class CliAgentResult:
     provider_name: str
     elapsed_sec: float
     raw_output: str = ""
+    usage: dict | None = None
     error: str | None = None
 
     @property
@@ -170,6 +180,155 @@ def _collect_py_files(workdir: Path) -> dict[str, str]:
         except OSError:
             pass
     return files
+
+
+# ---------------------------------------------------------------------------
+# Coding-trajectory rendering (Claude Code stream-json)
+# ---------------------------------------------------------------------------
+
+# Bounds so a single huge tool body (e.g. a Write of a 10k-line file, whose
+# content is echoed in the tool_use input) can't blow the transcript up.  The
+# file itself is still captured verbatim from the workdir; the transcript only
+# needs the *action*, not a second copy of the payload.
+_RAW_OUTPUT_CAP = 3000          # base providers: first N chars of stdout
+_STREAM_TEXT_CAP = 4000         # per assistant-text / final-result block
+_STREAM_TOOL_INPUT_CAP = 2000   # per tool_use input render
+_STREAM_TOOL_RESULT_CAP = 2000  # per tool_result render
+_STREAM_FALLBACK_CAP = 8000     # non-JSON stdout (degraded)
+
+
+def _trunc(text: str, cap: int) -> str:
+    text = text or ""
+    if len(text) <= cap:
+        return text
+    return text[:cap] + f"\n… [truncated {len(text) - cap} chars]"
+
+
+def _blocks_text(content: object) -> str:
+    """Flatten a message ``content`` (str, or list of content blocks) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out: list[str] = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                out.append(str(b.get("text", "")))
+            elif isinstance(b, str):
+                out.append(b)
+        return "\n".join(out)
+    return ""
+
+
+def _summarise_tool_use(name: str, inp: object) -> str:
+    """One-line summary of a tool_use input (no huge file bodies inline)."""
+    if not isinstance(inp, dict):
+        return _trunc(str(inp), _STREAM_TOOL_INPUT_CAP)
+    if name == "Bash":
+        return _trunc("$ " + str(inp.get("command", "")), _STREAM_TOOL_INPUT_CAP)
+    if name == "Write":
+        return f"write {inp.get('file_path', '?')} ({len(str(inp.get('content', '')))} chars)"
+    if name == "Edit":
+        return f"edit {inp.get('file_path', '?')}"
+    if name == "Read":
+        span = ""
+        if inp.get("offset") is not None or inp.get("limit") is not None:
+            span = f" [offset={inp.get('offset')}, limit={inp.get('limit')}]"
+        return f"read {inp.get('file_path', '?')}{span}"
+    try:
+        return _trunc(json.dumps(inp, default=str), _STREAM_TOOL_INPUT_CAP)
+    except (TypeError, ValueError):
+        return _trunc(str(inp), _STREAM_TOOL_INPUT_CAP)
+
+
+def _render_claude_stream(stdout: str) -> tuple[str, dict | None]:
+    """Render ``claude -p --output-format stream-json`` into a readable
+    coding trajectory and pull out token/cost usage.
+
+    Each stream line is one JSON event: ``system/init`` (session header),
+    ``assistant`` (text + ``tool_use`` calls), ``user`` (``tool_result``), and a
+    final ``result`` (usage + cost).  Returns ``(transcript, usage)``.  When the
+    output is not the expected JSON stream (older CLI, error before the stream
+    starts, …) it falls back to the raw stdout so output is never lost.
+    """
+    events: list[dict] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(ev, dict):
+            events.append(ev)
+    if not events:
+        return _trunc(stdout, _STREAM_FALLBACK_CAP), None
+
+    out: list[str] = []
+    usage: dict | None = None
+    tool_seq: dict[str, int] = {}   # tool_use_id -> step number
+    step = 0
+
+    for ev in events:
+        etype = ev.get("type")
+        if etype == "system" and ev.get("subtype") == "init":
+            tools = ev.get("tools") or []
+            out.append(
+                f"=== session start | model={ev.get('model', '?')} | "
+                f"tools={','.join(map(str, tools)) if tools else '-'} ==="
+            )
+        elif etype == "assistant":
+            for b in (ev.get("message") or {}).get("content") or []:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "text":
+                    txt = str(b.get("text", "")).strip()
+                    if txt:
+                        out.append(f"[assistant] {_trunc(txt, _STREAM_TEXT_CAP)}")
+                elif b.get("type") == "tool_use":
+                    step += 1
+                    if b.get("id"):
+                        tool_seq[b["id"]] = step
+                    name = str(b.get("name", "tool"))
+                    out.append(f"[#{step} {name}] {_summarise_tool_use(name, b.get('input'))}")
+        elif etype == "user":
+            for b in (ev.get("message") or {}).get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    n = tool_seq.get(b.get("tool_use_id"), "?")
+                    err = " ERROR" if b.get("is_error") else ""
+                    out.append(
+                        f"[#{n} result{err}] "
+                        f"{_trunc(_blocks_text(b.get('content')), _STREAM_TOOL_RESULT_CAP)}"
+                    )
+        elif etype == "result":
+            u = ev.get("usage") or {}
+            usage = {
+                "cost_usd": ev.get("total_cost_usd"),
+                "num_turns": ev.get("num_turns"),
+                "duration_ms": ev.get("duration_ms"),
+                "input_tokens": u.get("input_tokens"),
+                "output_tokens": u.get("output_tokens"),
+                "cache_read_input_tokens": u.get("cache_read_input_tokens"),
+                "cache_creation_input_tokens": u.get("cache_creation_input_tokens"),
+            }
+            final = str(ev.get("result", "")).strip()
+            if final:
+                out.append(f"[final] {_trunc(final, _STREAM_TEXT_CAP)}")
+            cost = usage["cost_usd"]
+            dur = ev.get("duration_ms")
+            out.append(
+                "=== result: {sub} | turns={t} | cost={c} | "
+                "tokens in={i} out={o} (cache_read={cr}) | wall={w} ===".format(
+                    sub=ev.get("subtype", "?"),
+                    t=usage["num_turns"],
+                    c=(f"${cost:.4f}" if isinstance(cost, (int, float)) else "n/a"),
+                    i=usage["input_tokens"], o=usage["output_tokens"],
+                    cr=usage["cache_read_input_tokens"],
+                    w=(f"{dur / 1000:.1f}s" if isinstance(dur, (int, float)) else "?"),
+                )
+            )
+
+    return "\n".join(out), usage
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +390,16 @@ class _CliAgentBase:
 
     def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:  # pragma: no cover
         raise NotImplementedError
+
+    def _postprocess_output(self, stdout: str) -> tuple[str, dict | None]:
+        """Render stdout for the coding log and extract usage if available.
+
+        Base implementation keeps the historical behaviour — the first
+        ``_RAW_OUTPUT_CAP`` chars of stdout, no usage.  Providers that emit a
+        structured event stream (Claude Code's ``stream-json``) override this to
+        render the full tool-call trajectory and pull out token/cost usage.
+        """
+        return stdout[:_RAW_OUTPUT_CAP], None
 
     # ------------------------------------------------------------------
     # Core subprocess runner  (mirrors ARC's _run_subprocess)
@@ -298,6 +467,7 @@ class _CliAgentBase:
         elif rc != 0 and not files:
             error = f"Exited {rc}: {stderr[:500]}"
 
+        raw_output, usage = self._postprocess_output(stdout)
         logger.debug(
             "%s: rc=%d files=%s elapsed=%.1fs timed_out=%s",
             self._provider_name, rc, list(files), elapsed, timed_out,
@@ -306,7 +476,8 @@ class _CliAgentBase:
             files=files,
             provider_name=self._provider_name,
             elapsed_sec=elapsed,
-            raw_output=stdout[:3000],
+            raw_output=raw_output,
+            usage=usage,
             error=error,
         )
 
@@ -327,7 +498,12 @@ class ClaudeCodeAgent(_CliAgentBase):
         cmd = [
             self._binary, "-p", prompt,
             "--dangerously-skip-permissions",
-            "--output-format", "text",
+            # stream-json emits one JSON event per step (assistant text, each
+            # Bash/Edit/Write/Read tool call, tool results, final usage/cost) so
+            # the coding *trajectory* is captured, not just the final text.  In
+            # print mode it requires --verbose.  Rendered by _postprocess_output.
+            "--output-format", "stream-json",
+            "--verbose",
             "--allowed-tools", "Bash Edit Write Read",
             "--add-dir", str(workdir),
         ]
@@ -337,6 +513,9 @@ class ClaudeCodeAgent(_CliAgentBase):
             cmd += ["--max-budget-usd", str(self._max_budget_usd)]
         cmd.extend(self._extra_args)
         return cmd
+
+    def _postprocess_output(self, stdout: str) -> tuple[str, dict | None]:
+        return _render_claude_stream(stdout)
 
 
 class CodexAgent(_CliAgentBase):

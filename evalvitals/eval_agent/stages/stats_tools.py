@@ -410,26 +410,43 @@ def _tool_friedman_nemenyi(inp: StatsInput, config: dict) -> StatsToolResult:
 
 
 def _tool_single_rate_evalue(inp: StatsInput, config: dict) -> StatsToolResult:
-    """Anytime-valid test that the overall FAIL rate differs from a baseline p0."""
+    """Anytime-valid test that the overall FAIL rate differs from a baseline p0.
+
+    DESCRIPTIVE ONLY. The result is meaningful only when the case batch is a
+    REPRESENTATIVE sample and ``p0`` is a justified baseline (the model's
+    natural fail rate on this task). On a curated/enriched batch — the norm for
+    diagnosis, where failures are over-sampled so a mechanism can be tested —
+    the rate is a sampling artifact and ``p0=0.5`` tests nothing. The verdict
+    layer treats this tool as descriptive and never makes it a hypothesis
+    headline; pass ``config["p0"]`` = the manifest's recorded base rate to make
+    it interpretable.
+    """
     if not inp.labels:
         return StatsToolResult(
             tool="single_rate_evalue", config=config, ok=False,
             error="no labeled cases", summary="single_rate_evalue: no labels",
         )
     p0 = config.get("p0", 0.5)
+    p0_justified = "p0" in config  # explicit baseline vs the meaningless default
     alpha = config.get("alpha", 0.05)
     fails = sum(1 for v in inp.labels.values() if v)
     n = len(inp.labels)
     res = e_value_test(fails, n, p0=p0, alpha=alpha)
     rate = fails / n
+    caveat = "" if p0_justified else " (descriptive only: p0=0.5 is not a justified baseline)"
     return StatsToolResult(
         tool="single_rate_evalue", config={**config, "p0": p0}, ok=True,
-        effect=round(rate - p0, 4), e_value=res["e_value"], reject=res["reject"],
+        # No reported effect when p0 is the unjustified default — its rate − 0.5
+        # would otherwise pollute any |effect|-based ranking downstream.
+        effect=round(rate - p0, 4) if p0_justified else None,
+        e_value=res["e_value"], reject=res["reject"] if p0_justified else False,
         summary=(
             f"FAIL rate {rate:.1%} ({fails}/{n}) vs p0={p0:.2f}: "
-            f"e={res['e_value']:.2f} -> {'reject' if res['reject'] else 'inconclusive'}"
+            f"e={res['e_value']:.2f} -> "
+            f"{'reject' if (res['reject'] and p0_justified) else 'inconclusive'}{caveat}"
         ),
-        details={"fails": fails, "n": n, "rate": round(rate, 4), **res},
+        details={"fails": fails, "n": n, "rate": round(rate, 4),
+                 "p0_justified": p0_justified, **res},
     )
 
 
@@ -493,8 +510,10 @@ STATS_TOOL_CATALOG: dict[str, str] = {
         "post-hoc). Needs >=3 strategy groups."
     ),
     "single_rate_evalue": (
-        "Anytime-valid test that the overall FAIL rate differs from a baseline "
-        "p0 (default 0.5). Needs labels only."
+        "DESCRIPTIVE context only: tests whether the overall FAIL rate differs "
+        "from a baseline p0. Meaningful ONLY on a representative sample with a "
+        "justified p0 (pass config['p0'] = the natural base rate); on a curated/"
+        "enriched diagnosis batch it tests nothing. Never decides a hypothesis."
     ),
     "rank_corr": (
         "Kendall tau between a continuous per-case signal and FAIL (monotonic "

@@ -63,6 +63,30 @@ def test_casebatch_filter_by_label():
     assert len(fails) == 2
 
 
+def test_stratified_head_keeps_minority_fails():
+    """A capped subsample must keep FAIL representation, not just the head
+    (which on an enriched batch is mostly PASS). Defect 8."""
+    # 4 FAIL up front, then 20 PASS — a plain [:8] head would grab 4 fail + 4
+    # pass, but an enriched batch interleaves; build the adversarial layout:
+    cases = ([FailureCase.from_prompt(f"p{i}", label=Label.PASS) for i in range(20)]
+             + [FailureCase.from_prompt(f"f{i}", label=Label.FAIL) for i in range(8)])
+    batch = CaseBatch(cases)
+    kept = batch.stratified_head(8)
+    n_fail = sum(1 for c in kept if c.label == Label.FAIL)
+    assert len(kept) == 8
+    assert n_fail == 4          # half the budget goes to the minority class
+    # document order preserved among kept cases
+    assert [c.inputs.prompt for c in kept] == sorted(
+        [c.inputs.prompt for c in kept], key=lambda p: (p[0] != "p"))
+
+
+def test_stratified_head_noop_when_budget_exceeds_size():
+    batch = CaseBatch([FailureCase.from_prompt("a", label=Label.FAIL),
+                       FailureCase.from_prompt("b", label=Label.PASS)])
+    assert len(batch.stratified_head(10)) == 2
+    assert len(batch.stratified_head(0)) == 2
+
+
 def test_casebatch_filter_by_tags():
     batch = CaseBatch(
         [

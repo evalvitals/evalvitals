@@ -118,6 +118,29 @@ def test_keyword_fallback_when_no_design():
     assert tr.evidence_grade == "observational"
 
 
+def test_descriptive_tool_never_becomes_inconclusive_headline():
+    """single_rate_evalue (rate−0.5 = large |effect|) must NOT be surfaced as the
+    'best' result when nothing discriminates — that printed a meaningless
+    'vs p0=0.50 → reject' as the verdict (defect 6)."""
+    report = StatsAnalysisReport(
+        model_name="m", findings=[], severity="none", narrative="",
+        raw_results={}, conclusion="c",
+        stats_results=[
+            # no relevant signal tool matches the hypothesis; only a descriptive
+            # global rejection with a huge artifact effect is present.
+            StatsToolResult(tool="single_rate_evalue", ok=True, effect=-0.43,
+                            e_value=340.0, reject=True, config={"p0": 0.5},
+                            summary="FAIL rate 7.0% (105/1500) vs p0=0.50: e=340 -> reject"),
+        ],
+    )
+    h = _hyp("Intermediate layers encode absence before late suppression.",
+             mode="late_layer_suppression")
+    tr = HypothesisTester().test([h], report, _labeled_batch())[0]
+    assert tr.status == HypothesisStatus.INCONCLUSIVE
+    assert "reject" not in tr.verdict.lower()
+    assert "discriminating" in tr.verdict.lower()
+
+
 # ── P4 stopping tiers ───────────────────────────────────────────────────────
 
 

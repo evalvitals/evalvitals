@@ -181,6 +181,17 @@ class HFLocalModel(Model):
         head = get_unembed(model)
         return getattr(head, "weight", None)
 
+    def final_norm(self):
+        """The final normalization module before the unembed (``None`` if not found).
+
+        RMSNorm-family models need ``lm_head(norm(h_i))``, not ``lm_head(h_i)``,
+        for faithful intermediate-layer readout (DeCo reference implementation).
+        """
+        from evalvitals.models._discover import get_final_norm
+
+        model, _ = self._loaded
+        return get_final_norm(model)
+
     # -- lazy load -----------------------------------------------------
     def load(self) -> None:
         import torch

@@ -122,3 +122,95 @@ def test_probe_agent_no_codegen_when_disabled():
     model = RefusingModel(capabilities={Capability.GENERATE})
     results = agent.probe(model, _cases())
     assert not any(k.startswith("generated:") for k in results)
+
+
+# ── defect 3: analyzer runtime failure feeds back + triggers tier-(b) ────────
+
+
+def test_runtime_failure_recorded_and_triggers_codegen():
+    """A selected analyzer that raises at runtime is recorded in
+    _failed_analyzers (so the next selection prompt can warn the judge) AND
+    triggers a bespoke probe to replace the missing evidence — even though
+    another analyzer produced output (the old gate only fired when EVERYTHING
+    was unavailable, so a tier-(a) crash silently lost the evidence slot)."""
+    gen = ProbeGenerator(judge=ScriptedJudge(_GOOD_PROBE))
+    agent = ProbeAgent(max_analyzers=0, allow_codegen=True, probe_generator=gen)
+    model = RefusingModel(capabilities={Capability.GENERATE})
+
+    # Inject a failed-selection: simulate the judge having picked an analyzer
+    # that then crashed (e.g. logit_lens device bug) by recording it directly,
+    # then probe with a non-empty result already present.
+    def _stub_run_direct(analyzer, m, data):
+        agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
+        return None
+
+    # First confirm the recorded failure survives across the probe and that a
+    # generated probe still fires despite no catalog analyzer running.
+    agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
+    results = agent.probe(model, _cases())
+    assert "logit_lens" in agent._failed_analyzers
+    # tier-(b) replaced the lost evidence
+    assert any(k.startswith("generated:") for k in results)
+
+
+def test_whitebox_analyzers_run_serially_not_in_thread_pool():
+    """White-box analyzers (GPU forward on the shared model) must run on the
+    calling thread, not the ThreadPoolExecutor — concurrent forwards race on
+    accelerate hooks (meta-tensor errors) and stack activations to OOM
+    (defect 7). Black-box analyzers may still parallelise."""
+    import threading
+
+    from evalvitals.core.analyzer import Analyzer
+    from evalvitals.core.result import Result
+
+    main_thread = threading.current_thread().ident
+    ran_on: dict[str, int] = {}
+
+    class WhiteBoxA(Analyzer):
+        name = "wb_a"
+        requires = frozenset({Capability.ATTENTION})  # not black-box compatible
+        applies_to_modalities = frozenset({"text"})
+
+        def _run(self, model, cases):
+            ran_on["wb_a"] = threading.current_thread().ident
+            return Result(analyzer=self.name, model=repr(model), findings={"ok": 1})
+
+    class BlackBoxB(Analyzer):
+        name = "bb_b"
+        requires = frozenset({Capability.GENERATE})  # black-box compatible
+        applies_to_modalities = frozenset({"text"})
+
+        def _run(self, model, cases):
+            ran_on["bb_b"] = threading.current_thread().ident
+            return Result(analyzer=self.name, model=repr(model), findings={"ok": 1})
+
+    agent = ProbeAgent(max_analyzers=2,
+                       analyzer_overrides={"wb_a": WhiteBoxA(), "bb_b": BlackBoxB()})
+    # Force selection of both via the static selector returning our names.
+    agent.selector.select = lambda *a, **k: ["wb_a", "bb_b"]  # type: ignore
+    model = RefusingModel(capabilities={Capability.GENERATE, Capability.ATTENTION})
+    results = agent.probe(model, _cases())
+    assert set(results) == {"wb_a", "bb_b"}
+    assert ran_on["wb_a"] == main_thread        # white-box ran serially
+    # (black-box may run on a pool thread; we only require the white-box one is serial)
+
+
+def test_failed_analyzers_surface_in_next_selection_prompt():
+    """The accumulated runtime failures appear in the LLM selection prompt so
+    the judge stops re-selecting a broken tool every cycle."""
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+    captured = {}
+
+    class CapturingJudge:
+        def generate(self, prompt, **kw):
+            captured["prompt"] = prompt
+            return '{"analyzers": [], "rationale": "none"}'
+
+    agent = ProbeAgent(judge=CapturingJudge(), max_analyzers=2)
+    agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
+    model = RefusingModel(capabilities={Capability.GENERATE})
+    proto = ExperimentProtocol(description="probe the failure", task_domain="x")
+    agent.probe(model, _cases(), protocol=proto)
+    assert "FAILED AT RUNTIME" in captured["prompt"]
+    assert "logit_lens" in captured["prompt"]

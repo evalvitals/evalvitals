@@ -125,6 +125,7 @@ class WhiteboxProbeGenerator:
         self.run_logger = run_logger
         self._last_prompt: str = ""
         self._last_raw: str = ""
+        self._last_usage: dict | None = None
 
     @property
     def available(self) -> bool:
@@ -158,6 +159,7 @@ class WhiteboxProbeGenerator:
 
         self._last_prompt = ""
         self._last_raw = ""
+        self._last_usage = None
         try:
             code, source = self._write_code(need)
         except Exception as exc:
@@ -184,10 +186,13 @@ class WhiteboxProbeGenerator:
         """Record one attention-probe code-writing attempt to the RunLogger."""
         if self.run_logger is None:
             return
+        extra = ({"cli_usage": self._last_usage}
+                 if source.startswith("cli:") and self._last_usage else None)
         try:
             self.run_logger.log_tool_codegen(
                 module="m1_whitebox", name=name, need=need, source=source, ok=ok,
                 code=code, prompt=self._last_prompt, raw_output=self._last_raw, error=error,
+                extra=extra,
             )
         except Exception as exc:  # logging must never break generation
             logger.debug("WhiteboxProbeGenerator: log_tool_codegen failed: %s", exc)
@@ -275,6 +280,7 @@ class WhiteboxProbeGenerator:
         res = agent.run(prompt, workdir=Path(self._sandbox.workdir),
                         timeout_sec=self._timeout_sec)
         self._last_raw = res.raw_output
+        self._last_usage = res.usage
         if not res.ok:
             return ""
         py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}

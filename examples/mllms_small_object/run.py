@@ -577,8 +577,64 @@ def _run_smoke_test(args) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Artifact writer
+# Artifact writer + output index
 # ---------------------------------------------------------------------------
+
+def _write_output_index(run_dir: Path) -> None:
+    """Write README.txt and print a file guide at the end of each run."""
+    sections: list[tuple[str, list[tuple[str, str]]]] = [
+        ("Start here", [
+            ("summary.md", "plain-text run summary — verified hypotheses, cycles, counts"),
+            ("discovery_cases.json", "what the model answered for each case (expected vs. got)"),
+        ]),
+        ("Diagnosis detail", [
+            ("hypotheses.json", "all generated hypotheses with SUPPORTED / REFUTED / UNKNOWN"),
+            ("m5_results.json", "statistical test results for each hypothesis"),
+            ("logs/figures/m2_effects.png", "bar chart of effect sizes across analyzers"),
+        ]),
+        ("Per-cycle analyzer data  (c0 = cycle 0, c1 = cycle 1, …)", [
+            ("logs/artifacts/c*_relative_attention_diff_map_fail_minus_pass.png",
+             "attention heatmap: where FAIL cases attend differently from PASS cases"),
+            ("logs/artifacts/c*_attention_attentions.png",
+             "raw last-layer attention weights visualised"),
+            ("logs/prompts/c*_m1_selection.*", "which analyzers were chosen and why"),
+            ("logs/prompts/c*_m3_diagnosis.*", "the agent's diagnosis reasoning"),
+        ]),
+        ("M4 experiment (mechanism verification)", [
+            ("logs/experiments/post_m4_record.md", "← READ THIS: one-page summary (hypothesis, verdict, metrics)"),
+            ("logs/experiments/post_m4_experiment.py", "script the agent wrote to verify the hypothesis"),
+            ("logs/experiments/post_m4_stdout.txt",    "metric_a, metric_b, verdict from running that script"),
+            ("logs/experiments/post_m4_agent_thinking.txt", "agent's reasoning while writing the script"),
+        ]),
+        ("Fix attempts (tiered repair)", [
+            ("logs/fixes/outcome.md", "← READ THIS: did the fix work? table of all attempts + recommendation"),
+            ("logs/fixes/*/record.md", "one self-contained record per repair attempt (what + McNemar result)"),
+        ]),
+        ("Raw event log (for debugging)", [
+            ("logs/run_log.jsonl", "one JSON line per event (M1–M5, experiment, fix)"),
+        ]),
+    ]
+
+    readme_lines = ["outputs/  — file guide\n"]
+    for heading, entries in sections:
+        readme_lines.append(f"{heading}\n{'─' * len(heading)}")
+        for fname, desc in entries:
+            readme_lines.append(f"  {fname}")
+            readme_lines.append(f"      {desc}")
+        readme_lines.append("")
+
+    (run_dir / "README.txt").write_text("\n".join(readme_lines), encoding="utf-8")
+
+    print("\n── OUTPUT FILES ─────────────────────────────────────────────")
+    for heading, entries in sections:
+        print(f"\n  {heading}")
+        for fname, desc in entries:
+            full = run_dir / fname.replace("*", "c0")
+            marker = "  " if full.exists() or "*" in fname else "  (not written)"
+            print(f"{marker}    {fname}")
+            print(f"          {desc}")
+    print(f"\n  Full guide → {run_dir / 'README.txt'}")
+
 
 def _write_report_artifacts(run_dir: Path, report, cases) -> None:
     hypotheses = [
@@ -639,6 +695,11 @@ def _write_report_artifacts(run_dir: Path, report, cases) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def _bar(title: str, width: int = 64) -> None:
+    pad = width - len(title) - 4
+    print(f"\n── {title} {'─' * max(pad, 2)}")
+
+
 def main() -> None:
     import argparse
 
@@ -681,7 +742,7 @@ def main() -> None:
     )
 
     # ── Load model ────────────────────────────────────────────────────────
-    print(f"\nLoading {args.model!r} on {args.device} ({args.dtype}) …")
+    print(f"\nLoading {args.model!r} …")
     model = evalvitals.load(
         args.model,
         backend="hf_local",
@@ -689,14 +750,11 @@ def main() -> None:
         dtype=args.dtype,
         want=["attention"],
     )
-    print(f"  capabilities : {sorted(str(c.name) for c in model.capabilities)}")
-    print(f"  modalities   : {sorted(model.modalities)}")
 
     # ── Judge ─────────────────────────────────────────────────────────────
     try:
         judge = AgyModel(model=args.judge_model)
-        print(f"\n  judge : antigravity CLI ({judge._binary})  "
-              f"model={args.judge_model or 'session default'}  [M1–M5, no API key]")
+        judge_desc = f"{args.judge_model}  (antigravity)"
     except RuntimeError as _agy_err:
         import warnings as _w
         _w.warn(
@@ -704,27 +762,24 @@ def main() -> None:
             stacklevel=2,
         )
         judge = model
-        print(f"\n  judge : {args.model} (agy unavailable — using evaluated model as fallback)")
+        judge_desc = f"{args.model}  (fallback — agy unavailable)"
 
     protocol = _build_protocol()
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Cases ─────────────────────────────────────────────────────────────
-    print("\nBuilding synthetic stripe-counting cases …")
-    print(f"  tiny bands : {_TINY_BAND_PX} px each  (sub-ViT-patch, invisible after averaging)")
-    print(f"  large bands: {_LARGE_BAND_PX} px each  (~4 ViT patches, clearly visible)")
+    print(f"  model   {args.model}  [{args.device} · {args.dtype}]")
+    print(f"  judge   {judge_desc}")
+    print(f"  output  {run_dir.resolve()}")
 
+    # ── Cases ─────────────────────────────────────────────────────────────
     candidates = _build_candidate_cases(for_smoke=False)
     discovery = CaseDiscoveryAgent(
         scorer=_score_case,
         include_unknown=False,
     ).discover(model, candidates)
     cases = discovery.cases
-    print(
-        f"  discovered {len(cases)} labeled cases "
-        f"(PASS={discovery.n_pass}, FAIL={discovery.n_fail}, UNKNOWN={discovery.n_unknown})"
-    )
+
     discovery_rows = []
     for case in cases:
         observed = str(case.observed)
@@ -736,24 +791,23 @@ def main() -> None:
             "label": case.label.value,
             "metadata": getattr(case, "metadata", {}),
         })
-        print(
-            f"    [{case.label.value.upper()}] {case.id}: "
-            f"{textwrap.shorten(observed, width=110, placeholder='...')}"
-        )
     (run_dir / "discovery_cases.json").write_text(
         json.dumps(discovery_rows, indent=2, default=str), encoding="utf-8"
     )
+
+    _bar(f"CASES  {len(cases)} total · {discovery.n_fail} fail · {discovery.n_pass} pass")
+    id_w = max((len(c.id) for c in cases), default=20)
+    for case in cases:
+        label = "FAIL" if case.label.value == "fail" else "pass"
+        obs = textwrap.shorten(str(case.observed), width=60, placeholder="…")
+        exp = str(case.expected)
+        print(f"  {label}  {case.id:<{id_w}}  expected {exp!r:<6}  got {obs!r}")
+
     if not discovery.has_m5_groups:
         print(
-            "  WARNING: M5 needs both PASS and FAIL cases; "
-            "this run may stop without verified hypotheses.\n"
-            "  If tiny-band cases are also passing, the model may have super-resolution "
-            "visual processing.  Try --model qwen3-vl-2b-instruct."
+            "\n  WARNING: need both FAIL and PASS cases for diagnosis. "
+            "If tiny-band cases are passing, try --model qwen3-vl-2b-instruct."
         )
-
-    print("\nExperimentProtocol:")
-    print(f"  task_domain : {protocol.task_domain}")
-    print(f"  description : {protocol.description[:80]}...")
 
     # ── Agents ────────────────────────────────────────────────────────────
     probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
@@ -769,16 +823,11 @@ def main() -> None:
 
     writer_cfg = ExperimentWriterConfig(
         cli_agent=CliAgentConfig(
-            provider="antigravity", timeout_sec=120, model=args.judge_model
+            provider="antigravity", timeout_sec=300, model=args.judge_model
         ),
-        exec_fix_timeout_sec=60,
+        exec_fix_timeout_sec=90,
     )
     surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
-
-    # ── Run ───────────────────────────────────────────────────────────────
-    print(f"\nOutput directory: {run_dir.resolve()}")
-    print("  logs/run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
-    print("  logs/artifacts/      ← per-cycle analyzer artifacts")
 
     logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
 
@@ -794,40 +843,66 @@ def main() -> None:
         run_logger=logger,
     )
 
-    print(f"\n{'='*64}")
-    print(f"VLDiagnoseLoop  model={args.model}  max_cycles={args.max_cycles}")
-    print(f"{'='*64}")
+    _bar(f"RUNNING  max {args.max_cycles} cycles · {args.max_analyzers} analyzers")
 
     report = loop.run(cases)
     _write_report_artifacts(run_dir, report, cases)
 
-    print(f"\n{'='*64}")
-    print(f"LOOP RESULT  stopped_by={report.stopped_by}  cycles={report.cycles}")
-    print(f"{'='*64}")
-    print(f"  total hypotheses proposed : {len(report.all_hypotheses)}")
-    print(f"  verified                  : {len(report.verified_hypotheses)}")
+    # ── Diagnosis summary ─────────────────────────────────────────────────
+    n_verified = len(report.verified_hypotheses)
+    _bar(f"DIAGNOSIS  {report.cycles} cycle(s) · stopped: {report.stopped_by}")
+    print(f"  {len(report.all_hypotheses)} hypothesis/es generated · {n_verified} verified")
     for vr in report.verified_hypotheses:
-        print(f"    [{vr.status.value}] {vr.hypothesis.statement}")
-        print(f"           effect={vr.effect_size}  confidence={vr.confidence:.2f}"
-              f"  protocol_ok={vr.is_consistent_with_protocol}")
-        print(f"           {vr.verdict}")
+        stmt = textwrap.shorten(vr.hypothesis.statement, width=90, placeholder="…")
+        print(f"\n  ✓ \"{stmt}\"")
+        print(f"    effect {vr.effect_size}  confidence {vr.confidence:.2f}  "
+              f"{'consistent with protocol' if vr.is_consistent_with_protocol else 'inconsistent with protocol'}")
+        if vr.verdict:
+            print(f"    {textwrap.shorten(str(vr.verdict), width=90, placeholder='…')}")
 
-    # ── M4 ────────────────────────────────────────────────────────────────
-    print(f"\n{'='*64}")
-    print("M4  Fix proposal (post-loop)")
-    print(f"{'='*64}")
+    # ── M4: mechanism verification experiment ─────────────────────────────
+    _bar("EXPERIMENT  (M4 · mechanism verification)")
     if report.verified_hypotheses:
         fix = loop.run_m4(report, cases)
         if fix is not None:
-            print(f"  hypothesis : {fix.hypothesis.statement}")
-            print(f"  status     : {fix.status.value}  fixed={fix.fixed}")
-            for k, v in list((fix.evidence or {}).items())[:6]:
-                print(f"  {k:20s}: {v}")
+            verdict = fix.status.value.upper()
+            print(f"  verdict   {verdict}")
+            _skip = {"validation_log", "llm_calls", "sandbox_runs", "returncode", "timed_out"}
+            for k, v in (fix.evidence or {}).items():
+                if k not in _skip:
+                    print(f"  {k:<22}  {v}")
         else:
-            print("  SurgeryAgent returned None.")
+            print("  no result returned")
     else:
-        print("  No verified hypotheses — skipping M4.")
+        print("  skipped — no verified hypotheses")
 
+    # ── Fix: tiered repair applied to failure cases ───────────────────────
+    _bar("FIX  (tiered repair · up to L3a)")
+    if report.verified_hypotheses:
+        fix_outcome = loop.run_fix(report, cases, max_tier="L3a")
+        if fix_outcome is not None:
+            n_fail_cases = sum(1 for c in cases if c.label.value == "fail")
+            best = fix_outcome.best
+            if fix_outcome.fixed and best is not None:
+                cand = getattr(best, "candidate", None)
+                name = getattr(cand, "name", "?")
+                tier = getattr(cand, "tier", "?")
+                print(f"  {best.n_fixed} of {n_fail_cases} failure cases fixed · {best.n_broken} regression(s)")
+                print(f"  method  {name}  [{tier}]")
+                print(f"  effect  {best.effect}")
+            else:
+                n_tried = len(fix_outcome.attempted or [])
+                print(f"  no fix found  ({n_tried} approach(es) tried)")
+            rec = fix_outcome.recommendation
+            if rec:
+                print(f"  recommendation  {rec}")
+        else:
+            print("  no result returned")
+    else:
+        print("  skipped — no verified hypotheses")
+
+    _write_output_index(run_dir)
+    logger.close()  # log_loop_end no longer closes — M4/fix logged after loop.run()
     print("\nDone.")
 
 
