@@ -198,10 +198,17 @@ def main() -> None:
     # repair are all done by the loop's own agents. Reference analyses are
     # kept OUTSIDE this repository so the loop's coding agents cannot read
     # them (DESIGN.md §6: they grade the loop's conclusions, not feed them).
-    codegen = CliAgentConfig(provider="claude_code",
-                             model=str(CFG.get("codegen_model", "sonnet")),
-                             max_budget_usd=float(CFG.get("codegen_budget_usd", 2.0)),
-                             timeout_sec=int(CFG.get("codegen_timeout_sec", 240)))
+    codegen_effort = str(CFG.get("codegen_effort", "") or "")
+    codegen = CliAgentConfig(
+        provider="claude_code",
+        model=str(CFG.get("codegen_model", "sonnet")),
+        max_budget_usd=float(CFG.get("codegen_budget_usd", 2.0)),
+        timeout_sec=int(CFG.get("codegen_timeout_sec", 240)),
+        # claude -p --effort <level>; appended verbatim to the CLI command
+        extra_args=(("--effort", codegen_effort) if codegen_effort else ()),
+    )
+    print(f"codegen: claude_code model={codegen.model} "
+          f"effort={codegen_effort or 'default'}")
     run_logger = RunLogger(run_dir=OUT / "logs", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,

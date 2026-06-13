@@ -22,8 +22,10 @@ judge_effort: low
 
 # Pipeline-autonomy codegen (tier-(b) probe generator, stats tools, M4
 # experiment writer, fix module) — the loop writes its own code via this CLI
-# agent; deliberately a cheaper model than the judge.
-codegen_model: sonnet
+# agent (claude -p). Opus 4.8 low-effort: stronger coder than the fable-low
+# judge, so probe/fix code is more likely to satisfy the sandbox contract.
+codegen_model: claude-opus-4-8
+codegen_effort: low
 codegen_budget_usd: 2.0
 codegen_timeout_sec: 240
 fix_max_tier: L3b      # allow decoding/internals-write interventions (DeCo-class)
