@@ -129,9 +129,7 @@ def build_protocol():
             "The VLM answers 'Yes' to object-presence questions about objects that are "
             "NOT in the image, specifically objects that frequently co-occur with objects "
             "that ARE present (e.g. sees keyboard+monitor, hallucinates 'mouse'). "
-            "Suspected mechanism (DeCo, arXiv 2410.11779): the model recognizes the "
-            "object's absence in intermediate layers, but strong language priors "
-            "suppress this in the final layers. Failure cases are wrong answers to "
+            "Failure cases are wrong answers to "
             "adversarial absent-object probes; success cases are correct answers to "
             "the same probe types on the same images."
         ),
