@@ -66,6 +66,13 @@ _FULL = FakeModel(
 
 _STANDARD = "the quick brown fox"
 
+# Labelled batch for analyzers that need PASS/FAIL supervision (linear_probe).
+_LABELLED = CaseBatch([
+    FailureCase(inputs=Inputs(prompt=f"probe case {i}"),
+                label=Label.FAIL if i % 2 else Label.PASS)
+    for i in range(16)
+])
+
 
 class ScriptedFakeModel(FakeModel):
     """FakeModel variant with deterministic generate() outputs for behavior checks."""
@@ -169,6 +176,7 @@ _RUNNABLE: list[tuple[Any, Any, Any]] = [
     ), _STANDARD),
     # geometry
     (CKAAnalyzer(),                  _FULL, _STANDARD),
+    (LinearProbeAnalyzer(epochs=50), _FULL, _LABELLED),
     # perturbation — text path; default scorer falls back to model.logprobs
     (MMShapAnalyzer(n_samples=4),    _FULL, _STANDARD),
     # agent analyzers — all consume a Trajectory-bearing CaseBatch
@@ -206,7 +214,11 @@ _EXPECTED_FINDING_KEYS: dict[str, set[str]] = {
     },
     "attention_rollout": {"seq_len", "n_layers", "top_rollout_tokens"},
     "attention_sink": {"n_layers", "sink_token", "mean_sink_mass", "per_layer_sink"},
-    "logit_lens": {"n_layers", "pos", "per_layer_top"},
+    "logit_lens": {"n_layers", "pos", "per_layer_top", "per_case", "final_norm_applied"},
+    "linear_probe": {
+        "n_layers", "n_fail", "n_pass", "per_layer_accuracy",
+        "best_layer", "best_accuracy", "per_case",
+    },
     "token_entropy": {
         "seq_len", "mean_entropy", "max_entropy", "final_token_entropy", "top_next_tokens",
     },
@@ -257,6 +269,20 @@ def _check_attention_sink(f: dict[str, Any]) -> None:
 def _check_logit_lens(f: dict[str, Any]) -> None:
     assert f["n_layers"] == 4
     assert all(len(layer["top"]) == 3 for layer in f["per_layer_top"])
+    assert len(f["per_case"]) == 1  # _STANDARD is a single case
+    pc = f["per_case"][0]
+    assert 0 <= pc["decision_frac"] <= 1
+    assert _between(pc["final_top1_prob"], 0, 1)
+    assert pc["late_drop"] >= 0
+
+
+def _check_linear_probe(f: dict[str, Any]) -> None:
+    assert f["n_layers"] == 4
+    assert len(f["per_layer_accuracy"]) == 4
+    assert f["n_fail"] == 8 and f["n_pass"] == 8
+    assert _between(f["best_accuracy"], 0, 1)
+    assert len(f["per_case"]) == 16
+    assert all(_between(p["fail_prob_best_layer"], 0, 1) for p in f["per_case"])
 
 
 def _check_token_entropy(f: dict[str, Any]) -> None:
@@ -345,6 +371,7 @@ _FINDING_INVARIANTS: dict[str, Callable[[dict[str, Any]], None]] = {
     "attention_rollout": _check_attention_rollout,
     "attention_sink": _check_attention_sink,
     "logit_lens": _check_logit_lens,
+    "linear_probe": _check_linear_probe,
     "token_entropy": _check_token_entropy,
     "logprob_entropy": _check_logprob_entropy,
     "self_consistency": _check_self_consistency,
@@ -365,7 +392,6 @@ _FINDING_INVARIANTS: dict[str, Callable[[dict[str, Any]], None]] = {
 # These analyzers are fully registered and their class contracts are sound, but
 # _run raises NotImplementedError. When you implement one, move it to _RUNNABLE.
 _STUBS: list[tuple[Any, Any, Any]] = [
-    (LinearProbeAnalyzer(), _FULL, _STANDARD),
     (TunedLensAnalyzer(),   _FULL, _STANDARD),
     (CausalTraceAnalyzer(), _FULL, _STANDARD),
     # OPERA and VCD are image-only stubs; _FULL satisfies their capability check

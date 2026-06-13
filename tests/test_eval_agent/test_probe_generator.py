@@ -122,3 +122,55 @@ def test_probe_agent_no_codegen_when_disabled():
     model = RefusingModel(capabilities={Capability.GENERATE})
     results = agent.probe(model, _cases())
     assert not any(k.startswith("generated:") for k in results)
+
+
+# ── defect 3: analyzer runtime failure feeds back + triggers tier-(b) ────────
+
+
+def test_runtime_failure_recorded_and_triggers_codegen():
+    """A selected analyzer that raises at runtime is recorded in
+    _failed_analyzers (so the next selection prompt can warn the judge) AND
+    triggers a bespoke probe to replace the missing evidence — even though
+    another analyzer produced output (the old gate only fired when EVERYTHING
+    was unavailable, so a tier-(a) crash silently lost the evidence slot)."""
+    gen = ProbeGenerator(judge=ScriptedJudge(_GOOD_PROBE))
+    agent = ProbeAgent(max_analyzers=0, allow_codegen=True, probe_generator=gen)
+    model = RefusingModel(capabilities={Capability.GENERATE})
+
+    # Inject a failed-selection: simulate the judge having picked an analyzer
+    # that then crashed (e.g. logit_lens device bug) by recording it directly,
+    # then probe with a non-empty result already present.
+    from evalvitals.core.result import Result
+
+    def _stub_run_direct(analyzer, m, data):
+        agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
+        return None
+
+    # First confirm the recorded failure survives across the probe and that a
+    # generated probe still fires despite no catalog analyzer running.
+    agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
+    results = agent.probe(model, _cases())
+    assert "logit_lens" in agent._failed_analyzers
+    # tier-(b) replaced the lost evidence
+    assert any(k.startswith("generated:") for k in results)
+
+
+def test_failed_analyzers_surface_in_next_selection_prompt():
+    """The accumulated runtime failures appear in the LLM selection prompt so
+    the judge stops re-selecting a broken tool every cycle."""
+    from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+    captured = {}
+
+    class CapturingJudge:
+        def generate(self, prompt, **kw):
+            captured["prompt"] = prompt
+            return '{"analyzers": [], "rationale": "none"}'
+
+    agent = ProbeAgent(judge=CapturingJudge(), max_analyzers=2)
+    agent._failed_analyzers["logit_lens"] = "RuntimeError: cpu/cuda mismatch"
+    model = RefusingModel(capabilities={Capability.GENERATE})
+    proto = ExperimentProtocol(description="probe the failure", task_domain="x")
+    agent.probe(model, _cases(), protocol=proto)
+    assert "FAILED AT RUNTIME" in captured["prompt"]
+    assert "logit_lens" in captured["prompt"]

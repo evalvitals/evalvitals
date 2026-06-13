@@ -119,6 +119,26 @@ def test_single_rate_evalue_runs():
     assert r.details["fails"] == 4 and r.details["n"] == 8
 
 
+def test_single_rate_evalue_default_p0_is_descriptive_only():
+    """Without an explicit p0, the tool must NOT report a comparable effect or a
+    reject — its rate−0.5 would otherwise pollute |effect| ranking and surface a
+    meaningless "vs p0=0.50 → reject" verdict on an enriched batch (defect 6)."""
+    inp = build_stats_input({"attention": _attention_result()}, _labeled_cases())
+    r = run_stats_tool("single_rate_evalue", inp, {})  # no p0 -> unjustified default
+    assert r.ok
+    assert r.effect is None and r.reject is False
+    assert r.details["p0_justified"] is False
+    assert "descriptive only" in r.summary
+
+
+def test_single_rate_evalue_explicit_p0_is_interpretable():
+    """A justified p0 (the natural base rate) restores effect + reject."""
+    inp = build_stats_input({"attention": _attention_result()}, _labeled_cases())
+    r = run_stats_tool("single_rate_evalue", inp, {"p0": 0.05})
+    assert r.ok and r.effect is not None
+    assert r.details["p0_justified"] is True
+
+
 def test_mcnemar_evalue_two_strategies():
     inp = build_stats_input({"ab": _strategy_result(2)}, _labeled_cases())
     r = run_stats_tool("mcnemar_evalue", inp, {})

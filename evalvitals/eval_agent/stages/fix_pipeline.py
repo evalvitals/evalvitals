@@ -154,7 +154,13 @@ def run_coded_pipeline(
             del stderr_tail[:-30]
 
     threading.Thread(target=_drain_stderr, daemon=True).start()
-    watchdog = threading.Timer(timeout_sec, proc.kill)
+    timed_out = threading.Event()
+
+    def _kill_on_timeout() -> None:
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(timeout_sec, _kill_on_timeout)
     watchdog.start()
     deadline = time.monotonic() + timeout_sec
 
@@ -185,10 +191,19 @@ def run_coded_pipeline(
         watchdog.cancel()
 
     if result_line is None:
-        res.error = res.error or (
-            "no FIX_PIPELINE_RESULT_JSON line; stderr tail: "
-            + "".join(stderr_tail)[-400:].strip()
-        )
+        if timed_out.is_set():
+            # A kill looks like a silent exit (empty stderr) — name the cause,
+            # or the caller misreads an under-budgeted run as broken code.
+            res.error = res.error or (
+                f"timed out after {timeout_sec}s and was killed (bridge served "
+                f"{res.n_calls} model calls) — raise exec_timeout_sec or shrink "
+                "the validation batch"
+            )
+        else:
+            res.error = res.error or (
+                "no FIX_PIPELINE_RESULT_JSON line; stderr tail: "
+                + "".join(stderr_tail)[-400:].strip()
+            )
         return res
     try:
         per_case = json.loads(result_line).get("per_case", [])
@@ -230,7 +245,23 @@ def _service_call(
         image = getattr(inp, "image", None)
         ops = req.get("image_ops") or []
         if ops:
-            image = apply_image_ops(image, [op for op in ops if isinstance(op, dict)])
+            # Strict contract: a malformed op silently skipped hides the bug
+            # from the coding agent forever; an error reply becomes a
+            # RuntimeError inside the generated code — visible and repairable.
+            from evalvitals.eval_agent.stages.fix_tools import IMAGE_TOOLS
+
+            bad = [op for op in ops if not isinstance(op, dict) or not op.get("tool")]
+            unknown = [str(op["tool"]) for op in ops
+                       if isinstance(op, dict) and op.get("tool")
+                       and str(op["tool"]) not in IMAGE_TOOLS]
+            if bad or unknown:
+                return {"error": (
+                    "invalid image_ops — each op must be "
+                    "{'tool': <name>, 'params': {...}}"
+                    + (f"; unknown tool(s): {', '.join(unknown)}" if unknown else "")
+                    + "; available tools: " + ", ".join(IMAGE_TOOLS)
+                )}
+            image = apply_image_ops(image, ops)
         return {"output": str(model.generate(inputs_cls(prompt=str(prompt), image=image)))}
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}

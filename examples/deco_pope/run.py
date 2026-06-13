@@ -179,7 +179,6 @@ def main() -> None:
         RunLogger,
         SurgeryAgent,
         VLDiagnoseLoop,
-        WhiteboxProbeGenerator,
     )
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
@@ -208,12 +207,13 @@ def main() -> None:
         model=model,
         # judge => LLM-guided analyzer selection anchored on the protocol
         # (static StrategyProbe picks generic attention analyzers, not pope);
-        # probe_generator => tier-(b): the loop writes its own probe when the
-        # catalog can't surface the mechanism (need_custom signal).
+        # allow_codegen => tier-(b): the loop writes its own probe when the
+        # catalog can't surface the mechanism (need_custom) OR when selected
+        # analyzers fail at runtime; white/black-box generators are built
+        # lazily from judge + codegen_config.
         probe_agent=ProbeAgent(
             judge=judge, max_analyzers=args.max_analyzers,
-            probe_generator=WhiteboxProbeGenerator(
-                judge=judge, cli_config=codegen, run_logger=run_logger),
+            allow_codegen=True, codegen_config=codegen,
         ),
         stats_agent=StatsAnalysisAgent(judge=judge, allow_codegen=True,
                                        codegen_config=codegen),

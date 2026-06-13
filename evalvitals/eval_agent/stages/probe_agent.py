@@ -80,12 +80,14 @@ MODEL TYPE: {model_kind}
 
 AVAILABLE ANALYZERS ({n_available} compatible with this model):
 {analyzer_list}
-{prior_hypotheses_section}
+{failed_section}{prior_hypotheses_section}
 Select up to {max_n} analyzers. Return ONLY a JSON object, no other text:
 {{"analyzers": ["name1", "name2", ...], "rationale": "one sentence explaining the selection"}}
 
-If NONE of the available analyzers can probe the described failure, additionally
-include "need_custom": "<one line describing the probe to generate>" in the JSON.
+If the analyzers you can actually rely on (excluding any listed as failed)
+cannot adequately surface the suspected mechanism, additionally include
+"need_custom": "<one line describing the probe to generate>" in the JSON —
+a bespoke probe will be code-generated and run in a sandbox.
 """
 
 
@@ -160,6 +162,11 @@ class ProbeAgent:
         self._generated_probes: list[Any] = []
         # Optional "need_custom" hint extracted from the LLM selection response.
         self._last_need_custom: str | None = None
+        # Analyzer runtime failures, accumulated ACROSS cycles (the loop reuses
+        # one agent instance).  Fed back into the next selection prompt so the
+        # judge stops expecting evidence from broken tools, and into the
+        # tier-(b) trigger so a bespoke probe replaces the missing evidence.
+        self._failed_analyzers: dict[str, str] = {}
         # How many FAIL / PASS example cases to fold into the LLM selection
         # prompt.  More examples = more specialised selection, less generalisable
         # (the generalization–specialization trade-off).  ``(0, 0)`` disables it.
@@ -267,9 +274,17 @@ class ProbeAgent:
                         )
 
         selected = [t[0] for t in tasks]
-        # Tier (b)/(c): reuse + generate a bespoke probe when the catalog is thin.
+        failed_selected = [n for n in selected if n not in results]
+        for n in failed_selected:
+            self._failed_analyzers.setdefault(n, "produced no result")
+        if failed_selected:
+            rationale += (f" Failed at runtime: {', '.join(failed_selected)} — "
+                          "their evidence is missing this cycle.")
+        # Tier (b)/(c): reuse + generate a bespoke probe when the catalog is
+        # thin OR the selected evidence failed to materialize.
         if self.allow_codegen:
-            selected += self._maybe_generate(model, data, results)
+            selected += self._maybe_generate(model, data, results,
+                                             failed=failed_selected, protocol=protocol)
 
         self.last_schema = _build_schema(selected, rationale, protocol)
         return results
@@ -372,6 +387,15 @@ class ProbeAgent:
                 + "\n"
             )
 
+        failed_section = ""
+        if self._failed_analyzers:
+            failed_lines = "\n".join(
+                f"  - {n}: {err}" for n, err in self._failed_analyzers.items())
+            failed_section = (
+                "\nANALYZERS THAT FAILED AT RUNTIME IN THIS INVESTIGATION "
+                "(selecting them again will NOT produce evidence — pick "
+                "alternatives or request a custom probe):\n" + failed_lines + "\n")
+
         n_fail, n_pass = self._case_examples
         cases_section = _summarize_cases(data, max_fail=n_fail, max_pass=n_pass)
 
@@ -384,6 +408,7 @@ class ProbeAgent:
             model_kind=kind.value,
             n_available=len(catalog),
             analyzer_list=analyzer_lines,
+            failed_section=failed_section,
             prior_hypotheses_section=prior_section,
             max_n=max_n,
         )
@@ -510,6 +535,8 @@ class ProbeAgent:
         model: "Model",
         data: "CaseBatch",
         results: "dict[str, Result]",
+        failed: "list[str] | None" = None,
+        protocol: "ExperimentProtocol | None" = None,
     ) -> list[str]:
         """Reuse cached generated probes, then generate one if the catalog is thin.
 
@@ -531,14 +558,27 @@ class ProbeAgent:
                 results[r.analyzer] = r
                 added.append(r.analyzer)
 
-        # Tier (b): generate a new probe when the judge asked for one (and we
-        # have not already generated it), or when nothing produced any output.
+        # Tier (b): generate a new probe when the judge asked for one, when the
+        # judge's SELECTED analyzers failed at runtime (their evidence is
+        # missing either way), or when nothing produced any output.
         need = self._last_need_custom
-        should_generate = (bool(need) and not self._generated_probes) or not results
+        should_generate = (
+            (bool(need) or bool(failed)) and not self._generated_probes
+        ) or not results
         if not should_generate:
             return added
 
-        goal = need or "Probe the model outputs for the failure described in the protocol."
+        if need:
+            goal = need
+        elif failed:
+            goal = (
+                f"Selected analyzers ({', '.join(failed)}) failed to run; collect "
+                "equivalent evidence for the failure mechanism: "
+                + (protocol.description if protocol is not None
+                   else "see the experiment protocol.")
+            )
+        else:
+            goal = "Probe the model outputs for the failure described in the protocol."
         generator = self._dispatch_generator(goal, model)
         if generator is None:
             return added
@@ -623,6 +663,7 @@ class ProbeAgent:
         try:
             return self.runner.run(exp)
         except Exception as exc:
+            self._failed_analyzers[analyzer.name] = f"{type(exc).__name__}: {str(exc)[:200]}"
             warnings.warn(
                 f"Analyzer '{analyzer.name}' raised during direct run: {exc}",
                 stacklevel=3,

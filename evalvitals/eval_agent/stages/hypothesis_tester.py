@@ -59,6 +59,13 @@ _SIGNAL_TOOLS = frozenset({"signal_label_assoc", "bootstrap_diff", "mcnemar_eval
 # Tools that describe the run globally rather than a specific mechanism — used as
 # corroborating evidence only, never sufficient to confirm a specific hypothesis.
 _GLOBAL_TOOLS = frozenset({"single_rate_evalue", "friedman_nemenyi", "rank_corr"})
+# Descriptive-only tools whose "effect" is an artifact of the batch composition,
+# not a mechanism signal (e.g. single_rate_evalue's rate − p0 on a curated/
+# enriched batch). They are consulted for context but MUST NOT become a
+# hypothesis verdict's headline result — otherwise an inconclusive run reads as
+# "best: FAIL rate 7% vs p0=0.50 → reject", which sounds like a finding and is
+# meaningless once the batch is not a representative sample.
+_DESCRIPTIVE_TOOLS = frozenset({"single_rate_evalue"})
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +345,12 @@ class HypothesisTester:
             chosen = max(protective, key=lambda r: abs(r.effect or 0.0))
             status = HypothesisStatus.REFUTED
         else:
-            pool = relevant or global_res
+            # Descriptive tools (single_rate_evalue's rate − p0) must not be the
+            # headline: their effect is a batch-composition artifact, so on an
+            # enriched batch they would always win max(|effect|) and print a
+            # meaningless "vs p0=0.50 → reject" as the verdict.
+            pool = [r for r in (relevant or global_res)
+                    if r.tool not in _DESCRIPTIVE_TOOLS]
             chosen = max(pool, key=lambda r: abs(r.effect or 0.0)) if pool else None
             status = HypothesisStatus.INCONCLUSIVE
 
@@ -347,7 +359,10 @@ class HypothesisTester:
                 "status": HypothesisStatus.INCONCLUSIVE,
                 "effect_size": None,
                 "confidence": 0.0,
-                "verdict": "No applicable M2 statistical result to test this hypothesis.",
+                "verdict": ("No discriminating M2 result for this hypothesis"
+                            + (f" (consulted {len(consulted)} tool(s); only "
+                               "batch-descriptive statistics available)"
+                               if consulted else "")),
                 "test_name": "stats_results",
                 "evidence_grade": "none",
                 "evidence": {"source": "m2_stats_results", "consulted_tools": consulted,

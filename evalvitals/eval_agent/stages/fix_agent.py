@@ -127,7 +127,9 @@ EXECUTION CONTRACT:
 - A function  model_generate(case_id, prompt=None, image_ops=None) -> str  is
   ALREADY DEFINED in your namespace (do NOT import or redefine it).  It runs
   the ORIGINAL model on that case: optional prompt override, optional image
-  transforms applied to the case's image first.  Available image tools:
+  transforms applied to the case's image first.  image_ops MUST be a list of
+  {{"tool": "<name>", "params": {{...}}}} dicts using ONLY these tools
+  (anything else is rejected with an error):
 {catalog}{attend_hint}
 - You may call the model SEVERAL times per case (budget ~6 calls/case) and
   branch on its outputs — e.g. ask where the finding could be, zoom there,
@@ -141,6 +143,29 @@ EXECUTION CONTRACT:
   ~80 lines.
 
 Return ONLY the Python code{fences_hint}."""
+
+_REPAIR_PROMPT_BODY = """\
+Your previously written repair pipeline FAILED TO EXECUTE.
+
+ERROR:
+{error}
+
+YOUR PREVIOUS CODE:
+```python
+{code}
+```
+
+Fix the code.  Follow the execution contract EXACTLY:
+- the ONLY model access is the predefined model_generate(case_id, prompt=None, \
+image_ops=None){attend_clause} — do not import or redefine it;
+- image_ops must be a list of {{"tool": "<name>", "params": {{...}}}} dicts \
+using ONLY these tools:
+{catalog}
+- read "{cases_file}", emit an entry for EVERY case, and end stdout with \
+exactly:
+  {marker}{{"per_case": [{{"sample_id": "<case id>", "output": "<final answer text>"}}]}}
+- standard library + numpy only; no network, no file writes; under ~80 lines.
+"""
 
 _L3_PROMPT = """\
 You are configuring WHITE-BOX intervention primitives (tier L3: the model's \
@@ -212,6 +237,10 @@ class FixValidation:
     reject: bool = False
     fixed: bool = False
     summary: str = ""
+    # Non-empty when the candidate never EXECUTED (sandbox crash, timeout,
+    # bridge contract violation) — distinct from "executed and not effective".
+    # Escalation must not treat these as evidence that the tier is exhausted.
+    exec_error: str = ""
 
 
 @dataclass
@@ -283,6 +312,11 @@ class FixAgent:
                           dir when ``None``).
         exec_timeout_sec: Wall-clock limit for one coded-pipeline session
                           (includes the bridged model calls).
+        max_validation_cases: When > 0 and the batch is larger, validate every
+                          candidate on a label-stratified subset of this size
+                          (all-FAIL-first; deterministic).  Every candidate
+                          validation costs >= one model call per case, so an
+                          unbounded batch makes coded pipelines time out.
     """
 
     def __init__(
@@ -295,6 +329,7 @@ class FixAgent:
         allow_codegen: bool = True,
         sandbox: "Any | None" = None,
         exec_timeout_sec: int = 600,
+        max_validation_cases: int = 0,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -304,6 +339,8 @@ class FixAgent:
         self._allow_codegen = allow_codegen
         self._sandbox = sandbox
         self._exec_timeout_sec = exec_timeout_sec
+        self.max_validation_cases = max_validation_cases
+        self._last_repair_prompt = ""
 
     @property
     def codegen_available(self) -> bool:
@@ -333,6 +370,7 @@ class FixAgent:
                 "rationale": why,
             })
 
+        data = self._validation_subset(data)
         baseline = self._baseline(model, data)
         if not any(v is not None for v in baseline.values()):
             logger.warning("FixAgent: no scorable case (no rubrics); nothing to validate")
@@ -351,9 +389,51 @@ class FixAgent:
             outcome.best = max(winners, key=lambda v: (v.effect or 0.0, -v.n_broken))
             outcome.fixed = True
         else:
-            outcome.recommendation = self._recommend(routed_tiers)
+            # Escalation needs the current tier to have been genuinely TRIED:
+            # a candidate that never executed (sandbox crash/timeout/contract
+            # violation) is an engineering failure, not evidence the tier is
+            # exhausted.
+            executed = [v for v in outcome.attempted if v.n_pairs > 0]
+            never_ran = [v for v in outcome.attempted if v.n_pairs == 0]
+            if never_ran and not executed:
+                outcome.recommendation = {
+                    "recommend_tier": self.max_tier.label,
+                    "reason": (
+                        "no candidate EXECUTED — escalating would be premature; "
+                        f"fix candidate execution and retry within {self.max_tier.label}. "
+                        "Failures: " + "; ".join(
+                            f"{v.candidate.name}: {(v.exec_error or v.summary)[:120]}"
+                            for v in never_ran[:3])
+                    ),
+                }
+            else:
+                outcome.recommendation = self._recommend(routed_tiers)
+                if never_ran and outcome.recommendation is not None:
+                    outcome.recommendation["reason"] += (
+                        f" (caveat: {len(never_ran)} candidate(s) never executed: "
+                        + ", ".join(v.candidate.name for v in never_ran[:3]) + ")")
         self._emit(outcome)
         return outcome
+
+    def _validation_subset(self, data: "CaseBatch") -> "CaseBatch":
+        """Label-stratified, deterministic subset for candidate validation."""
+        cap = self.max_validation_cases
+        if not cap or len(data) <= cap:
+            return data
+        import random as _random
+
+        from evalvitals.core.case import CaseBatch, Label
+
+        rng = _random.Random(0)
+        fails = [c for c in data if c.label == Label.FAIL]
+        passes = [c for c in data if c.label != Label.FAIL]
+        rng.shuffle(fails)
+        rng.shuffle(passes)
+        n_fail = min(len(fails), max(cap // 2, cap - len(passes)))
+        keep = fails[:n_fail] + passes[: cap - n_fail]
+        logger.info("FixAgent: validating on %d/%d cases (%d fail, %d pass)",
+                    len(keep), len(data), n_fail, len(keep) - n_fail)
+        return CaseBatch(keep)
 
     # -- candidate generation --------------------------------------------
 
@@ -660,17 +740,88 @@ class FixAgent:
             prim = INTERNALS_PRIMITIVES[candidate.payload["primitive"]]
             return prim.run(model, data, self._score, candidate.payload.get("params"))
         if candidate.kind == "code":
-            result = run_coded_pipeline(
-                candidate.payload["code"], model, data,
-                workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
-                enable_attend=bool(candidate.payload.get("enable_attend")),
-            )
-            if not result.ok:
-                logger.warning("FixAgent: coded pipeline produced no result: %s",
-                               result.error)
+            result = self._run_coded(candidate, model, data)
             return score_outputs(result, data, self._score)
         strategy = self._strategy(candidate)
         return {case.id: strategy(model, case) for case in data}
+
+    def _run_coded(
+        self, candidate: FixCandidate, model: "Model", data: "CaseBatch"
+    ) -> "CodedPipelineResult":
+        """Run a coded candidate; a failed run gets ONE coder repair round.
+
+        The execution error (strict-bridge message, timeout, traceback tail) is
+        fed back verbatim — the coder fixes its own contract violation instead
+        of the candidate silently dying.  The final error, if any, is stashed
+        in ``payload["exec_error"]`` for honest escalation accounting.
+        """
+        result = run_coded_pipeline(
+            candidate.payload["code"], model, data,
+            workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+            enable_attend=bool(candidate.payload.get("enable_attend")),
+        )
+        if not result.ok and self.codegen_available:
+            logger.warning("FixAgent: coded pipeline failed (%s) — one repair round",
+                           result.error)
+            repaired, source, raw = self._repair_code(candidate, result.error)
+            self._emit_codegen("coded_pipeline_repair", self._last_repair_prompt,
+                               source, repaired, raw, ok=bool(repaired.strip()))
+            if repaired.strip():
+                candidate.payload["code"] = repaired
+                result = run_coded_pipeline(
+                    repaired, model, data,
+                    workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+                    enable_attend=bool(candidate.payload.get("enable_attend")),
+                )
+        candidate.payload["exec_error"] = "" if result.ok else result.error
+        if not result.ok:
+            logger.warning("FixAgent: coded pipeline produced no result: %s",
+                           result.error)
+        return result
+
+    def _repair_code(
+        self, candidate: FixCandidate, error: str
+    ) -> "tuple[str, str, str]":
+        """Ask the coder to fix its failed pipeline; returns (code, source, raw)."""
+        from evalvitals.eval_agent.stages.fix_pipeline import (
+            CASES_FILENAME,
+            RESULT_MARKER,
+        )
+
+        attend_clause = (
+            " and model_attend(case_id, prompt=None)"
+            if candidate.payload.get("enable_attend") else ""
+        )
+        base = _REPAIR_PROMPT_BODY.format(
+            error=error[:600],
+            code=str(candidate.payload.get("code", ""))[:4000],
+            attend_clause=attend_clause,
+            catalog=catalog_text(),
+            cases_file=CASES_FILENAME,
+            marker=RESULT_MARKER,
+        )
+        code, source, raw = "", "", ""
+        if self._cli_config is not None and self._cli_config.provider != "llm":
+            self._last_repair_prompt = base + "\nWrite the corrected code to a file named pipeline.py."
+            code, raw = self._write_code_cli(self._last_repair_prompt)
+            source = f"cli:{self._cli_config.provider}"
+        if not code.strip() and self._judge is not None:
+            self._last_repair_prompt = base + "\nReturn ONLY the corrected Python code inside a ```python code block."
+            try:
+                raw = str(self._judge.generate(self._last_repair_prompt))
+            except Exception as exc:
+                logger.warning("FixAgent: repair judge call failed: %s", exc)
+                raw = ""
+            code = _extract_code(raw)
+            if code.strip():
+                import ast
+
+                try:
+                    ast.parse(code)
+                except SyntaxError:
+                    code = ""
+            source = "judge"
+        return code, source, raw
 
     def _validate(
         self,
@@ -685,6 +836,8 @@ class FixAgent:
                          "not executed (see candidate payload)")
             return v
         scores = self._candidate_scores(candidate, model, data)
+        if isinstance(candidate.payload, dict):
+            v.exec_error = str(candidate.payload.get("exec_error", "") or "")
         base_vec: "list[bool]" = []
         cand_vec: "list[bool]" = []
         for case in data:
@@ -702,7 +855,8 @@ class FixAgent:
                 v.broken_cases.append(case.id)
         v.n_pairs = len(base_vec)
         if v.n_pairs == 0:
-            v.summary = "no scorable pair — candidate unvalidatable"
+            v.summary = (f"never executed: {v.exec_error}" if v.exec_error
+                         else "no scorable pair — candidate unvalidatable")
             return v
         try:
             stat = compare(base_vec, cand_vec, paired=True)
