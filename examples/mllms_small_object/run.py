@@ -828,6 +828,33 @@ def main() -> None:
     else:
         print("  No verified hypotheses — skipping M4.")
 
+    # ── run_fix: tiered repair that actually applies fix tools ────────────
+    print(f"\n{'='*64}")
+    print("run_fix  Tiered repair (L3a — attention-guided crop + upscale)")
+    print(f"{'='*64}")
+    if report.verified_hypotheses:
+        fix_outcome = loop.run_fix(report, cases, max_tier="L3a")
+        if fix_outcome is not None:
+            print(f"  fixed      : {fix_outcome.fixed}")
+            print(f"  max_tier   : {fix_outcome.max_tier}")
+            best = fix_outcome.best
+            if best is not None:
+                cand = getattr(best, 'candidate', None)
+                print(f"  best.tier  : {getattr(cand, 'tier', '?')}")
+                print(f"  best.name  : {getattr(cand, 'name', '?')}")
+                print(f"  best.effect: {best.effect}")
+                print(f"  best.n_fixed  : {best.n_fixed}")
+                print(f"  best.n_broken : {best.n_broken}")
+            attempted = fix_outcome.attempted or []
+            print(f"  attempted  : {len(attempted)} validation(s)")
+            rec = fix_outcome.recommendation
+            if rec:
+                print(f"  recommendation: {rec}")
+        else:
+            print("  FixAgent returned None.")
+    else:
+        print("  No verified hypotheses — skipping run_fix.")
+
     print("\nDone.")
 
 
