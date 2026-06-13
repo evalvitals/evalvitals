@@ -341,6 +341,7 @@ class FixAgent:
         self._exec_timeout_sec = exec_timeout_sec
         self.max_validation_cases = max_validation_cases
         self._last_repair_prompt = ""
+        self._last_usage: dict | None = None
 
     @property
     def codegen_available(self) -> bool:
@@ -577,6 +578,7 @@ class FixAgent:
         agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
         res = agent.run(prompt, workdir=workdir,
                         timeout_sec=self._cli_config.timeout_sec)  # type: ignore[union-attr]
+        self._last_usage = res.usage
         if not res.ok:
             return "", res.raw_output
         py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
@@ -596,11 +598,13 @@ class FixAgent:
     ) -> None:
         if self.run_logger is None:
             return
+        extra = ({"cli_usage": self._last_usage}
+                 if source.startswith("cli:") and self._last_usage else None)
         try:
             self.run_logger.log_tool_codegen(
                 module="fix_pipeline", name=name, need="L2 coded repair pipeline",
                 source=source, ok=ok, code=code, prompt=prompt, raw_output=raw,
-                error="" if ok else "no code produced",
+                error="" if ok else "no code produced", extra=extra,
             )
         except Exception as exc:  # logging must never break the fix step
             logger.debug("FixAgent: log_tool_codegen failed: %s", exc)

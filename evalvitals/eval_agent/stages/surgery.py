@@ -392,6 +392,7 @@ class SurgeryAgent:
             "timed_out": writer_result.timed_out,
             "validation_log": writer_result.validation_log,
             "cli_raw_output": writer_result.cli_raw_output,
+            "cli_usage": writer_result.cli_usage,
             "llm_calls": writer_result.total_llm_calls,
             "sandbox_runs": writer_result.total_sandbox_runs,
             "workdir": writer_result.workdir,
