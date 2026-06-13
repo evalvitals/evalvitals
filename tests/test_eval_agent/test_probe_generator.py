@@ -155,6 +155,48 @@ def test_runtime_failure_recorded_and_triggers_codegen():
     assert any(k.startswith("generated:") for k in results)
 
 
+def test_whitebox_analyzers_run_serially_not_in_thread_pool():
+    """White-box analyzers (GPU forward on the shared model) must run on the
+    calling thread, not the ThreadPoolExecutor — concurrent forwards race on
+    accelerate hooks (meta-tensor errors) and stack activations to OOM
+    (defect 7). Black-box analyzers may still parallelise."""
+    import threading
+
+    from evalvitals.core.analyzer import Analyzer
+    from evalvitals.core.result import Result
+
+    main_thread = threading.current_thread().ident
+    ran_on: dict[str, int] = {}
+
+    class WhiteBoxA(Analyzer):
+        name = "wb_a"
+        requires = frozenset({Capability.ATTENTION})  # not black-box compatible
+        applies_to_modalities = frozenset({"text"})
+
+        def _run(self, model, cases):
+            ran_on["wb_a"] = threading.current_thread().ident
+            return Result(analyzer=self.name, model=repr(model), findings={"ok": 1})
+
+    class BlackBoxB(Analyzer):
+        name = "bb_b"
+        requires = frozenset({Capability.GENERATE})  # black-box compatible
+        applies_to_modalities = frozenset({"text"})
+
+        def _run(self, model, cases):
+            ran_on["bb_b"] = threading.current_thread().ident
+            return Result(analyzer=self.name, model=repr(model), findings={"ok": 1})
+
+    agent = ProbeAgent(max_analyzers=2,
+                       analyzer_overrides={"wb_a": WhiteBoxA(), "bb_b": BlackBoxB()})
+    # Force selection of both via the static selector returning our names.
+    agent.selector.select = lambda *a, **k: ["wb_a", "bb_b"]  # type: ignore
+    model = RefusingModel(capabilities={Capability.GENERATE, Capability.ATTENTION})
+    results = agent.probe(model, _cases())
+    assert set(results) == {"wb_a", "bb_b"}
+    assert ran_on["wb_a"] == main_thread        # white-box ran serially
+    # (black-box may run on a pool thread; we only require the white-box one is serial)
+
+
 def test_failed_analyzers_surface_in_next_selection_prompt():
     """The accumulated runtime failures appear in the LLM selection prompt so
     the judge stops re-selecting a broken tool every cycle."""

@@ -161,6 +161,12 @@ def main() -> None:
     ap.add_argument("--max-clean-images", type=int, default=0,
                     help="shrink input by image: keep all fail-images + this many "
                          "clean images (0 = use the full manifest)")
+    # Explicit single device — NOT device_map="auto". accelerate's auto-dispatch
+    # leaves meta tensors and its per-forward hooks are not thread-safe, which
+    # crashed white-box analyzers and ballooned GPU memory to OOM under the M1
+    # parallel probe. Mirrors examples/qwen_loop_claude (--device cuda).
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
 
@@ -183,10 +189,12 @@ def main() -> None:
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.models.backends.base import RuntimeConfig
 
     judge = build_judge(args.judge_model, args.judge_effort)  # probe BEFORE weights load
 
     model = compose(args.model, "hf_local",
+                    runtime=RuntimeConfig(device=args.device, dtype=args.dtype),
                     want={Capability.GENERATE, Capability.HIDDEN_STATES,
                           Capability.ATTENTION})
     cases, raw = load_manifest(args.model, max_clean_images=args.max_clean_images)

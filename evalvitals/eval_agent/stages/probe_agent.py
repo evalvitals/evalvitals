@@ -254,24 +254,36 @@ class ProbeAgent:
                 return name, self._run_in_docker(name, analyzer, data)
             return name, self._run_direct(analyzer, model, data)
 
-        if tasks:
-            max_workers = min(len(tasks), 8)
+        # White-box analyzers do GPU forward passes on the SHARED local model;
+        # running them in threads races on the model (accelerate device_map
+        # hooks are not thread-safe → meta-tensor/dtype errors) and stacks
+        # transient activations until the GPU OOMs. Only black-box analyzers
+        # (GENERATE/LOGPROBS, possibly Dockerised) are safe to parallelise.
+        parallel = [(n, a) for n, a in tasks if _is_blackbox_compatible(type(a))]
+        serial = [(n, a) for n, a in tasks if not _is_blackbox_compatible(type(a))]
+
+        def _record(name: str, result, exc=None) -> None:
+            if exc is not None:
+                warnings.warn(f"Analyzer '{name}' raised in probe run: {exc}", stacklevel=2)
+            elif result is not None:
+                results[name] = result
+
+        if parallel:
+            max_workers = min(len(parallel), 8)
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {
-                    pool.submit(_run_one, name, analyzer): name
-                    for name, analyzer in tasks
-                }
+                futures = {pool.submit(_run_one, n, a): n for n, a in parallel}
                 for future in as_completed(futures):
                     try:
                         name, result = future.result()
-                        if result is not None:
-                            results[name] = result
+                        _record(name, result)
                     except Exception as exc:
-                        name = futures[future]
-                        warnings.warn(
-                            f"Analyzer '{name}' raised in parallel run: {exc}",
-                            stacklevel=2,
-                        )
+                        _record(futures[future], None, exc)
+        for name, analyzer in serial:  # white-box: one at a time on the GPU
+            try:
+                _, result = _run_one(name, analyzer)
+                _record(name, result)
+            except Exception as exc:
+                _record(name, None, exc)
 
         selected = [t[0] for t in tasks]
         failed_selected = [n for n in selected if n not in results]

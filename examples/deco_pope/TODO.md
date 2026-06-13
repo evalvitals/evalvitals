@@ -129,6 +129,27 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
 - 结论：tier-(a) 功效不足，逐层证据需走 tier-(b)（WhiteboxProbeGenerator，
   由 loop 自主生成探针；2026-06-12 起 run.py 已接线）
 
+### 2026-06-12 全自主链路 run#1（2B，opus-4-8-low coder）— 暴露缺陷 7
+
+- 链路修复 1–6 实跑确认生效：缺陷 3（pope 失败→记录→触发自写
+  `generated_wb:probe1`）、缺陷 5（fix outcome 带 "5 candidate(s) never
+  executed" caveat）、缺陷 6（M5 输出 "No discriminating M2 result" 而非
+  误导的 vs p0=0.5 → reject）
+- 但 OOM 污染结论：run 自身占 48GB（2B 模型仅 5GB），`pope` 两轮 OOM、
+  fix 候选大量 OOM，M1 退回静态选择（fable-low 的 JSON 没解析成功）
+- 诊断（隔离复现）：pope 顺序 generate 300 图平稳 4.9GB；白盒注意力捕获
+  32 图平稳 4.6GB；**单独都不泄漏**。根因 = `compose` 用了默认
+  `device_map="auto"`（accelerate 钩子 + meta tensor）+ ProbeAgent 把白盒
+  分析器丢进 8 线程 ThreadPoolExecutor 并发 forward → 钩子非线程安全
+  （meta-tensor/dtype 报错）+ 激活堆叠 → 46GB OOM
+- 缺陷 7 修复（两处）：
+  1. run.py 显式 `RuntimeConfig(device="cuda", dtype="bfloat16")`（对齐
+     qwen_loop 例子，去掉 accelerate 自动分发）
+  2. ProbeAgent 把**白盒分析器串行执行**，仅黑盒（GENERATE/LOGPROBS）保留
+     并行——并发 GPU forward 共享同一模型本就不安全
+  - 复现验证：device=cuda + 串行后，pope/attention/attention_rollout 三个
+    全部成功，峰值 **4.88GB**（原 46GB）
+
 ### 2026-06-12 全自主链路（检测→分析→修复，零人工干预）
 
 - 2B、`--max-clean-images 200`（297 图/891 case，105 FAIL 全保留）、
