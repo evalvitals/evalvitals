@@ -402,9 +402,26 @@ def build_model_context(model: "Model") -> dict[str, Any]:
 
     spec = getattr(model, "spec", None)
     if spec is not None and getattr(spec, "key", None):
+        runtime = getattr(model, "runtime", None)
+        device = getattr(runtime, "device", None)
+        dtype = getattr(runtime, "dtype", None)
+        # Infer want from capabilities so the sandbox loads with the same features.
+        want: list[str] = []
+        for cap in getattr(model, "capabilities", frozenset()):
+            cname = str(getattr(cap, "name", cap)).lower()
+            if cname in ("attention", "hidden_states", "logits"):
+                want.append(cname)
+        kwargs_parts = []
+        if device:
+            kwargs_parts.append(f"device={device!r}")
+        if dtype:
+            kwargs_parts.append(f"dtype={dtype!r}")
+        if want:
+            kwargs_parts.append(f"want={want!r}")
+        kwargs_str = (", " + ", ".join(kwargs_parts)) if kwargs_parts else ""
         return {
             "import_expr": "import evalvitals",
-            "load_expr": f"evalvitals.load({spec.key!r})",
+            "load_expr": f"evalvitals.load({spec.key!r}{kwargs_str})",
             "capabilities": caps,
         }
 
@@ -1450,7 +1467,15 @@ class ExperimentWriter:
         caps = ", ".join(model_context.get("capabilities", [])) or "GENERATE"
         image_note = (
             f", and image_path (JPEG path for {n_images} case(s)).\n"
-            "Load images with: `from PIL import Image; img = Image.open(case['image_path'])`\n\n"
+            "Load images and build inputs like this:\n"
+            "```python\n"
+            "from PIL import Image\n"
+            "from evalvitals.core.case import Inputs\n"
+            "img = Image.open(case['image_path'])\n"
+            "inputs = Inputs(prompt=case['prompt'], image=img)\n"
+            "# Then: model.generate(inputs) or model.forward(inputs, capture={Capability.ATTENTION})\n"
+            "```\n"
+            "Do NOT pass raw dicts or lists as inputs — always use Inputs().\n\n"
             if n_images else ".\n\n"
         )
         return (

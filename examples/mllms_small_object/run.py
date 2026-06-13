@@ -769,9 +769,9 @@ def main() -> None:
 
     writer_cfg = ExperimentWriterConfig(
         cli_agent=CliAgentConfig(
-            provider="antigravity", timeout_sec=120, model=args.judge_model
+            provider="antigravity", timeout_sec=300, model=args.judge_model
         ),
-        exec_fix_timeout_sec=60,
+        exec_fix_timeout_sec=90,
     )
     surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
 
