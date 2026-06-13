@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import textwrap
 import uuid
@@ -371,6 +372,10 @@ class RunLogger:
         self.experiments_dir = self.run_dir / "experiments"
         self.tools_dir = self.run_dir / "tools"
         self.workspace_dir = self.run_dir / "workspace"
+        # fixes/ — one self-contained record per tiered-repair attempt, plus an
+        #          outcome.md summarising all candidates and the escalation
+        #          recommendation.  Written by log_fix().
+        self.fixes_dir = self.run_dir / "fixes"
         # prompts/ — the verbatim prompt and raw response of every LLM judge
         #            call (M1 analyzer selection, M2 analysis, M3 diagnosis), so
         #            each conclusion can be traced back to exactly what the judge
@@ -646,10 +651,90 @@ class RunLogger:
         its ``to_dict()`` carries every attempted candidate (tier, payload,
         paired-stats verdict, repaired/broken case ids) and the escalation
         recommendation when nothing validated.
+
+        In addition to the lean JSONL ``fix`` event, this writes a
+        self-contained human record under ``fixes/``: one
+        ``NN_<tier>_<name>/record.md`` per attempted candidate plus a top-level
+        ``outcome.md`` summarising all attempts and the recommendation — so each
+        repair experiment can be read on its own without parsing the log.
         """
+        d = outcome.to_dict()
         entry: dict[str, Any] = {"event": "fix", "cycle": -1, "module": "fix"}
-        entry.update(outcome.to_dict())
+        entry.update(d)
+        record = self._write_fix_records(d)
+        if record is not None:
+            entry["record"] = record
         self._log(entry, span_id="fix")
+
+    def _write_fix_records(self, d: "dict[str, Any]") -> "str | None":
+        """Write per-candidate records + ``fixes/outcome.md``; return the outcome path."""
+        attempts = d.get("attempted") or []
+
+        # One record per attempted candidate.
+        for i, a in enumerate(attempts, start=1):
+            tier = a.get("tier", "L?")
+            name = a.get("name", "candidate")
+            slug = re.sub(r"[^a-zA-Z0-9]+", "_", f"{i:02d}_{tier}_{name}").strip("_")
+            verdict = "FIXED" if a.get("fixed") else "did not fix"
+            lines = [
+                f"# Fix attempt {i:02d} — {name}  [{tier}]",
+                "",
+                f"**Outcome:** {verdict}",
+                f"**Kind:** {a.get('kind')}    **Source:** {a.get('source')}",
+                "",
+                "## Validation (paired McNemar vs. unmodified baseline)",
+                f"- pairs tested: {a.get('n_pairs')}",
+                f"- cases fixed: {a.get('n_fixed')}",
+                f"- cases broken: {a.get('n_broken')}",
+                f"- effect: {a.get('effect')}",
+                f"- statistically significant (rejects H0): {a.get('reject')}",
+            ]
+            if a.get("summary"):
+                lines.append(f"- summary: {a['summary']}")
+            lines.append("")
+            if a.get("fixed_cases"):
+                lines.append("## Cases fixed")
+                lines += [f"- {c}" for c in a["fixed_cases"]]
+                lines.append("")
+            if a.get("broken_cases"):
+                lines.append("## Cases broken")
+                lines += [f"- {c}" for c in a["broken_cases"]]
+                lines.append("")
+            lines.append("## What was applied")
+            lines.append("```json")
+            lines.append(json.dumps(a.get("payload") or {}, indent=2, default=str))
+            lines.append("```")
+            self._save_text(self.fixes_dir / slug, "record.md", "\n".join(lines))
+
+        # Top-level summary across all attempts.
+        fixed = d.get("fixed")
+        head = [
+            "# Fix outcome",
+            "",
+            f"**Result:** {'FIXED' if fixed else 'NOT FIXED'}",
+            f"**Max tier allowed:** {d.get('max_tier')}",
+            f"**Best candidate:** {d.get('best') or '—'}",
+        ]
+        rec = d.get("recommendation")
+        if rec:
+            head.append(
+                f"**Recommendation:** escalate to {rec.get('recommend_tier')} "
+                f"— {rec.get('reason', '')}"
+            )
+        head += ["", f"## Attempts ({len(attempts)})", ""]
+        if attempts:
+            head.append("| # | tier | candidate | fixed | n_fixed | n_broken | effect | sig |")
+            head.append("|---|------|-----------|-------|---------|----------|--------|-----|")
+            for i, a in enumerate(attempts, start=1):
+                head.append(
+                    f"| {i:02d} | {a.get('tier')} | {a.get('name')} | "
+                    f"{'yes' if a.get('fixed') else 'no'} | {a.get('n_fixed')} | "
+                    f"{a.get('n_broken')} | {a.get('effect')} | "
+                    f"{'yes' if a.get('reject') else 'no'} |"
+                )
+            head += ["", "Each attempt's full record is in its own folder above "
+                     "(`NN_<tier>_<name>/record.md`)."]
+        return self._save_text(self.fixes_dir, "outcome.md", "\n".join(head))
 
     def log_loop_end(
         self,
@@ -658,7 +743,16 @@ class RunLogger:
         tokens_used: "int | None" = None,
         timings: "dict[str, float] | None" = None,
     ) -> None:
-        """Final summary entry — written and file closed when the loop exits.
+        """Final summary entry for the diagnosis loop — does **not** close the log.
+
+        ``loop_end`` marks the end of the M1→M5 diagnosis loop, not the end of
+        logging: the post-loop experiments (M4 mechanism verification via
+        :meth:`AutoDiagnoseLoop.run_m4`, tiered repair via ``run_fix``) run
+        *after* ``loop.run()`` returns and must still be recorded.  The logger's
+        lifecycle therefore belongs to whoever created it — use it as a context
+        manager or call :meth:`close` explicitly when all work is done.  (Each
+        event is flushed to disk as it is written, so an unclosed logger never
+        loses data.)
 
         Accepts both :class:`AutoDiagnoseReport` (``resolved``,
         ``final_hypotheses``) and :class:`VLDiagnoseReport` (``stopped_by``,
@@ -707,7 +801,6 @@ class RunLogger:
                 for tr in verified
             ]
         self._log(entry)
-        self.close()
 
     # ------------------------------------------------------------------
     # Experiment log (M4) + workspace snapshot
@@ -797,7 +890,50 @@ class RunLogger:
             "output_paths": text_paths,
             "workspace_snapshot": workspace,
         }
+        # Human-readable, self-contained record: open this one file to
+        # understand the whole experiment without parsing JSONL.
+        record = self._write_experiment_record(stem, entry)
+        if record is not None:
+            entry["record"] = record
         self._log(entry, span_id=f"{prefix}.{module}")
+
+    def _write_experiment_record(
+        self, stem: str, entry: "dict[str, Any]"
+    ) -> "str | None":
+        """Write a one-page Markdown summary of an M4 experiment to ``experiments/``."""
+        status = (entry.get("status") or "unknown").upper()
+        lines = [
+            f"# Experiment — {entry.get('module', 'm4').upper()}  ({status})",
+            "",
+            f"**Hypothesis:** {entry.get('hypothesis', '')}",
+            f"**Failure mode:** {entry.get('failure_mode', '—')}",
+            "",
+            f"**Verdict:** {entry.get('verdict')}    "
+            f"**Fixed:** {entry.get('fixed')}",
+            "",
+        ]
+        metrics = entry.get("metrics") or {}
+        if metrics:
+            lines.append("## Metrics")
+            for k, v in metrics.items():
+                lines.append(f"- {k}: {v}")
+            lines.append("")
+        lines.append("## How it ran")
+        for label, key in (
+            ("provider", "provider"), ("return code", "returncode"),
+            ("timed out", "timed_out"), ("LLM calls", "llm_calls"),
+            ("sandbox runs", "sandbox_runs"),
+        ):
+            if entry.get(key) is not None:
+                lines.append(f"- {label}: {entry[key]}")
+        lines.append("")
+        files = {**(entry.get("code_paths") or {}), **(entry.get("output_paths") or {})}
+        if files:
+            lines.append("## Files")
+            for name, path in files.items():
+                lines.append(f"- `{path}`  — {name}")
+            lines.append("")
+        return self._save_text(self.experiments_dir, f"{stem}_record.md", "\n".join(lines))
 
     # ------------------------------------------------------------------
     # Tool synthesis — agent generates new probes / stats tools on demand

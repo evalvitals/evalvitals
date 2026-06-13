@@ -582,8 +582,6 @@ def _run_smoke_test(args) -> None:
 
 def _write_output_index(run_dir: Path) -> None:
     """Write README.txt and print a file guide at the end of each run."""
-    logs = run_dir / "logs"
-
     sections: list[tuple[str, list[tuple[str, str]]]] = [
         ("Start here", [
             ("summary.md", "plain-text run summary — verified hypotheses, cycles, counts"),
@@ -592,7 +590,7 @@ def _write_output_index(run_dir: Path) -> None:
         ("Diagnosis detail", [
             ("hypotheses.json", "all generated hypotheses with SUPPORTED / REFUTED / UNKNOWN"),
             ("m5_results.json", "statistical test results for each hypothesis"),
-            (f"logs/figures/m2_effects.png", "bar chart of effect sizes across analyzers"),
+            ("logs/figures/m2_effects.png", "bar chart of effect sizes across analyzers"),
         ]),
         ("Per-cycle analyzer data  (c0 = cycle 0, c1 = cycle 1, …)", [
             ("logs/artifacts/c*_relative_attention_diff_map_fail_minus_pass.png",
@@ -603,13 +601,17 @@ def _write_output_index(run_dir: Path) -> None:
             ("logs/prompts/c*_m3_diagnosis.*", "the agent's diagnosis reasoning"),
         ]),
         ("M4 experiment (mechanism verification)", [
+            ("logs/experiments/post_m4_record.md", "← READ THIS: one-page summary (hypothesis, verdict, metrics)"),
             ("logs/experiments/post_m4_experiment.py", "script the agent wrote to verify the hypothesis"),
             ("logs/experiments/post_m4_stdout.txt",    "metric_a, metric_b, verdict from running that script"),
             ("logs/experiments/post_m4_agent_thinking.txt", "agent's reasoning while writing the script"),
-            ("logs/workspace/post_m4/hypothesis.md",   "the hypothesis the experiment was designed to test"),
+        ]),
+        ("Fix attempts (tiered repair)", [
+            ("logs/fixes/outcome.md", "← READ THIS: did the fix work? table of all attempts + recommendation"),
+            ("logs/fixes/*/record.md", "one self-contained record per repair attempt (what + McNemar result)"),
         ]),
         ("Raw event log (for debugging)", [
-            ("logs/run_log.jsonl", "one JSON line per M1/M2/M3/M5 event"),
+            ("logs/run_log.jsonl", "one JSON line per event (M1–M5, experiment, fix)"),
         ]),
     ]
 
@@ -900,7 +902,8 @@ def main() -> None:
         print("  skipped — no verified hypotheses")
 
     _write_output_index(run_dir)
-    print(f"\nDone.")
+    logger.close()  # log_loop_end no longer closes — M4/fix logged after loop.run()
+    print("\nDone.")
 
 
 if __name__ == "__main__":
