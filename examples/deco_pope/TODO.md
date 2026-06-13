@@ -128,3 +128,32 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
   4 条假设均切题（late-layer suppression / 先验主导 / 仪器偏差 / 标签疑误）
 - 结论：tier-(a) 功效不足，逐层证据需走 tier-(b)（WhiteboxProbeGenerator，
   由 loop 自主生成探针；2026-06-12 起 run.py 已接线）
+
+### 2026-06-12 全自主链路（检测→分析→修复，零人工干预）
+
+- 2B、`--max-clean-images 200`（297 图/891 case，105 FAIL 全保留）、
+  judge=fable-low、coder=sonnet、fix 上限 L3b、漂移校验 9/10
+- 主循环 174s / judge ~1000 tokens / 修复模块 ~40min
+- M1：judge 两轮都选中 logit_lens + linear_probe + prompt_contrast
+  （方向正确），但前两者运行即坏，仅 prompt_contrast 存活（n=32 子采样，
+  三种提示策略 0.875/0.875/0.875 零差异）
+- M3 共 4 条假设（case-intrinsic / 高共现 / describe-first 中介 /
+  decoding-deterministic logit margin），M5 全部 inconclusive，0 verified
+- 修复：假设#4 含 "logit" 解锁 L3a 路由；coder 产出 L2 三票投票脚手架
+  （怀疑提示 + 幻觉警告 + attention 裁剪重问），但**沙箱执行 0 票**——
+  生成代码调用了契约未定义的 `model_attend` 与自定义工具名，dispatcher
+  全部 "unknown tool ''" 跳过 → 无 FIX_PIPELINE_RESULT_JSON → 候选记为
+  无效 → FixOutcome 建议升级 L4（微调）
+- 验证机制诚实：无假阳性修复通过 McNemar 把关
+
+**暴露的链路缺陷清单（本实验主产出）**：
+1. `logit_lens`：cpu/cuda device mismatch + 不做 final RMSNorm
+2. `linear_probe`：未实现 stub（运行即抛自身 docstring）
+3. M1 选择器：analyzer 运行时失败不回流 judge（下一轮还在等坏工具的
+   证据）；`need_custom` 仅当**全部**候选不可用才触发 → 只要有一个
+   analyzer 活着，tier-(b) 自主探针永不激活
+4. fix 沙箱：codegen 契约与 dispatcher schema 不匹配（"unknown tool ''"
+   静默跳过而非报错回流），coder 也会调用契约外函数
+5. FixAgent：把"候选执行失败"与"档位内试过且无效"混为一谈 →
+   过早建议 L4
+6. M5 默认检验（FAIL 率 vs p0=0.5）对富集批次无意义
