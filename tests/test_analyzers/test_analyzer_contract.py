@@ -226,7 +226,7 @@ _EXPECTED_FINDING_KEYS: dict[str, set[str]] = {
     "counterfactual": {"n_trajectories", "per_case", "_caveat"},
     "pope": {"n", "unparsed", "accuracy", "precision", "recall", "f1", "yes_rate"},
     "chair": {"n", "chair_i", "chair_s"},
-    "prompt_contrast": {"n_cases", "n_strategies", "n_unscored", "by_strategy", "per_case"},
+    "prompt_contrast": {"n_cases", "n_strategies", "n_unscored", "by_strategy"},
 }
 
 

@@ -53,6 +53,18 @@ stages/ (M1–M5 implementation):
   surgery.py           M4 — SurgeryAgent: correlate / param-sweep / ExperimentWriter
                               → InterventionResult (SUPPORTED / REFUTED / INCONCLUSIVE)
   experiment_writer.py M4 — multi-phase LLM/CLI agent writes + executes fix scripts
+  fix_tiers.py         Fix — FixTier intervention-space ladder (L1 prompt /
+                              L2 scaffold / L3a read / L3b write / L4 params)
+                              + hypothesis -> minimum-tier routing
+  fix_tools.py         Fix — L2 tool catalog (zoom/contrast/equalize/upscale)
+                              + PipelineSpec executor around the unchanged model
+  fix_agent.py         Fix — FixAgent: tiered candidates -> paired McNemar
+                              validation -> FixOutcome (+ tier recommendation)
+  fix_pipeline.py      Fix — L2 coded pipelines: sandboxed agent code with
+                              bridged model access (model_generate/model_attend)
+  fix_internals.py     Fix — L3a attention-guided crop, L3b intervention
+                              primitives (visual embedding boost); L4
+                              FinetuneSpec (defined, executor TODO)
   hypothesis_tester.py M5 — HypothesisTester: statistical test + protocol consistency;
                               stopping_criteria_met() drives the VLDiagnoseLoop exit
 """
@@ -60,6 +72,7 @@ stages/ (M1–M5 implementation):
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
 from evalvitals.eval_agent.cli_agent import (
     AgyModel,
+    ClaudeModel,
     CliAgentConfig,
     CliAgentResult,
     create_cli_agent,
@@ -113,6 +126,19 @@ from evalvitals.eval_agent.stages.experiment_writer import (
     SolutionNode,
     build_model_context,
 )
+from evalvitals.eval_agent.stages.fix_agent import (
+    FixAgent,
+    FixCandidate,
+    FixOutcome,
+    FixValidation,
+)
+from evalvitals.eval_agent.stages.fix_internals import (
+    INTERNALS_PRIMITIVES,
+    FinetuneSpec,
+    InternalsPrimitive,
+)
+from evalvitals.eval_agent.stages.fix_tiers import FixTier, parse_tier, route_min_tier
+from evalvitals.eval_agent.stages.fix_tools import PipelineSpec
 from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
 from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
@@ -143,6 +169,7 @@ from evalvitals.eval_agent.store import InMemoryStore, JsonlStore, Store
 __all__ = [
     # Judge
     "AgyModel",
+    "ClaudeModel",
     # M1
     "ProbeAgent",
     "StrategyProbe",
@@ -152,6 +179,18 @@ __all__ = [
     "GeneratedProbe",
     "WhiteboxProbeGenerator",
     "GeneratedWhiteboxProbe",
+    # Fix module (post-loop tiered repair)
+    "FixAgent",
+    "FixCandidate",
+    "FixOutcome",
+    "FixValidation",
+    "FixTier",
+    "parse_tier",
+    "route_min_tier",
+    "PipelineSpec",
+    "INTERNALS_PRIMITIVES",
+    "InternalsPrimitive",
+    "FinetuneSpec",
     # M2
     "AnalysisModule",
     "AnalysisReport",

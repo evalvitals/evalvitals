@@ -1,0 +1,27 @@
+{
+  "_comment": "ILLUSTRATIVE schema only — real entries are produced by mine_cases.py:fetch_pope_probes() from the pinned POPE COCO splits. Per image: one adversarial-absent, one present, one random-absent probe (DESIGN.md §4.2).",
+  "probes": [
+    {
+      "image_id": 397133,
+      "file_name": "COCO_val2014_000000397133.jpg",
+      "object": "mouse",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "co_occur_with": ["keyboard", "monitor"]
+    },
+    {
+      "image_id": 397133,
+      "file_name": "COCO_val2014_000000397133.jpg",
+      "object": "keyboard",
+      "pope_label": "yes",
+      "probe_type": "present"
+    },
+    {
+      "image_id": 397133,
+      "file_name": "COCO_val2014_000000397133.jpg",
+      "object": "giraffe",
+      "pope_label": "no",
+      "probe_type": "random"
+    }
+  ]
+}

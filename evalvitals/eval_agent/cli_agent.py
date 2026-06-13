@@ -555,6 +555,8 @@ class AgyModel:
                     capture_output=True,
                     timeout=self._timeout_sec,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env={**os.environ},
                 )
             except subprocess.TimeoutExpired as exc:
@@ -586,6 +588,138 @@ class AgyModel:
 
     def __repr__(self) -> str:
         return f"AgyModel(binary={self._binary!r})"
+
+
+class ClaudeModel:
+    """Claude Code CLI wrapped as a judge model — no API key required.
+
+    Implements the minimal ``Model`` protocol (``generate() → str``) by running
+    ``claude -p <prompt>`` non-interactively, reusing the user's existing
+    Claude Code OAuth session (``~/.claude`` / ``~/.claude.json``).
+
+    Container note: Claude Code refuses ``--dangerously-skip-permissions``
+    when running as root unless ``IS_SANDBOX=1`` is set in the environment —
+    the example docker-compose sets it.
+
+    Usage::
+
+        judge = ClaudeModel(model="claude-fable-5")
+        diagnosis_agent = DiagnosisAgent(judge=judge)
+
+    Args:
+        binary_path: Explicit path to the ``claude`` binary.  Auto-detected
+                     via :func:`shutil.which` when empty.
+        timeout_sec: Hard wall-clock limit per call (default 240 s — judge
+                     prompts carry statistical evidence + image attachments).
+        model:       Model identifier forwarded via ``--model`` (e.g.
+                     ``"claude-fable-5"``, ``"sonnet"``, ``"haiku"``).  Empty
+                     uses the CLI session default.
+        effort:      Effort level forwarded via ``--effort`` (e.g. ``"high"``).
+                     Empty uses the CLI session default.
+    """
+
+    key = "claude"
+
+    def __init__(
+        self,
+        binary_path: str = "",
+        timeout_sec: int = 240,
+        model: str = "",
+        effort: str = "",
+    ) -> None:
+        from evalvitals.core.capability import Capability
+
+        binary = binary_path or shutil.which("claude") or ""
+        if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+            raise RuntimeError(
+                "ClaudeModel: 'claude' binary not found or not executable. "
+                "Set CLAUDE_PATH=$(which claude) and re-run, or pass "
+                "binary_path= explicitly."
+            )
+        self._binary = binary
+        self._timeout_sec = timeout_sec
+        self._model = model
+        self._effort = effort
+        self.capabilities = frozenset({Capability.GENERATE})
+        self.modalities = frozenset({"text"})
+
+    def generate(
+        self,
+        inputs: object,
+        *,
+        images: "list[Path] | None" = None,
+        **kwargs: object,
+    ) -> str:
+        """Run ``claude -p <inputs>`` and return the text response.
+
+        Args:
+            images: Optional image paths made visible to the model: copied into
+                    a temp workspace passed via ``--add-dir`` and listed at the
+                    top of the prompt so the model knows to Read them.
+        """
+        import pathlib
+
+        img_dir: str | None = None
+        try:
+            prompt_text = str(inputs)
+            if images:
+                valid = [p for p in images if isinstance(p, pathlib.Path) and p.exists()]
+                if valid:
+                    img_dir = tempfile.mkdtemp(prefix="claude_imgs_")
+                    for p in valid:
+                        shutil.copy2(p, pathlib.Path(img_dir) / p.name)
+                    names = ", ".join(p.name for p in valid)
+                    prompt_text = (
+                        f"Images available in workspace: {names}\n\n{prompt_text}"
+                    )
+
+            cmd = [
+                self._binary, "-p", prompt_text,
+                "--dangerously-skip-permissions",
+                "--output-format", "text",
+            ]
+            if img_dir:
+                cmd += ["--add-dir", img_dir]
+            if self._model:
+                cmd += ["--model", self._model]
+            if self._effort:
+                cmd += ["--effort", self._effort]
+
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=self._timeout_sec,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env={**os.environ},
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"ClaudeModel: claude timed out after {self._timeout_sec}s"
+                ) from exc
+
+            output = (proc.stdout or "").strip()
+            if proc.returncode != 0 and not output:
+                reason = (proc.stderr or "").strip()[:240]
+                raise RuntimeError(
+                    f"ClaudeModel: claude exited {proc.returncode}: {reason}"
+                )
+            if not output:
+                warnings.warn(
+                    "ClaudeModel: claude returned an empty response — likely "
+                    "rate-limited or out of quota; the caller will fall back "
+                    "to a non-LLM path.",
+                    stacklevel=2,
+                )
+            return output
+        finally:
+            if img_dir:
+                shutil.rmtree(img_dir, ignore_errors=True)
+
+    def __repr__(self) -> str:
+        return f"ClaudeModel(binary={self._binary!r}, model={self._model!r}, effort={self._effort!r})"
 
 
 def create_cli_agent(config: CliAgentConfig) -> _CliAgentBase:

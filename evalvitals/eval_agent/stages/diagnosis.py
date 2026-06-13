@@ -115,6 +115,7 @@ class DiagnosisResult:
     hypotheses: list[Hypothesis] = field(default_factory=list)
     findings_summary: dict[str, Any] = field(default_factory=dict)
     raw_judge_output: str = ""
+    prompt: str = ""
 
 
 _HYPOTHESIS_SCHEMA: dict = {
@@ -489,4 +490,5 @@ class DiagnosisAgent:
             hypotheses=hypotheses,
             findings_summary=summary,
             raw_judge_output=str(raw),
+            prompt=prompt,
         )

@@ -65,7 +65,7 @@ def test_by_strategy_success_matrix():
 
 def test_repair_and_breakage_flags():
     res = PromptContrastAnalyzer().run(InterventionModel(), _batch())
-    by_id = {e["sample_id"]: e for e in res.findings["per_case"]}
+    by_id = {e["sample_id"]: e for e in res.artifacts["per_case"]}
     assert by_id["y0"]["fixed_by_sensitive"] is True
     assert by_id["y0"]["broken_by_sensitive"] is False
     assert by_id["n0"]["fixed_by_sensitive"] is False

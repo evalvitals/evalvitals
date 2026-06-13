@@ -75,6 +75,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -231,6 +232,7 @@ class AutoDiagnoseLoop:
         self.run_logger = run_logger
         self.token_budget = token_budget
         self._tokens_used: int = 0
+        self._timings: dict[str, float] = {}
 
         # --- run-directory setup ---
         self._run_dir: Path | None = None
@@ -310,7 +312,19 @@ class AutoDiagnoseLoop:
         _confidence_history: list[float] = []
         self._tokens_used = 0
 
+        # Per-stage wall-clock totals (seconds), surfaced in loop_end.
+        self._timings = {}
+
+        # Forward the RunLogger so the probe generators emit tool_codegen events.
+        _attach_run_logger(self.run_logger, self.probe_agent)
+        if self.run_logger is not None:
+            self.run_logger.log_run_start(
+                _run_config(self, data, loop_name="AutoDiagnoseLoop")
+            )
+
         for cycle in range(start_cycle, self.max_cycles):
+            if self.run_logger is not None:
+                self.run_logger.current_cycle = cycle
             # Budget guard: stop before consuming more tokens than allowed
             if self.token_budget > 0 and self._tokens_used >= self.token_budget:
                 logger.warning(
@@ -321,14 +335,21 @@ class AutoDiagnoseLoop:
             completed_cycles = cycle + 1
 
             # ── M1: probe ───────────────────────────────────────────────
+            _t0 = time.monotonic()
             probe_results = self.probe_agent.probe(
                 self.model, data,
                 hint_failure_modes=outstanding_modes or None,
             )
+            _dt = time.monotonic() - _t0
+            self._timings["m1"] = self._timings.get("m1", 0.0) + _dt
             if self.run_logger:
                 self.run_logger.log_probe(
-                    cycle, probe_results, schema=self.probe_agent.last_schema
+                    cycle, probe_results, schema=self.probe_agent.last_schema,
+                    judge_prompt=getattr(self.probe_agent, "last_selection_prompt", ""),
+                    judge_raw=getattr(self.probe_agent, "last_selection_raw", ""),
+                    duration_sec=_dt,
                 )
+                _log_generated_tools(self.run_logger, cycle, "m1_probe", self.probe_agent)
             if not probe_results:
                 break
             final_results = probe_results
@@ -336,19 +357,25 @@ class AutoDiagnoseLoop:
                 self.store.add_result(r)
 
             # ── M2: analyze ─────────────────────────────────────────────
+            _t0 = time.monotonic()
             analysis = self.analysis_module.analyze(probe_results, repr(self.model))
+            _dt = time.monotonic() - _t0
+            self._timings["m2"] = self._timings.get("m2", 0.0) + _dt
             final_analysis = analysis
             if self.run_logger:
-                self.run_logger.log_analysis(cycle, analysis)
+                self.run_logger.log_analysis(cycle, analysis, duration_sec=_dt)
 
             if self.diagnosis_agent is None:
                 self._on_cycle_complete(cycle, all_hypotheses)
                 break  # analysis-only mode
 
             # ── M3: diagnose ─────────────────────────────────────────────
+            _t0 = time.monotonic()
             diag = self.diagnosis_agent.diagnose(
                 analysis, prior_cycles=prior_cycles or None
             )
+            _dt = time.monotonic() - _t0
+            self._timings["m3"] = self._timings.get("m3", 0.0) + _dt
             # Track token usage from the diagnosis LLM call.
             # Use response metadata when available; otherwise estimate from
             # output length (1 token ≈ 4 chars) so the budget is always counted.
@@ -357,7 +384,7 @@ class AutoDiagnoseLoop:
                 _diag_tokens = max(1, len(diag.raw_judge_output) // 4)
             self._tokens_used += _diag_tokens
             if self.run_logger:
-                self.run_logger.log_diagnosis(cycle, diag)
+                self.run_logger.log_diagnosis(cycle, diag, duration_sec=_dt)
             if not diag.hypotheses:
                 self._on_cycle_complete(cycle, all_hypotheses)
                 break
@@ -369,11 +396,18 @@ class AutoDiagnoseLoop:
             outstanding_modes = []
             cycle_max_confidence = 0.0
             for h in diag.hypotheses:
+                _t0 = time.monotonic()
                 iv = self.surgery_agent.operate(h, self.model, probe_results, data)
+                _dt = time.monotonic() - _t0
+                self._timings["m4"] = self._timings.get("m4", 0.0) + _dt
                 h.status = iv.status
                 cycle_max_confidence = max(cycle_max_confidence, iv.confidence_score)
                 if self.run_logger:
-                    self.run_logger.log_surgery(cycle, h, iv)
+                    self.run_logger.log_surgery(cycle, h, iv, duration_sec=_dt)
+                    # When surgery wrote and ran an experiment, also persist it
+                    # (script, output, thinking, workspace snapshot).
+                    if getattr(iv, "experiment", None):
+                        self.run_logger.log_experiment(cycle, h, iv, module="m4")
                 if iv.fixed:
                     report = AutoDiagnoseReport(
                         cycles=completed_cycles,
@@ -489,7 +523,11 @@ class AutoDiagnoseLoop:
     def _on_loop_end(self, report: AutoDiagnoseReport) -> None:
         """Append lessons to EvolutionStore and commit/discard via git."""
         if self.run_logger:
-            self.run_logger.log_loop_end(report)
+            self.run_logger.log_loop_end(
+                report,
+                tokens_used=self._tokens_used,
+                timings=getattr(self, "_timings", None) or None,
+            )
 
         # EvolutionStore lesson extraction
         if self.evolution_store is not None:
@@ -605,6 +643,8 @@ class VLDiagnoseReport:
         final_stats_report:   M2 report from the last cycle.
         fix_proposal:         Populated by :meth:`VLDiagnoseLoop.run_m4`
                               when called after :meth:`VLDiagnoseLoop.run`.
+        fix_outcome:          Populated by :meth:`VLDiagnoseLoop.run_fix` —
+                              tiered fix attempts + escalation recommendation.
         store:                Accumulated results and hypotheses.
     """
 
@@ -615,6 +655,7 @@ class VLDiagnoseReport:
     all_test_results: "list[HypothesisTestResult]" = field(default_factory=list)
     final_stats_report: "StatsAnalysisReport | None" = None
     fix_proposal: "Any | None" = None
+    fix_outcome: "Any | None" = None
     store: Store = field(default_factory=InMemoryStore)
     _run_id: str = field(default="", repr=False)
 
@@ -667,12 +708,14 @@ class VLDiagnoseLoop:
         diagnosis_agent: "Any | None" = None,
         hypothesis_tester: "HypothesisTester | None" = None,
         surgery_agent: "Any | None" = None,
+        fix_agent: "Any | None" = None,
         store: Store | None = None,
         max_cycles: int = 5,
         run_logger: "Any | None" = None,
         token_budget: int = 0,
         analysis_only: bool = False,
     ) -> None:
+        from evalvitals.eval_agent.stages.fix_agent import FixAgent
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
         from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
         from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
@@ -685,6 +728,7 @@ class VLDiagnoseLoop:
         self.diagnosis_agent = diagnosis_agent  # None = lazy default on first call
         self.hypothesis_tester = hypothesis_tester or HypothesisTester()
         self.surgery_agent = surgery_agent or SurgeryAgent()
+        self.fix_agent = fix_agent or FixAgent(run_logger=run_logger)
         self.store = store or InMemoryStore()
         self.max_cycles = max_cycles
         self.run_logger = run_logger
@@ -715,6 +759,17 @@ class VLDiagnoseLoop:
         prior_cycles: list[dict[str, Any]] = []
         self._tokens_used = 0
 
+        # Per-stage wall-clock totals (seconds) for the loop_end cost profile.
+        timings: dict[str, float] = {}
+
+        # Forward the RunLogger into the agents so the probe / stats tool
+        # generators record their tool-synthesis attempts ("tool_codegen" events).
+        _attach_run_logger(self.run_logger, self.probe_agent, self.stats_agent)
+        if self.run_logger is not None:
+            self.run_logger.log_run_start(
+                _run_config(self, data, loop_name="VLDiagnoseLoop")
+            )
+
         # Resolve M3 lazily so the default Gemini fallback is consistent with
         # AutoDiagnoseLoop — a DiagnosisAgent() created here would raise
         # immediately if GEMINI_API_KEY is absent, even if the caller
@@ -733,6 +788,9 @@ class VLDiagnoseLoop:
                 stopped_by = _STOPPED_BY_BUDGET
                 break
 
+            if self.run_logger is not None:
+                self.run_logger.current_cycle = cycle
+
             # ── M1: protocol-guided probing ──────────────────────────
             # Extract failure modes from prior M3 hypotheses for the static
             # fallback path (used when ProbeAgent has no judge model).
@@ -740,6 +798,7 @@ class VLDiagnoseLoop:
                 h.predicted_failure_mode for h in all_hypotheses
                 if getattr(h, "predicted_failure_mode", None)
             ))
+            _t0 = time.monotonic()
             probe_results = self.probe_agent.probe(
                 self.model,
                 data,
@@ -747,11 +806,18 @@ class VLDiagnoseLoop:
                 prior_hypotheses=all_hypotheses or None,
                 hint_failure_modes=prior_modes or None,
             )
+            _dt = time.monotonic() - _t0
+            timings["m1"] = timings.get("m1", 0.0) + _dt
             artifact_pngs: list = []
             if self.run_logger:
                 artifact_pngs = self.run_logger.log_probe(
-                    cycle, probe_results, schema=self.probe_agent.last_schema
+                    cycle, probe_results, schema=self.probe_agent.last_schema,
+                    judge_prompt=getattr(self.probe_agent, "last_selection_prompt", ""),
+                    judge_raw=getattr(self.probe_agent, "last_selection_raw", ""),
+                    duration_sec=_dt,
                 ) or []
+            if self.run_logger:
+                _log_generated_tools(self.run_logger, cycle, "m1_probe", self.probe_agent)
             if not probe_results:
                 logger.info("M1 produced no probe results — stopping.")
                 stopped_by = _STOPPED_BY_NO_PROBE
@@ -760,6 +826,7 @@ class VLDiagnoseLoop:
                 self.store.add_result(r)
 
             # ── M2: protocol-aware stats analysis ────────────────────
+            _t0 = time.monotonic()
             stats_report = self.stats_agent.analyze(
                 probe_results,
                 model_name=repr(self.model),
@@ -767,9 +834,12 @@ class VLDiagnoseLoop:
                 data=data,
                 extra_figures=artifact_pngs,
             )
+            _dt = time.monotonic() - _t0
+            timings["m2"] = timings.get("m2", 0.0) + _dt
             final_stats_report = stats_report
             if self.run_logger:
-                self.run_logger.log_analysis(cycle, stats_report)
+                self.run_logger.log_analysis(cycle, stats_report, duration_sec=_dt)
+                _log_generated_tools(self.run_logger, cycle, "m2_stats", self.stats_agent)
 
             if self.analysis_only:
                 stopped_by = _STOPPED_BY_NO_HYPS
@@ -783,6 +853,7 @@ class VLDiagnoseLoop:
                 stopped_by = _STOPPED_BY_NO_HYPS
                 break
 
+            _t0 = time.monotonic()
             try:
                 diag = diag_agent.diagnose(stats_report, prior_cycles=prior_cycles or None)
             except Exception as exc:  # judge timeout/quota must not kill the loop
@@ -792,6 +863,8 @@ class VLDiagnoseLoop:
                 )
                 stopped_by = _STOPPED_BY_NO_HYPS
                 break
+            _dt = time.monotonic() - _t0
+            timings["m3"] = timings.get("m3", 0.0) + _dt
 
             # Track token usage
             _tok = getattr(diag, "tokens_used", None)
@@ -800,7 +873,7 @@ class VLDiagnoseLoop:
             self._tokens_used += _tok
 
             if self.run_logger:
-                self.run_logger.log_diagnosis(cycle, diag)
+                self.run_logger.log_diagnosis(cycle, diag, duration_sec=_dt)
 
             if not diag.hypotheses:
                 logger.info("M3 produced no hypotheses at cycle %d.", cycle)
@@ -812,12 +885,15 @@ class VLDiagnoseLoop:
             all_hypotheses.extend(diag.hypotheses)
 
             # ── M5: hypothesis testing (stats + protocol consistency) ─
+            _t0 = time.monotonic()
             test_results = self.hypothesis_tester.test(
                 diag.hypotheses,
                 stats_report,
                 data,
                 protocol=self.protocol,
             )
+            _dt = time.monotonic() - _t0
+            timings["m5"] = timings.get("m5", 0.0) + _dt
             all_test_results.extend(test_results)
             for tr in test_results:
                 tr.hypothesis.status = tr.status
@@ -826,7 +902,7 @@ class VLDiagnoseLoop:
                 # Reuse the surgery log slot for M5 results (backward compat)
                 for tr in test_results:
                     _iv = _make_intervention_result_from_test(tr)
-                    self.run_logger.log_surgery(cycle, tr.hypothesis, _iv)
+                    self.run_logger.log_surgery(cycle, tr.hypothesis, _iv, duration_sec=_dt)
 
             # ── Stopping criteria ────────────────────────────────────
             if self.hypothesis_tester.stopping_criteria_met(test_results, self.protocol):
@@ -866,7 +942,9 @@ class VLDiagnoseLoop:
             _run_id=self._run_id,
         )
         if self.run_logger:
-            self.run_logger.log_loop_end(report)
+            self.run_logger.log_loop_end(
+                report, tokens_used=self._tokens_used, timings=timings
+            )
         return report
 
     def run_m4(
@@ -905,7 +983,147 @@ class VLDiagnoseLoop:
             data,
         )
         report.fix_proposal = iv
+        # M4 runs *after* the loop, so log its experiment separately — the
+        # generated script(s), the run output, the agent's thinking and a
+        # snapshot of the workspace.  ``cycle=-1`` marks it as post-loop.
+        if self.run_logger is not None:
+            try:
+                self.run_logger.log_experiment(-1, best_tr.hypothesis, iv, module="m4")
+            except Exception as exc:  # logging must never break the fix step
+                logger.warning("run_m4: log_experiment failed: %s", exc)
         return iv
+
+    def run_fix(
+        self,
+        report: VLDiagnoseReport,
+        data: "CaseBatch",
+        max_tier: "str | Any | None" = None,
+        fix_agent: "Any | None" = None,
+    ) -> "Any":
+        """Post-loop fix module: tiered, validated repair attempts.
+
+        The allowed intervention tier is an **input** (default L2 — prompt +
+        scaffold pipelines); there is no automatic escalation.  When nothing
+        within the allowed tier validates, the returned
+        :class:`~evalvitals.eval_agent.stages.fix_agent.FixOutcome` carries a
+        recommendation to raise the tier, routed from the verified
+        hypotheses' mechanisms.
+
+        Args:
+            report:    Returned by :meth:`run` (uses ``verified_hypotheses``,
+                       falling back to the last cycle's proposals).
+            data:      Original case batch (candidates are validated on it
+                       with paired McNemar against the unmodified baseline).
+            max_tier:  Optional override of the agent's allowed tier for this
+                       call: "L1", "L2", "L3a", "L3b", "L4".  ``None`` keeps
+                       the tier the agent was constructed with.
+            fix_agent: Per-call override of :attr:`fix_agent` (the loop-level
+                       agent injected via ``__init__``, like every other stage).
+        """
+        from evalvitals.eval_agent.stages.fix_tiers import parse_tier
+
+        agent = fix_agent or self.fix_agent
+        if max_tier is not None:
+            agent.max_tier = parse_tier(max_tier)
+        hypotheses = [tr.hypothesis for tr in report.verified_hypotheses]
+        if not hypotheses:
+            hypotheses = list(report.all_hypotheses)[-3:]
+        outcome = agent.propose_and_validate(self.model, data, hypotheses)
+        report.fix_outcome = outcome
+        return outcome
+
+
+# ---------------------------------------------------------------------------
+# RunLogger wiring helpers (shared by both loops)
+# ---------------------------------------------------------------------------
+
+def _attach_run_logger(run_logger: Any, *agents: Any) -> None:
+    """Point each agent's ``run_logger`` at *run_logger* when it is unset.
+
+    Lets the probe / stats generators emit ``tool_codegen`` events without the
+    caller having to wire the logger into every agent by hand.  Respects an
+    explicitly-set logger (only fills in ``None``).
+    """
+    if run_logger is None:
+        return
+    for agent in agents:
+        if agent is not None and getattr(agent, "run_logger", None) is None:
+            try:
+                agent.run_logger = run_logger
+            except Exception:  # noqa: BLE001 - never let logging wiring break a run
+                pass
+
+
+def _run_config(loop: Any, data: Any, *, loop_name: str) -> dict[str, Any]:
+    """Build the ``run_start`` provenance dict from a loop instance + its data.
+
+    Robust to both loop types and missing agents — every field is best-effort so
+    a partially-configured loop still produces a useful config record.
+    """
+    cfg: dict[str, Any] = {"loop": loop_name}
+    try:
+        cfg["model"] = repr(loop.model)
+    except Exception:  # noqa: BLE001
+        pass
+    cfg["max_cycles"] = getattr(loop, "max_cycles", None)
+    cfg["token_budget"] = getattr(loop, "token_budget", None)
+    cfg["analysis_only"] = getattr(loop, "analysis_only", None)
+    try:
+        cfg["n_cases"] = len(data)
+    except Exception:  # noqa: BLE001
+        pass
+
+    protocol = getattr(loop, "protocol", None)
+    if protocol is not None:
+        cfg["protocol"] = {
+            "description": getattr(protocol, "description", ""),
+            "task_domain": getattr(protocol, "task_domain", None),
+        }
+
+    # Judge — read off the M3 agent (or its lazy default) when present.
+    diag_agent = getattr(loop, "diagnosis_agent", None)
+    judge = getattr(diag_agent, "judge", None) if diag_agent is not None else None
+    if judge is not None:
+        cfg["judge"] = repr(judge)
+
+    # Coder — the M4 surgery writer's CLI provider/model, when configured.
+    surgery = getattr(loop, "surgery_agent", None)
+    writer = getattr(surgery, "_writer", None) if surgery is not None else None
+    cli = getattr(getattr(writer, "_cfg", None), "cli_agent", None)
+    if cli is not None:
+        provider = getattr(cli, "provider", None)
+        model = getattr(cli, "model", "")
+        if provider:
+            cfg["coder"] = f"{provider}:{model}" if model else provider
+
+    # Whether tool synthesis (codegen) is enabled on either agent.
+    cfg["allow_codegen"] = bool(
+        getattr(getattr(loop, "probe_agent", None), "allow_codegen", False)
+        or getattr(getattr(loop, "stats_agent", None), "_allow_codegen", False)
+    )
+    return cfg
+
+
+def _log_generated_tools(run_logger: Any, cycle: int, module: str, agent: Any) -> None:
+    """Snapshot an agent's active generated-tool registry for *cycle*.
+
+    Reads ``_generated_probes`` (list of ``(generator, probe)`` tuples) for the
+    probe agent or ``_generated_tools`` (list of tools) for the stats agent and
+    forwards the bare tool objects to :meth:`RunLogger.log_tool_registry`.
+    Best-effort: silently does nothing for agents without those attributes.
+    """
+    if agent is None:
+        return
+    raw = getattr(agent, "_generated_probes", None)
+    if raw is None:
+        raw = getattr(agent, "_generated_tools", None)
+    if not raw:
+        return
+    tools = [t[1] if isinstance(t, tuple) else t for t in raw]
+    try:
+        run_logger.log_tool_registry(cycle, module, tools)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("log_tool_registry failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

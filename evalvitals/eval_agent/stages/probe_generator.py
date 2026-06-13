@@ -111,12 +111,19 @@ class ProbeGenerator:
         sandbox: "ExperimentSandbox | None" = None,
         timeout_sec: int = 60,
         max_cases: int = 200,
+        run_logger: "Any | None" = None,
     ) -> None:
         self._judge = judge
         self._cli_config = cli_config
         self._timeout_sec = timeout_sec
         self._max_cases = max_cases
         self._sandbox = sandbox or ExperimentSandbox()
+        # Optional RunLogger — when set, every code-writing attempt (the prompt,
+        # the code produced, the backend used, and the pass/fail outcome) is
+        # recorded as a "tool_codegen" event so tool synthesis is fully traceable.
+        self.run_logger = run_logger
+        self._last_prompt: str = ""
+        self._last_raw: str = ""
 
     @property
     def available(self) -> bool:
@@ -141,19 +148,41 @@ class ProbeGenerator:
             return None, None
 
         self._collect_outputs(model, cases)
+        self._last_prompt = ""
+        self._last_raw = ""
         try:
             code, source = self._write_code(need)
         except Exception as exc:
             logger.warning("ProbeGenerator: code writing failed: %s", exc)
+            self._emit_codegen(name, need, "", "", ok=False, error=f"code writing failed: {exc}")
             return None, None
         if not code.strip():
+            self._emit_codegen(name, need, source, "", ok=False, error="empty code produced")
             return None, None
 
         result = self._run_code(code, name, model, cases)
+        self._emit_codegen(
+            name, need, source, code, ok=result is not None,
+            error="" if result is not None else "sandbox produced no parseable result",
+        )
         if result is None:
             return None, None
         probe = GeneratedProbe(name=name, code=code, need=need, source=source)
         return result, probe
+
+    def _emit_codegen(
+        self, name: str, need: str, source: str, code: str, *, ok: bool, error: str = ""
+    ) -> None:
+        """Record one code-writing attempt to the RunLogger, if attached."""
+        if self.run_logger is None:
+            return
+        try:
+            self.run_logger.log_tool_codegen(
+                module="m1_probe", name=name, need=need, source=source, ok=ok,
+                code=code, prompt=self._last_prompt, raw_output=self._last_raw, error=error,
+            )
+        except Exception as exc:  # logging must never break generation
+            logger.debug("ProbeGenerator: log_tool_codegen failed: %s", exc)
 
     def run_cached(
         self,
@@ -196,15 +225,19 @@ class ProbeGenerator:
             if code:
                 return code, f"cli:{self._cli_config.provider}"
         prompt = self._build_prompt(need, fenced=True)
+        self._last_prompt = prompt
         raw = self._judge.generate(prompt)  # type: ignore[union-attr]
+        self._last_raw = str(raw)
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str) -> str:
         from evalvitals.eval_agent.cli_agent import create_cli_agent
 
         prompt = self._build_prompt(need, fenced=False)
+        self._last_prompt = prompt
         agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
         res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
+        self._last_raw = res.raw_output
         if not res.ok:
             return ""
         py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
