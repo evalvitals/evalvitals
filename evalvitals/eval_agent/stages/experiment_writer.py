@@ -131,9 +131,12 @@ class ExperimentWriterResult:
         total_llm_calls:   Number of LLM calls made across all phases.
         total_sandbox_runs: Number of sandbox runs (initial + retries).
         validation_log:    Ordered list of events for debugging.
-        cli_raw_output:    First chars of the CLI agent's stdout — its narration
-                           / intermediate "thinking" while writing the code.
-                           Empty on the LLM path (use ``validation_log`` there).
+        cli_raw_output:    The CLI agent's narration while writing the code — for
+                           ``stream-json`` providers this is the full rendered
+                           coding trajectory (tool calls + results).  Empty on
+                           the LLM path (use ``validation_log`` there).
+        cli_usage:         Token/cost usage reported by the CLI agent, or
+                           ``None`` on the LLM path / when unavailable.
         provider:          Which backend wrote the code (``"llm"`` or the CLI
                            provider name, e.g. ``"claude_code"``).
         workdir:           Path to the working directory the agent operated in,
@@ -153,6 +156,7 @@ class ExperimentWriterResult:
     total_sandbox_runs: int = 0
     validation_log: list[str] = field(default_factory=list)
     cli_raw_output: str = ""
+    cli_usage: dict | None = None
     provider: str = "llm"
     workdir: str = ""
 
@@ -1399,9 +1403,10 @@ class ExperimentWriter:
         cli = create_cli_agent(cli_cfg)
         self._log_event(f"  invoking {cli._provider_name!r}")
         cli_result = cli.run(prompt=prompt, workdir=workdir, timeout_sec=cli_cfg.timeout_sec)
-        # The agent's stdout is its narration / intermediate thinking while it
+        # The agent's stdout is its narration / coding trajectory while it
         # writes and self-repairs the script — keep it for the coding log.
         cli_raw_output = cli_result.raw_output
+        cli_usage = cli_result.usage
         self._log_event(
             f"  CLI finished: ok={cli_result.ok}, "
             f"files={list(cli_result.files)}, elapsed={cli_result.elapsed_sec:.1f}s"
@@ -1416,6 +1421,7 @@ class ExperimentWriter:
                 total_llm_calls=0,
                 total_sandbox_runs=0,
                 cli_raw_output=cli_raw_output,
+                cli_usage=cli_usage,
                 provider=cli_cfg.provider,
                 workdir=str(workdir),
             )
@@ -1453,6 +1459,7 @@ class ExperimentWriter:
             total_sandbox_runs=self._runs,
             validation_log=list(self._log),
             cli_raw_output=cli_raw_output,
+            cli_usage=cli_usage,
             provider=cli_cfg.provider,
             workdir=str(workdir),
         )

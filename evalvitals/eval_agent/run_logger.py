@@ -887,6 +887,7 @@ class RunLogger:
             "metrics": exp.get("metrics"),
             "returncode": exp.get("returncode"),
             "timed_out": exp.get("timed_out"),
+            "cli_usage": exp.get("cli_usage"),
             "llm_calls": exp.get("llm_calls"),
             "sandbox_runs": exp.get("sandbox_runs"),
             "code_paths": file_paths,

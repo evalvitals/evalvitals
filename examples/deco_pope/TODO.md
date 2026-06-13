@@ -126,33 +126,124 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
 - 包内 `logit_lens` 在本环境 cpu/cuda device mismatch 崩溃（DESIGN §3.4
   预言的缺口）；analyzer 子采样 n=32 → M5 全部 inconclusive（诚实），
   4 条假设均切题（late-layer suppression / 先验主导 / 仪器偏差 / 标签疑误）
-- 结论：tier-(a) 功效不足，逐层证据走本目录 deco_probe.py（Step 3）
+- 结论：tier-(a) 功效不足，逐层证据需走 tier-(b)（WhiteboxProbeGenerator，
+  由 loop 自主生成探针；2026-06-12 起 run.py 已接线）
 
-### 2026-06-12 机理探针（Step 3 完成）— 主结论
+### 2026-06-12 全自主链路 run#1（2B，opus-4-8-low coder）— 暴露缺陷 7
 
-`deco_probe.py`：final-norm logit lens，全量 1500 case/尺寸，pos=-1，
-gold vs 互补答案集，窗口 [0.55N,0.80N]、τ=0.05，图像聚类 bootstrap。
+- 链路修复 1–6 实跑确认生效：缺陷 3（pope 失败→记录→触发自写
+  `generated_wb:probe1`）、缺陷 5（fix outcome 带 "5 candidate(s) never
+  executed" caveat）、缺陷 6（M5 输出 "No discriminating M2 result" 而非
+  误导的 vs p0=0.5 → reject）
+- 但 OOM 污染结论：run 自身占 48GB（2B 模型仅 5GB），`pope` 两轮 OOM、
+  fix 候选大量 OOM，M1 退回静态选择（fable-low 的 JSON 没解析成功）
+- 诊断（隔离复现）：pope 顺序 generate 300 图平稳 4.9GB；白盒注意力捕获
+  32 图平稳 4.6GB；**单独都不泄漏**。根因 = `compose` 用了默认
+  `device_map="auto"`（accelerate 钩子 + meta tensor）+ ProbeAgent 把白盒
+  分析器丢进 8 线程 ThreadPoolExecutor 并发 forward → 钩子非线程安全
+  （meta-tensor/dtype 报错）+ 激活堆叠 → 46GB OOM
+- 缺陷 7 修复（两处）：
+  1. run.py 显式 `RuntimeConfig(device="cuda", dtype="bfloat16")`（对齐
+     qwen_loop 例子，去掉 accelerate 自动分发）
+  2. ProbeAgent 把**白盒分析器串行执行**，仅黑盒（GENERATE/LOGPROBS）保留
+     并行——并发 GPU forward 共享同一模型本就不安全
+  - 复现验证：device=cuda + 串行后，pope/attention/attention_rollout 三个
+    全部成功，峰值 **4.88GB**（原 46GB）
 
-| 尺寸 | 组 | n | 窗口激活率 | 任意层激活 | delta_final |
-|---|---|---|---|---|---|
-| 2B | fail/present（漏检） | 59 | 1.00 | 1.00 | 0.746 |
-| 2B | fail/adversarial（幻觉） | 41 | 0.00 | 0.29 | 0.227 |
-| 4B | fail/present | 70 | 1.00 | 1.00 | 0.907 |
-| 4B | fail/adversarial | 35 | 0.00 | 0.00 | 0.038 |
-| 8B | fail/present | 68 | 1.00 | 1.00 | 0.929 |
-| 8B | fail/adversarial | 50 | 0.00 | 0.00 | 0.002 |
-| 全部 | pass 三组 | ~1395/尺寸 | — | ≈1.00 | ≤0.018 |
+### 2026-06-12 全自主链路 run#2（2B，opus-4-8-low judge+coder，全修复后）
 
-- fail-vs-pass 的 delta_final 差在 explore/validate 双侧显著
-  （如 2B explore +0.534 CI[0.45,0.62]；8B +0.42 CI[0.32,0.53]）
-- **机理二分（三尺寸一致）**：
-  - 漏检（present→假No）= 教科书 DeCo："Yes" 在 ~0.6N–0.8N 层达峰
-    （2B 峰值在 6–7 分位层，正对论文 20–28/32 带）后被末层压灭
-    （p_gold 从峰值 ~0.9 跌到 ~0.07）——**seen but suppressed 成立**
-  - 幻觉（adversarial→假Yes）= **非 DeCo 型**：gold "No" 在 4B/8B 上
-    任意层激活率为 0（2B 29%）——中层从未偏向正确答案，
-    不存在可被 DeCo 拯救的被压制知识
-- **对 M4 的指向**：DeCo 重打分预期能翻转漏检（anchor 层信号强）、
-  翻转不了假Yes 幻觉（无 anchor 信号）；护栏重点 = 别把 pass 组
-  （末层 p_gold≥0.98）打翻。α 网格留待确认后跑（deco_fix.py 未实现）
-- 产物：outputs/probe_{model}.json（含逐 case 全层轨迹，outputs/ 不进 git）
+- judge 改 opus-4-8-low（fable-5 CLI 当前不可用 "currently unavailable"）；
+  coder 同；device=cuda；297 图/891 case；零 OOM（grep=0）
+- **链路定性上完全成功**——M1 两轮都解析 judge JSON 并选中
+  **logit_lens + linear_probe + prompt_contrast**（不再退静态），白盒分析器
+  全部跑出（logit_lens n_layers=29 final_norm_applied=1；linear_probe
+  best_layer=26≈0.9N）
+- **M3 自主重现了参照答案的核心结论**（无人工、未读参照）：
+  1. late_layer_suppression：「27–28 层注入 'No'(id 2753)，把中层置信 'Yes'
+     峰值~0.94 压到末层 0.51–0.65」= 教科书 DeCo 末层压制
+  2. heterogeneous_failure：「失败至少两个群体——早决定无跌落(内容错误)
+     vs 末层压制」= 参照答案的漏检/幻觉二分
+  3. hallucination：「over-assertion，final_top1≈1.0、late_drop=0.0，稳定
+     幻觉而非压制」= 参照答案"假Yes非DeCo型"
+  4. 还自我批判 linear_probe 是否混淆（峰值 acc 0.804 < 多数类基线 0.875）
+- **但 M5 全部 inconclusive**（logit_lens.decision_layer vs FAIL：
+  effect=+0.206 方向对，CI[-0.12,0.59] 跨零）→ m4 None → fix 无 verified
+  假设可用。根因 = 白盒分析器子采样 32/64 取 batch 头部，富集批次里只落
+  ~4–8 fail，功效不足（**缺陷 8**：子采样需按标签分层）
+- fix 阶段：缺陷 4 修复生效——coded pipeline 超时被**明确命名**
+  「timed out after 600s, bridge served 4418 model calls」（不再静默/
+  unknown tool），触发一轮 repair 仍超时 → recommend L4。根因 =
+  `max_validation_cases` 默认 0、run.py 未接线（**缺陷 9**：fix 验证需限流
+  + 提高 exec_timeout）
+- 结论：**链路工程链路已通**（选器/白盒探针/统计/诚实判定/超时命名/自修
+  全部按设计工作），剩两个收尾让其闭环到统计确认 + validated fix：
+  缺陷 8（分层子采样）+ 缺陷 9（fix 验证限流接线）
+
+### 2026-06-12 全自主链路 run#3（缺陷 8/9 修复后，闭环）
+
+- 同配置（2B、opus-4-8-low judge+coder、device=cuda、891 case）；零 OOM
+- **缺陷 8 生效**：linear_probe 子采样从 8fail/56pass → **32fail/32pass**
+  （均衡），M5 首次达到统计显著
+- **M5 显著判定**（足量 fail 后 CI 不跨零）：
+  - 「失败是低置信案例」→ **REFUTED**（final_top1_prob vs FAIL
+    effect=−0.75 CI[−0.94,−0.50] REJECT H0, conf 0.63）= 确认失败是
+    **高置信的错误输出**，不是犹豫
+  - 「absence 中层可解码但未写入 No logit(unreadout)」→ REFUTED（conf 0.63）
+  - hallucination 先验 / no_systematic_defect / DeCo-invisible /
+    attention_misplacement → inconclusive
+- **缺陷 9 生效**：fix 阶段 coded pipeline 在 60-case 分层子集上执行
+  （无 "timed out"、无 "never executed" caveat，对比 run#2 的 4418 调用/
+  600s 超时）→ 候选全部执行但无一显著修复 → recommend L4
+- **m4 None / verified=0/6 是正确结果**：2B POPE 这个切片的主导失败模式
+  是高置信假 Yes 幻觉（非 DeCo 型），DeCo 末层压制只是少数；prompt/解码层
+  修复对高置信幻觉无效（参照答案的"修不动幻觉 / no free lunch"）——链路
+  诚实地没有强行 support 一个 DeCo 假设、没有谎报一个 validated fix，并
+  正确地把唯一剩余手段（L4 微调）作为建议
+- **与参照答案对照**：链路自主结论 = 参照（2B 假Yes=非DeCo型、高置信、
+  DeCo修不动；DeCo压制为少数）。机理判断方向完全一致
+
+## 链路缺陷修复总览（本 example 的真正交付）
+
+诊断 loop 自身在自主跑 DeCo 场景时暴露并已修复 9 个缺陷（均带回归测试，
+全量 767 测试通过）：
+
+| # | 缺陷 | 修复 |
+|---|---|---|
+| 1 | logit_lens cpu/cuda + 无 final RMSNorm | device 对齐 + `model.final_norm()` + per-case 信号 |
+| 2 | linear_probe 未实现 stub | 逐层 logistic + 2-fold CV + 小样本降级 |
+| 3 | M1 工具失败不回流、tier-(b) 触发过严 | 失败记录进选择 prompt + 失败即触发自写探针 |
+| 4 | fix 沙箱静默跳过未知工具 | 严格契约报错回流 + coder 自修一轮 + 超时命名 |
+| 5 | 执行失败误判为档位无效 → 过早升 L4 | 区分 never-executed vs 试过无效 |
+| 6 | M5 拿 rate vs p0=0.5 当头条判定 | 描述性工具不当头条 + p0 诚实化 |
+| 7 | GPU 46GB OOM | device=cuda（去 accelerate 钩子）+ 白盒分析器串行 |
+| 8 | M5 功效不足（子采样取头部多为 PASS） | `CaseBatch.stratified_head` 分层子采样 |
+| 9 | fix 验证全批超时 | run.py 接线 max_validation_cases + 提高 timeout |
+
+### 2026-06-12 全自主链路（检测→分析→修复，零人工干预）
+
+- 2B、`--max-clean-images 200`（297 图/891 case，105 FAIL 全保留）、
+  judge=fable-low、coder=sonnet、fix 上限 L3b、漂移校验 9/10
+- 主循环 174s / judge ~1000 tokens / 修复模块 ~40min
+- M1：judge 两轮都选中 logit_lens + linear_probe + prompt_contrast
+  （方向正确），但前两者运行即坏，仅 prompt_contrast 存活（n=32 子采样，
+  三种提示策略 0.875/0.875/0.875 零差异）
+- M3 共 4 条假设（case-intrinsic / 高共现 / describe-first 中介 /
+  decoding-deterministic logit margin），M5 全部 inconclusive，0 verified
+- 修复：假设#4 含 "logit" 解锁 L3a 路由；coder 产出 L2 三票投票脚手架
+  （怀疑提示 + 幻觉警告 + attention 裁剪重问），但**沙箱执行 0 票**——
+  生成代码调用了契约未定义的 `model_attend` 与自定义工具名，dispatcher
+  全部 "unknown tool ''" 跳过 → 无 FIX_PIPELINE_RESULT_JSON → 候选记为
+  无效 → FixOutcome 建议升级 L4（微调）
+- 验证机制诚实：无假阳性修复通过 McNemar 把关
+
+**暴露的链路缺陷清单（本实验主产出）**：
+1. `logit_lens`：cpu/cuda device mismatch + 不做 final RMSNorm
+2. `linear_probe`：未实现 stub（运行即抛自身 docstring）
+3. M1 选择器：analyzer 运行时失败不回流 judge（下一轮还在等坏工具的
+   证据）；`need_custom` 仅当**全部**候选不可用才触发 → 只要有一个
+   analyzer 活着，tier-(b) 自主探针永不激活
+4. fix 沙箱：codegen 契约与 dispatcher schema 不匹配（"unknown tool ''"
+   静默跳过而非报错回流），coder 也会调用契约外函数
+5. FixAgent：把"候选执行失败"与"档位内试过且无效"混为一谈 →
+   过早建议 L4
+6. M5 默认检验（FAIL 率 vs p0=0.5）对富集批次无意义

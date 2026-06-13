@@ -37,7 +37,17 @@ CFG = yaml.safe_load((Path(__file__).parent / "config.yaml").read_text())
 # 1. Frozen manifest -> CaseBatch (mixed PASS/FAIL — M2/M5 need both groups)
 # ---------------------------------------------------------------------------
 
-def load_manifest(model_key: str):
+def load_manifest(model_key: str, max_clean_images: int = 0, seed: int = 42):
+    """Build the CaseBatch; optionally shrink it BY IMAGE for faster runs.
+
+    max_clean_images > 0 keeps every image with >=1 FAIL (full triplets, so
+    all failures and their same-image controls survive) plus a split-stratified
+    random sample of clean images. Pairing/cluster structure is intact; only
+    the absolute fail rate is enriched — fine for group contrasts and paired
+    McNemar, meaningless for tests against an absolute base rate.
+    """
+    import random as _random
+
     from PIL import Image
 
     from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
@@ -47,6 +57,18 @@ def load_manifest(model_key: str):
         raise SystemExit(f"{path} missing — run `python mine_cases.py --model {model_key}` first "
                          f"(see TODO.md Step 1)")
     raw = json.loads(path.read_text())
+    if max_clean_images:
+        fail_imgs = {r["image_id"] for r in raw["cases"] if r["label"] == "fail"}
+        split_of = {r["image_id"]: r["split"] for r in raw["cases"]}
+        clean = sorted({r["image_id"] for r in raw["cases"]} - fail_imgs)
+        rng = _random.Random(seed)
+        keep = set(fail_imgs)
+        for split, frac in (("explore", 0.6), ("validate", 0.4)):
+            pool = [i for i in clean if split_of[i] == split]
+            keep |= set(rng.sample(pool, min(round(max_clean_images * frac), len(pool))))
+        raw["cases"] = [r for r in raw["cases"] if r["image_id"] in keep]
+        print(f"subset: kept {len(keep)} images ({len(fail_imgs)} with fails + "
+              f"{len(keep) - len(fail_imgs)} clean) -> {len(raw['cases'])} cases")
     cases = []
     pil_cache: dict[str, object] = {}  # the processor rejects str paths; one PIL per image
     for r in raw["cases"]:
@@ -107,9 +129,7 @@ def build_protocol():
             "The VLM answers 'Yes' to object-presence questions about objects that are "
             "NOT in the image, specifically objects that frequently co-occur with objects "
             "that ARE present (e.g. sees keyboard+monitor, hallucinates 'mouse'). "
-            "Suspected mechanism (DeCo, arXiv 2410.11779): the model recognizes the "
-            "object's absence in intermediate layers, but strong language priors "
-            "suppress this in the final layers. Failure cases are wrong answers to "
+            "Failure cases are wrong answers to "
             "adversarial absent-object probes; success cases are correct answers to "
             "the same probe types on the same images."
         ),
@@ -136,6 +156,15 @@ def main() -> None:
     ap.add_argument("--skip-m4", action="store_true")
     ap.add_argument("--judge-model", default=CFG.get("judge_model", "claude-fable-5"))
     ap.add_argument("--judge-effort", default=CFG.get("judge_effort", "low"))
+    ap.add_argument("--max-clean-images", type=int, default=0,
+                    help="shrink input by image: keep all fail-images + this many "
+                         "clean images (0 = use the full manifest)")
+    # Explicit single device — NOT device_map="auto". accelerate's auto-dispatch
+    # leaves meta tensors and its per-forward hooks are not thread-safe, which
+    # crashed white-box analyzers and ballooned GPU memory to OOM under the M1
+    # parallel probe. Mirrors examples/qwen_loop_claude (--device cuda).
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
 
@@ -147,33 +176,75 @@ def main() -> None:
 
     from evalvitals import compose
     from evalvitals.core.capability import Capability
-    from evalvitals.eval_agent import RunLogger, VLDiagnoseLoop
+    from evalvitals.eval_agent import (
+        CliAgentConfig,
+        ExperimentWriterConfig,
+        FixAgent,
+        RunLogger,
+        SurgeryAgent,
+        VLDiagnoseLoop,
+    )
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.models.backends.base import RuntimeConfig
 
     judge = build_judge(args.judge_model, args.judge_effort)  # probe BEFORE weights load
 
     model = compose(args.model, "hf_local",
+                    runtime=RuntimeConfig(device=args.device, dtype=args.dtype),
                     want={Capability.GENERATE, Capability.HIDDEN_STATES,
                           Capability.ATTENTION})
-    cases, raw = load_manifest(args.model)
+    cases, raw = load_manifest(args.model, max_clean_images=args.max_clean_images)
     print(f"cases={len(list(cases))} yields={raw['yields']}")
     drift_check(model, cases)
 
-    # TODO(Step 3): if tier-(a) analyzers don't surface the layer-suppression
-    # signal, pass a WhiteboxProbeGenerator to ProbeAgent, or point the loop at
-    # ./deco_probe.py (spec in DESIGN.md §6). Window/tau/alpha grid: config.yaml.
+    # PIPELINE AUTONOMY: this run.py only provides inputs (frozen cases +
+    # protocol). Detection, custom probing (tier-(b) codegen), diagnosis and
+    # repair are all done by the loop's own agents. Reference analyses are
+    # kept OUTSIDE this repository so the loop's coding agents cannot read
+    # them (DESIGN.md §6: they grade the loop's conclusions, not feed them).
+    codegen_effort = str(CFG.get("codegen_effort", "") or "")
+    codegen = CliAgentConfig(
+        provider="claude_code",
+        model=str(CFG.get("codegen_model", "sonnet")),
+        max_budget_usd=float(CFG.get("codegen_budget_usd", 2.0)),
+        timeout_sec=int(CFG.get("codegen_timeout_sec", 240)),
+        # claude -p --effort <level>; appended verbatim to the CLI command
+        extra_args=(("--effort", codegen_effort) if codegen_effort else ()),
+    )
+    print(f"codegen: claude_code model={codegen.model} "
+          f"effort={codegen_effort or 'default'}")
+    run_logger = RunLogger(run_dir=OUT / "logs", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,
         # judge => LLM-guided analyzer selection anchored on the protocol
-        # (static StrategyProbe picks generic attention analyzers, not pope)
-        probe_agent=ProbeAgent(judge=judge, max_analyzers=args.max_analyzers),
-        stats_agent=StatsAnalysisAgent(judge=judge),
+        # (static StrategyProbe picks generic attention analyzers, not pope);
+        # allow_codegen => tier-(b): the loop writes its own probe when the
+        # catalog can't surface the mechanism (need_custom) OR when selected
+        # analyzers fail at runtime; white/black-box generators are built
+        # lazily from judge + codegen_config.
+        probe_agent=ProbeAgent(
+            judge=judge, max_analyzers=args.max_analyzers,
+            allow_codegen=True, codegen_config=codegen,
+        ),
+        stats_agent=StatsAnalysisAgent(judge=judge, allow_codegen=True,
+                                       codegen_config=codegen),
         diagnosis_agent=DiagnosisAgent(judge=judge),
+        surgery_agent=SurgeryAgent(
+            judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen)),
+        # Bound fix validation: a coded pipeline calls the model ~k times PER
+        # case, so validating on the full batch times out (run#2: 4418 calls,
+        # 600s kill). Validate on a label-stratified subset and allow more wall
+        # clock for the coded path.
+        fix_agent=FixAgent(judge=judge,
+                           max_tier=str(CFG.get("fix_max_tier", "L3b")),
+                           cli_config=codegen, run_logger=run_logger,
+                           max_validation_cases=int(CFG.get("fix_validation_cases", 60)),
+                           exec_timeout_sec=int(CFG.get("fix_exec_timeout_sec", 900))),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
-        run_logger=RunLogger(run_dir=OUT / "logs", verbose=True),
+        run_logger=run_logger,
     )
     report = loop.run(cases)
     print(f"cycles={report.cycles} stopped_by={report.stopped_by} "
@@ -183,10 +254,14 @@ def main() -> None:
         print(f" - [{t.status}] conf={t.confidence:.2f} grade={t.evidence_grade} {stmt[:110]}")
 
     if not args.skip_m4:
-        # TODO(Step 4): inject verify_fn wrapping ./deco_fix.py:deco_rescore_answer
-        # so M4 verifies the DeCo fix (flip vs regression + guards, DESIGN.md §6).
+        # Repair is the loop's job too: M4 surgery on the best verified
+        # hypothesis (no-op when none verified), then the tiered fix module
+        # (falls back to the last cycle's proposals; validates candidates
+        # with paired McNemar against the unmodified baseline).
         fix = loop.run_m4(report, cases)
         print("m4:", fix)
+        outcome = loop.run_fix(report, cases)
+        print("fix outcome:", getattr(outcome, "recommendation", None) or outcome)
 
 
 if __name__ == "__main__":
