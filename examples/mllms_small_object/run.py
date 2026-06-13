@@ -865,8 +865,10 @@ def main() -> None:
         if fix is not None:
             verdict = fix.status.value.upper()
             print(f"  verdict   {verdict}")
-            for k, v in list((fix.evidence or {}).items())[:6]:
-                print(f"  {k:<22}  {v}")
+            _skip = {"validation_log", "llm_calls", "sandbox_runs", "returncode", "timed_out"}
+            for k, v in (fix.evidence or {}).items():
+                if k not in _skip:
+                    print(f"  {k:<22}  {v}")
         else:
             print("  no result returned")
     else:
