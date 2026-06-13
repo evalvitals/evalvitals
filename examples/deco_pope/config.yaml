@@ -16,8 +16,10 @@ top_p: 0.9
 min_effect: 0.05              # pre-registered minimum effect for the fix
 explore_frac: 0.6
 
-# Judge for M2/M3/M5 (agy quota exhausted -> claude CLI; sonnet/haiku for tests)
-judge_model: claude-fable-5
+# Judge for M1 selection / M2 / M3 / M5 (claude -p CLI). fable-5 is currently
+# unavailable via the CLI ("Claude Fable 5 is currently unavailable"), so both
+# claude -p roles (judge + codegen coder) use opus-4-8 low effort.
+judge_model: claude-opus-4-8
 judge_effort: low
 
 # Pipeline-autonomy codegen (tier-(b) probe generator, stats tools, M4
