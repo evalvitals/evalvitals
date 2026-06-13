@@ -179,6 +179,46 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
   全部按设计工作），剩两个收尾让其闭环到统计确认 + validated fix：
   缺陷 8（分层子采样）+ 缺陷 9（fix 验证限流接线）
 
+### 2026-06-12 全自主链路 run#3（缺陷 8/9 修复后，闭环）
+
+- 同配置（2B、opus-4-8-low judge+coder、device=cuda、891 case）；零 OOM
+- **缺陷 8 生效**：linear_probe 子采样从 8fail/56pass → **32fail/32pass**
+  （均衡），M5 首次达到统计显著
+- **M5 显著判定**（足量 fail 后 CI 不跨零）：
+  - 「失败是低置信案例」→ **REFUTED**（final_top1_prob vs FAIL
+    effect=−0.75 CI[−0.94,−0.50] REJECT H0, conf 0.63）= 确认失败是
+    **高置信的错误输出**，不是犹豫
+  - 「absence 中层可解码但未写入 No logit(unreadout)」→ REFUTED（conf 0.63）
+  - hallucination 先验 / no_systematic_defect / DeCo-invisible /
+    attention_misplacement → inconclusive
+- **缺陷 9 生效**：fix 阶段 coded pipeline 在 60-case 分层子集上执行
+  （无 "timed out"、无 "never executed" caveat，对比 run#2 的 4418 调用/
+  600s 超时）→ 候选全部执行但无一显著修复 → recommend L4
+- **m4 None / verified=0/6 是正确结果**：2B POPE 这个切片的主导失败模式
+  是高置信假 Yes 幻觉（非 DeCo 型），DeCo 末层压制只是少数；prompt/解码层
+  修复对高置信幻觉无效（参照答案的"修不动幻觉 / no free lunch"）——链路
+  诚实地没有强行 support 一个 DeCo 假设、没有谎报一个 validated fix，并
+  正确地把唯一剩余手段（L4 微调）作为建议
+- **与参照答案对照**：链路自主结论 = 参照（2B 假Yes=非DeCo型、高置信、
+  DeCo修不动；DeCo压制为少数）。机理判断方向完全一致
+
+## 链路缺陷修复总览（本 example 的真正交付）
+
+诊断 loop 自身在自主跑 DeCo 场景时暴露并已修复 9 个缺陷（均带回归测试，
+全量 767 测试通过）：
+
+| # | 缺陷 | 修复 |
+|---|---|---|
+| 1 | logit_lens cpu/cuda + 无 final RMSNorm | device 对齐 + `model.final_norm()` + per-case 信号 |
+| 2 | linear_probe 未实现 stub | 逐层 logistic + 2-fold CV + 小样本降级 |
+| 3 | M1 工具失败不回流、tier-(b) 触发过严 | 失败记录进选择 prompt + 失败即触发自写探针 |
+| 4 | fix 沙箱静默跳过未知工具 | 严格契约报错回流 + coder 自修一轮 + 超时命名 |
+| 5 | 执行失败误判为档位无效 → 过早升 L4 | 区分 never-executed vs 试过无效 |
+| 6 | M5 拿 rate vs p0=0.5 当头条判定 | 描述性工具不当头条 + p0 诚实化 |
+| 7 | GPU 46GB OOM | device=cuda（去 accelerate 钩子）+ 白盒分析器串行 |
+| 8 | M5 功效不足（子采样取头部多为 PASS） | `CaseBatch.stratified_head` 分层子采样 |
+| 9 | fix 验证全批超时 | run.py 接线 max_validation_cases + 提高 timeout |
+
 ### 2026-06-12 全自主链路（检测→分析→修复，零人工干预）
 
 - 2B、`--max-clean-images 200`（297 图/891 case，105 FAIL 全保留）、
