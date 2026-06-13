@@ -670,6 +670,9 @@ class RunLogger:
         """Write per-candidate records + ``fixes/outcome.md``; return the outcome path."""
         attempts = d.get("attempted") or []
 
+        def _eff(v: "Any") -> "Any":
+            return round(v, 4) if isinstance(v, float) else v
+
         # One record per attempted candidate.
         for i, a in enumerate(attempts, start=1):
             tier = a.get("tier", "L?")
@@ -686,7 +689,7 @@ class RunLogger:
                 f"- pairs tested: {a.get('n_pairs')}",
                 f"- cases fixed: {a.get('n_fixed')}",
                 f"- cases broken: {a.get('n_broken')}",
-                f"- effect: {a.get('effect')}",
+                f"- effect: {_eff(a.get('effect'))}",
                 f"- statistically significant (rejects H0): {a.get('reject')}",
             ]
             if a.get("summary"):
@@ -729,7 +732,7 @@ class RunLogger:
                 head.append(
                     f"| {i:02d} | {a.get('tier')} | {a.get('name')} | "
                     f"{'yes' if a.get('fixed') else 'no'} | {a.get('n_fixed')} | "
-                    f"{a.get('n_broken')} | {a.get('effect')} | "
+                    f"{a.get('n_broken')} | {_eff(a.get('effect'))} | "
                     f"{'yes' if a.get('reject') else 'no'} |"
                 )
             head += ["", "Each attempt's full record is in its own folder above "
