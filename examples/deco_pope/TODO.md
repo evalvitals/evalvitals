@@ -150,6 +150,35 @@ explore 的 fail ≥ 15。不足→提高 `--n-images`；8B 仍不足→并入 A
   - 复现验证：device=cuda + 串行后，pope/attention/attention_rollout 三个
     全部成功，峰值 **4.88GB**（原 46GB）
 
+### 2026-06-12 全自主链路 run#2（2B，opus-4-8-low judge+coder，全修复后）
+
+- judge 改 opus-4-8-low（fable-5 CLI 当前不可用 "currently unavailable"）；
+  coder 同；device=cuda；297 图/891 case；零 OOM（grep=0）
+- **链路定性上完全成功**——M1 两轮都解析 judge JSON 并选中
+  **logit_lens + linear_probe + prompt_contrast**（不再退静态），白盒分析器
+  全部跑出（logit_lens n_layers=29 final_norm_applied=1；linear_probe
+  best_layer=26≈0.9N）
+- **M3 自主重现了参照答案的核心结论**（无人工、未读参照）：
+  1. late_layer_suppression：「27–28 层注入 'No'(id 2753)，把中层置信 'Yes'
+     峰值~0.94 压到末层 0.51–0.65」= 教科书 DeCo 末层压制
+  2. heterogeneous_failure：「失败至少两个群体——早决定无跌落(内容错误)
+     vs 末层压制」= 参照答案的漏检/幻觉二分
+  3. hallucination：「over-assertion，final_top1≈1.0、late_drop=0.0，稳定
+     幻觉而非压制」= 参照答案"假Yes非DeCo型"
+  4. 还自我批判 linear_probe 是否混淆（峰值 acc 0.804 < 多数类基线 0.875）
+- **但 M5 全部 inconclusive**（logit_lens.decision_layer vs FAIL：
+  effect=+0.206 方向对，CI[-0.12,0.59] 跨零）→ m4 None → fix 无 verified
+  假设可用。根因 = 白盒分析器子采样 32/64 取 batch 头部，富集批次里只落
+  ~4–8 fail，功效不足（**缺陷 8**：子采样需按标签分层）
+- fix 阶段：缺陷 4 修复生效——coded pipeline 超时被**明确命名**
+  「timed out after 600s, bridge served 4418 model calls」（不再静默/
+  unknown tool），触发一轮 repair 仍超时 → recommend L4。根因 =
+  `max_validation_cases` 默认 0、run.py 未接线（**缺陷 9**：fix 验证需限流
+  + 提高 exec_timeout）
+- 结论：**链路工程链路已通**（选器/白盒探针/统计/诚实判定/超时命名/自修
+  全部按设计工作），剩两个收尾让其闭环到统计确认 + validated fix：
+  缺陷 8（分层子采样）+ 缺陷 9（fix 验证限流接线）
+
 ### 2026-06-12 全自主链路（检测→分析→修复，零人工干预）
 
 - 2B、`--max-clean-images 200`（297 图/891 case，105 FAIL 全保留）、
