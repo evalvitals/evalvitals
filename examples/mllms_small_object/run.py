@@ -577,8 +577,62 @@ def _run_smoke_test(args) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Artifact writer
+# Artifact writer + output index
 # ---------------------------------------------------------------------------
+
+def _write_output_index(run_dir: Path) -> None:
+    """Write README.txt and print a file guide at the end of each run."""
+    logs = run_dir / "logs"
+
+    sections: list[tuple[str, list[tuple[str, str]]]] = [
+        ("Start here", [
+            ("summary.md", "plain-text run summary — verified hypotheses, cycles, counts"),
+            ("discovery_cases.json", "what the model answered for each case (expected vs. got)"),
+        ]),
+        ("Diagnosis detail", [
+            ("hypotheses.json", "all generated hypotheses with SUPPORTED / REFUTED / UNKNOWN"),
+            ("m5_results.json", "statistical test results for each hypothesis"),
+            (f"logs/figures/m2_effects.png", "bar chart of effect sizes across analyzers"),
+        ]),
+        ("Per-cycle analyzer data  (c0 = cycle 0, c1 = cycle 1, …)", [
+            ("logs/artifacts/c*_relative_attention_diff_map_fail_minus_pass.png",
+             "attention heatmap: where FAIL cases attend differently from PASS cases"),
+            ("logs/artifacts/c*_attention_attentions.png",
+             "raw last-layer attention weights visualised"),
+            ("logs/prompts/c*_m1_selection.*", "which analyzers were chosen and why"),
+            ("logs/prompts/c*_m3_diagnosis.*", "the agent's diagnosis reasoning"),
+        ]),
+        ("M4 experiment (mechanism verification)", [
+            ("logs/experiments/post_m4_experiment.py", "script the agent wrote to verify the hypothesis"),
+            ("logs/experiments/post_m4_stdout.txt",    "metric_a, metric_b, verdict from running that script"),
+            ("logs/experiments/post_m4_agent_thinking.txt", "agent's reasoning while writing the script"),
+            ("logs/workspace/post_m4/hypothesis.md",   "the hypothesis the experiment was designed to test"),
+        ]),
+        ("Raw event log (for debugging)", [
+            ("logs/run_log.jsonl", "one JSON line per M1/M2/M3/M5 event"),
+        ]),
+    ]
+
+    readme_lines = ["outputs/  — file guide\n"]
+    for heading, entries in sections:
+        readme_lines.append(f"{heading}\n{'─' * len(heading)}")
+        for fname, desc in entries:
+            readme_lines.append(f"  {fname}")
+            readme_lines.append(f"      {desc}")
+        readme_lines.append("")
+
+    (run_dir / "README.txt").write_text("\n".join(readme_lines), encoding="utf-8")
+
+    print("\n── OUTPUT FILES ─────────────────────────────────────────────")
+    for heading, entries in sections:
+        print(f"\n  {heading}")
+        for fname, desc in entries:
+            full = run_dir / fname.replace("*", "c0")
+            marker = "  " if full.exists() or "*" in fname else "  (not written)"
+            print(f"{marker}    {fname}")
+            print(f"          {desc}")
+    print(f"\n  Full guide → {run_dir / 'README.txt'}")
+
 
 def _write_report_artifacts(run_dir: Path, report, cases) -> None:
     hypotheses = [
@@ -843,7 +897,8 @@ def main() -> None:
     else:
         print("  skipped — no verified hypotheses")
 
-    print(f"\nDone.  Artifacts saved to {run_dir.resolve()}")
+    _write_output_index(run_dir)
+    print(f"\nDone.")
 
 
 if __name__ == "__main__":
