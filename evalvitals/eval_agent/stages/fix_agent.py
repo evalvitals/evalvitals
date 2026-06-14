@@ -59,6 +59,7 @@ from evalvitals.eval_agent.stages.fix_tools import (
     PipelineSpec,
     catalog_text,
     run_pipeline,
+    score_to_bool,
 )
 from evalvitals.eval_agent.stages.probe_generator import _extract_code
 from evalvitals.stats import compare
@@ -678,7 +679,7 @@ class FixAgent:
                 payload={"primitive": prim.name, "params": dict(p.get("params") or {})}))
         if not out:
             defaults = {
-                "attention_guided_crop": {"layer": -1, "crop_frac": 0.5},
+                "attention_guided_crop": {"layer": 0.75, "crop_frac": 0.5},
                 "visual_embedding_boost": {"gamma": 1.5},
             }
             for name, params in defaults.items():
@@ -764,7 +765,7 @@ class FixAgent:
                 logger.debug("FixAgent: baseline generate failed on %s: %s", case.id, exc)
                 scores[case.id] = None
                 continue
-            scores[case.id] = self._score(case, output)
+            scores[case.id] = score_to_bool(self._score(case, output))
         return scores
 
     def _strategy(self, candidate: FixCandidate) -> "Callable[[Model, FailureCase], Optional[bool]]":
@@ -780,7 +781,7 @@ class FixAgent:
                     prompt=template.format(prompt=str(getattr(inp, "prompt", ""))),
                     image=getattr(inp, "image", None))
                 try:
-                    return self._score(case, str(model.generate(new_inputs)))
+                    return score_to_bool(self._score(case, str(model.generate(new_inputs))))
                 except Exception:
                     return None
             return l1
@@ -901,6 +902,8 @@ class FixAgent:
         for case in data:
             b = baseline.get(case.id)
             c = scores.get(case.id)
+            b = score_to_bool(b)
+            c = score_to_bool(c)
             if b is None or c is None:
                 continue
             base_vec.append(b)

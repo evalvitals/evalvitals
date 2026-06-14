@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 import numpy as np
 
 from evalvitals.eval_agent.stages.fix_tiers import FixTier
-from evalvitals.eval_agent.stages.fix_tools import apply_image_ops
+from evalvitals.eval_agent.stages.fix_tools import apply_image_ops, score_to_bool
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
@@ -46,14 +46,18 @@ ScoreFn = Callable[["FailureCase", str], Optional[bool]]
 # ---------------------------------------------------------------------------
 
 def attention_heatmap(
-    model: "Model", case: "FailureCase", layer: int = -1
+    model: "Model", case: "FailureCase", layer: "int | float" = 0.75
 ) -> "np.ndarray | None":
     """One ATTENTION forward → (H, W) image-patch heatmap, or ``None``.
 
     Reduction mirrors the white-box probe capture: head-averaged attention from
     the last query position, restricted to image-token positions, reshaped via
-    the backend's ``image_spatial_shape`` (near-square fallback).
+    the backend's ``image_spatial_shape`` (near-square fallback).  ``layer`` is
+    resolved by :func:`~evalvitals.analyzers.attention.relative_attn.resolve_attention_layer`
+    — a float is a fractional depth (default 0.75, a spatially-grounded
+    late-middle layer); the last layer is sink-dominated and localizes poorly.
     """
+    from evalvitals.analyzers.attention.relative_attn import resolve_attention_layer
     from evalvitals.core.capability import Capability
 
     if Capability.ATTENTION not in getattr(model, "capabilities", frozenset()):
@@ -61,7 +65,8 @@ def attention_heatmap(
     try:
         trace = model.forward(case.inputs, capture={Capability.ATTENTION})
         attns = trace.require(Capability.ATTENTION)
-        row = attns[layer].float().mean(dim=0)[-1].cpu().numpy()  # (seq,)
+        layer_idx = resolve_attention_layer(layer, len(attns))
+        row = attns[layer_idx].float().mean(dim=0)[-1].cpu().numpy()  # (seq,)
         mask = trace.extras.get("image_token_mask")
         if mask is None:
             return None
@@ -104,7 +109,7 @@ def run_attention_guided_crop(
     from evalvitals.core.case import Inputs
 
     p = params or {}
-    layer = int(p.get("layer", -1))
+    layer = p.get("layer", 0.75)  # int (absolute) or float (fractional depth)
     crop_frac = float(p.get("crop_frac", 0.5))
     scores: "dict[str, Optional[bool]]" = {}
     for case in cases:
@@ -123,7 +128,7 @@ def run_attention_guided_crop(
             logger.debug("attention_guided_crop generate failed on %s: %s", case.id, exc)
             scores[case.id] = None
             continue
-        scores[case.id] = score_fn(case, out)
+        scores[case.id] = score_to_bool(score_fn(case, out))
     return scores
 
 
@@ -194,7 +199,7 @@ def run_visual_embedding_boost(
                     logger.debug("boosted generate failed on %s: %s", case.id, exc)
                     scores[case.id] = None
                     continue
-                scores[case.id] = score_fn(case, out)
+                scores[case.id] = score_to_bool(score_fn(case, out))
     except RuntimeError as exc:
         logger.warning("visual_embedding_boost unavailable: %s", exc)
         return {c.id: None for c in cases}
@@ -229,7 +234,10 @@ INTERNALS_PRIMITIVES: "dict[str, InternalsPrimitive]" = {
         tier=FixTier.L3A_INTERNALS_READ,
         description="crop around the model's own attention peak, re-ask "
                     "(uses internal attention to locate the evidence)",
-        params_hint='{"layer": int (default -1), "crop_frac": float 0.1-1.0 (default 0.5)}',
+        params_hint='{"layer": int abs-index OR float 0-1 fractional-depth '
+                    '(default 0.75; a spatially-grounded late-middle layer — '
+                    'avoid the sink-dominated last layer), '
+                    '"crop_frac": float 0.1-1.0 (default 0.5)}',
         available=_has_attention,
         run=run_attention_guided_crop,
     ),

@@ -176,6 +176,16 @@ def _gold_yes_batch(n: int = 8, image=None) -> CaseBatch:
     ])
 
 
+def _label_score(case, observed):
+    """CaseDiscovery-style scorer: returns Label instead of bool."""
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+
+    score = _default_score(case, observed)
+    if score is None:
+        return Label.UNKNOWN
+    return Label.PASS if score else Label.FAIL
+
+
 # ── FixAgent: L1 repair via judge proposal ───────────────────────────────────
 
 
@@ -193,6 +203,19 @@ def test_l1_judge_candidate_validates_and_fixes():
     assert out.recommendation is None
     # max_tier=L1 -> no L2 candidates were attempted
     assert all(v.candidate.tier is FixTier.L1_PROMPT for v in out.attempted)
+
+
+def test_fix_agent_accepts_label_returning_scorer():
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look very carefully. {prompt}"},
+    ]))
+    agent = FixAgent(judge=judge, max_tier="L1", score_fn=_label_score)
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(),
+                                     [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is True
+    assert out.best is not None
+    assert out.best.n_fixed == 8 and out.best.n_broken == 0
+    assert "stats failed" not in out.best.summary
 
 
 def test_l2_pipeline_candidate_fixes_zoom_sensitive_model():
@@ -385,6 +408,19 @@ def test_coded_pipeline_bridge_round_trip(tmp_path):
     assert result.ok and result.n_calls == 3
     scores = score_outputs(result, cases, _default_score)
     assert all(scores[c.id] is True for c in cases)  # upscale repairs every case
+
+
+def test_score_outputs_coerces_label_scores():
+    from evalvitals.eval_agent.stages.fix_pipeline import CodedPipelineResult, score_outputs
+
+    cases = _gold_yes_batch(n=2)
+    result = CodedPipelineResult(
+        outputs={cases[0].id: "Yes.", cases[1].id: "No."},
+        ok=True,
+    )
+    scores = score_outputs(result, cases, _label_score)
+    assert scores[cases[0].id] is True
+    assert scores[cases[1].id] is False
 
 
 def test_coded_pipeline_call_budget_kills_runaway(tmp_path):

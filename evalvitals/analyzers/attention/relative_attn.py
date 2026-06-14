@@ -29,6 +29,26 @@ if TYPE_CHECKING:
     from evalvitals.core.model import Model
 
 
+def resolve_attention_layer(layer: "int | float", n_layers: int) -> int:
+    """Map a layer spec to an absolute decoder-layer index.
+
+    - ``int`` (incl. negative): used as an absolute index unchanged.
+    - ``float`` in (0, 1): a *fractional depth*, ``round(layer * (n_layers - 1))``.
+
+    The last decoder layer is dominated by attention sinks (BOS/edge tokens) and
+    is **not** spatially grounded; spatial localization over image patches lives
+    in the late-middle layers.  "MLLMs Know Where to Look" reads layer 22 of 28
+    for Qwen2.5-VL-7B (≈0.78 depth).  A fractional default keeps this choice
+    model-agnostic — it scales with the network's depth instead of hard-coding
+    one layer index that only happens to suit a single model.
+    """
+    if isinstance(layer, float):
+        if not 0.0 < layer < 1.0:
+            raise ValueError(f"fractional layer must be in (0, 1), got {layer}")
+        return int(round(layer * (n_layers - 1)))
+    return int(layer)
+
+
 @dataclass
 class RelativeAttentionResult(Result):
     """Result of relative attention analysis.
@@ -98,8 +118,12 @@ class RelativeAttentionAnalyzer(Analyzer):
 
     Hyper-parameters:
         general_prompt: Baseline prompt (same image, generic question).
-        layer:          Decoder layer to read attention from (-1 = last).
-                        The paper uses layer 22 for Qwen2.5-VL-7B-Instruct.
+        layer:          Decoder layer to read attention from.  An ``int`` is an
+                        absolute index (negative allowed); a ``float`` in (0, 1)
+                        is a fractional depth (default 0.75 — a late-middle layer
+                        where image-patch attention is spatially grounded; the
+                        last layer is sink-dominated, see
+                        :func:`resolve_attention_layer`).
         top_k:          Number of highest-scoring patches to include in findings.
         max_cases:      Cap on analysed cases (2 attention-captured forwards each).
 
@@ -122,7 +146,7 @@ class RelativeAttentionAnalyzer(Analyzer):
     def __init__(
         self,
         general_prompt: str = "Describe the image.",
-        layer: int = -1,
+        layer: "int | float" = 0.75,
         top_k: int = 5,
         max_cases: int = 32,
     ) -> None:
@@ -193,7 +217,7 @@ class RelativeAttentionAnalyzer(Analyzer):
         findings: dict = {
             "n_image_tokens": n_img,
             "n_layers": n_layers,
-            "layer_used": self.layer,
+            "layer_used": resolve_attention_layer(self.layer, n_layers),
             "map_shape": list(spatial_map.shape),
             "top_patches": top_patches,
             "n_cases_analyzed": len(per_case),
@@ -259,15 +283,17 @@ class RelativeAttentionAnalyzer(Analyzer):
                 "Both prompts must use the same image."
             )
 
+        n_layers = len(specific_trace.require(Capability.ATTENTION))
+        layer_idx = resolve_attention_layer(self.layer, n_layers)
+
         def _img_attn(trace, mask):
             """Head-averaged attention from the last query position to image patches."""
             attns = trace.require(Capability.ATTENTION)
-            a = attns[self.layer].float()  # (heads, seq, seq)
+            a = attns[layer_idx].float()  # (heads, seq, seq)
             return a.mean(dim=0)[-1, mask]  # (n_img_tokens,)
 
         specific_attn = _img_attn(specific_trace, specific_mask)
         general_attn = _img_attn(general_trace, general_mask)
-        n_layers = len(specific_trace.require(Capability.ATTENTION))
 
         # Relative attention: ratio highlighting task-relevant patches
         rel = specific_attn / (general_attn + 1e-8)

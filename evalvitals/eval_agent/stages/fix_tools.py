@@ -25,6 +25,37 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Scoring helpers
+# ---------------------------------------------------------------------------
+
+def score_to_bool(value: Any) -> "Optional[bool]":
+    """Normalize scorer outputs to the fix-module success contract.
+
+    The fix module accepts user-provided scorers.  Some examples reuse
+    ``CaseDiscoveryAgent`` scorers that return ``Label.PASS`` / ``Label.FAIL``
+    instead of bare booleans.  Enum instances are truthy in Python, including
+    ``Label.FAIL``, so every fix executor must normalize before doing boolean
+    algebra or passing vectors into statistical tests.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+
+    text = str(getattr(value, "value", value)).strip().lower()
+    if text in {"pass", "passed", "true", "correct", "ok", "1", "yes"}:
+        return True
+    if text in {"fail", "failed", "false", "incorrect", "wrong", "0", "no"}:
+        return False
+    if text in {"unknown", "none", "unscored", ""}:
+        return None
+
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Image tool catalog
 # ---------------------------------------------------------------------------
 
@@ -217,9 +248,9 @@ def run_pipeline(
         except Exception as exc:
             logger.debug("run_pipeline: generate failed on %s: %s", case.id, exc)
             continue
-        score = score_fn(case, output)
+        score = score_to_bool(score_fn(case, output))
         if score is not None:
-            votes.append(bool(score))
+            votes.append(score)
     if not votes:
         return None
     return sum(votes) * 2 >= len(votes)  # majority, ties -> True

@@ -733,6 +733,7 @@ def main() -> None:
         CliAgentConfig,
         DiagnosisAgent,
         ExperimentWriterConfig,
+        FixAgent,
         HypothesisTester,
         ProbeAgent,
         RunLogger,
@@ -831,6 +832,22 @@ def main() -> None:
 
     logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
 
+    # Fix agent with codegen enabled: the coding agent can write pipelines that
+    # *combine* tools — e.g. read the model's own attention via model_attend()
+    # (L3a), crop to that region, upscale it, then re-ask — rather than being
+    # limited to single pre-baked primitives.  We give the capability, not the
+    # answer: the agent must discover which combination repairs the failure.
+    fix_agent = FixAgent(
+        judge=judge,
+        score_fn=_score_case,
+        run_logger=logger,
+        cli_config=CliAgentConfig(
+            provider="antigravity", timeout_sec=300, model=args.judge_model
+        ),
+        allow_codegen=True,
+        exec_timeout_sec=300,
+    )
+
     loop = VLDiagnoseLoop(
         model=model,
         protocol=protocol,
@@ -839,6 +856,7 @@ def main() -> None:
         diagnosis_agent=diagnosis_agent,
         hypothesis_tester=hypothesis_tester,
         surgery_agent=surgery_agent,
+        fix_agent=fix_agent,
         max_cycles=args.max_cycles,
         run_logger=logger,
     )
