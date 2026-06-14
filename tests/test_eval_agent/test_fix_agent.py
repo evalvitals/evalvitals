@@ -94,6 +94,81 @@ def test_apply_image_ops_skips_unknown_and_loads_paths(tmp_path):
     assert out.size == (128, 96)
 
 
+def test_crop_salient_region_magnifies_small_content():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import crop_salient_region
+
+    img = PIL.Image.new("RGB", (64, 64), color=(210, 210, 210))
+    for y in range(30, 34):
+        for x in range(64):
+            img.putpixel((x, y), (200, 40, 40))
+
+    before = np.asarray(img)
+    out = crop_salient_region(img, padding=0.02)
+    after = np.asarray(out)
+    before_red = ((before[:, :, 0] > 150) & (before[:, :, 1] < 100)).sum()
+    after_red = ((after[:, :, 0] > 150) & (after[:, :, 1] < 140)).sum()
+    assert out.size == img.size
+    assert after_red > before_red * 5
+
+
+def test_separate_horizontal_bands_adds_visible_gaps():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import separate_horizontal_bands
+
+    colors = [(200, 40, 40), (40, 160, 40), (40, 40, 200), (210, 150, 30), (160, 50, 200)]
+    img = PIL.Image.new("RGB", (80, 80), color=(210, 210, 210))
+    y = 35
+    for color in colors:
+        for yy in range(y, y + 2):
+            for x in range(80):
+                img.putpixel((x, yy), color)
+        y += 2
+
+    out = separate_horizontal_bands(img)
+    arr = np.asarray(out, dtype=np.int16)
+    bg = np.array([210, 210, 210], dtype=np.int16)
+    salient_rows = (np.linalg.norm(arr - bg, axis=2) > 30).mean(axis=1) > 0.2
+    groups = 0
+    prev = False
+    for flag in salient_rows.tolist():
+        if flag and not prev:
+            groups += 1
+        prev = flag
+    assert out.size == img.size
+    assert groups == len(colors)
+
+
+def test_annotate_horizontal_band_count_overlays_measurement():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import (
+        _horizontal_band_count,
+        annotate_horizontal_band_count,
+    )
+
+    img = PIL.Image.new("RGB", (96, 96), color=(210, 210, 210))
+    colors = [(200, 40, 40), (40, 160, 40), (40, 40, 200), (210, 150, 30)]
+    y = 40
+    for color in colors:
+        for yy in range(y, y + 2):
+            for x in range(96):
+                img.putpixel((x, yy), color)
+        y += 2
+
+    assert _horizontal_band_count(img) == len(colors)
+    out = annotate_horizontal_band_count(img)
+    arr = np.asarray(out)
+    assert out.size == img.size
+    assert ((arr[:20] > 240).all(axis=2)).mean() > 0.7  # white banner
+    assert (arr[:30].min(axis=2) < 40).any()  # black text/border pixels
+
+
 def test_pipeline_spec_validation():
     from evalvitals.eval_agent.stages.fix_tools import PipelineSpec
 

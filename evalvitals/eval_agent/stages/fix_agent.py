@@ -519,6 +519,48 @@ class FixAgent:
         if not out:
             defaults = [
                 FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="annotate_horizontal_band_count",
+                    source="default",
+                    payload=PipelineSpec(
+                        name="annotate_horizontal_band_count",
+                        image_ops=[
+                            {"tool": "annotate_horizontal_band_count",
+                             "params": {
+                                 "min_delta": 18.0,
+                                 "color_delta": 35.0,
+                                 "min_count": 8,
+                             }},
+                        ],
+                        prompt_template=(
+                            "A visual counting overlay may have been added to the "
+                            "image. If a COUNT value is visible, use that value. "
+                            "{prompt}"
+                        ),
+                    ).to_dict()),
+                FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="separate_horizontal_bands",
+                    source="default",
+                    payload=PipelineSpec(
+                        name="separate_horizontal_bands",
+                        image_ops=[
+                            {"tool": "separate_horizontal_bands",
+                             "params": {"min_delta": 18.0, "color_delta": 35.0}},
+                        ],
+                        prompt_template=(
+                            "The image has been preprocessed so adjacent colored "
+                            "horizontal bands, if present, are separated by gray "
+                            "gaps. Count every colored band. {prompt}"
+                        ),
+                    ).to_dict()),
+                FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="salient_crop", source="default",
+                    payload=PipelineSpec(
+                        name="salient_crop",
+                        image_ops=[
+                            {"tool": "crop_salient_region",
+                             "params": {"padding": 0.04, "min_delta": 18.0}},
+                        ]).to_dict()),
+                FixCandidate(
                     tier=FixTier.L2_SCAFFOLD, name="zoom_equalize", source="default",
                     payload=PipelineSpec(
                         name="zoom_equalize",

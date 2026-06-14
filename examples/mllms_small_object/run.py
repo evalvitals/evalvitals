@@ -94,8 +94,10 @@ _TINY_BAND_PX = 2
 _LARGE_BAND_PX = 60
 
 # FAIL counts: high enough that a random guess has ~0% chance of being correct,
-# and the sub-patch tiny bands are completely invisible to the model.
-_FAIL_COUNTS = [12, 14, 16, 18, 20]
+# and the sub-patch tiny bands are completely invisible to the model.  Eight
+# fail cases give the paired e-value test enough power when a repair fixes all
+# failures without regressing the controls.
+_FAIL_COUNTS = [12, 14, 16, 18, 20, 22, 24, 26]
 # PASS counts: 1-5 large bands — each ~4 ViT patches wide, easily countable.
 # Empirically, Qwen3-VL 4B reliably counts 1-5 stripes but undercounts at 6+.
 # Using N=1..5 keeps all PASS cases clean.

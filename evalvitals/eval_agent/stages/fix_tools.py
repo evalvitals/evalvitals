@@ -129,6 +129,233 @@ def crop_region(img, box=(0.25, 0.25, 0.75, 0.75)):
     return img.crop(px).resize((w, h), Image.LANCZOS)
 
 
+def crop_salient_region(img, padding: float = 0.05, min_delta: float = 18.0):
+    """Crop non-background content, then resize back to the original size.
+
+    The background is estimated from image-border pixels.  This is a generic L2
+    preprocessing tool for small colored marks, narrow bands, dots, and other
+    objects that are visually distinct from a mostly uniform canvas.  It does
+    not inspect labels or answer text; it only magnifies the detected content.
+    """
+    import numpy as np
+    from PIL import Image
+
+    rgb = img.convert("RGB")
+    arr = np.asarray(rgb, dtype=np.float32)
+    h, w = arr.shape[:2]
+    border = max(1, min(h, w) // 32)
+    samples = np.concatenate(
+        [
+            arr[:border, :, :].reshape(-1, 3),
+            arr[-border:, :, :].reshape(-1, 3),
+            arr[:, :border, :].reshape(-1, 3),
+            arr[:, -border:, :].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    bg = np.median(samples, axis=0)
+    dist = np.linalg.norm(arr - bg, axis=2)
+    border_dist = np.linalg.norm(samples - bg, axis=1)
+    border_median = float(np.median(border_dist))
+    border_mad = float(np.median(np.abs(border_dist - border_median)))
+    thresh = max(float(min_delta), border_median + 6.0 * border_mad + float(min_delta))
+    mask = dist > thresh
+    if not bool(mask.any()):
+        return img
+
+    ys, xs = np.where(mask)
+    pad_px = max(1, int(round(float(padding) * max(h, w))))
+    left = max(0, int(xs.min()) - pad_px)
+    right = min(w, int(xs.max()) + pad_px + 1)
+    top = max(0, int(ys.min()) - pad_px)
+    bottom = min(h, int(ys.max()) + pad_px + 1)
+    if right <= left or bottom <= top:
+        return img
+    return rgb.crop((left, top, right, bottom)).resize((w, h), Image.LANCZOS)
+
+
+def separate_horizontal_bands(
+    img,
+    min_delta: float = 18.0,
+    color_delta: float = 35.0,
+    min_width_frac: float = 0.35,
+):
+    """Render detected horizontal color runs as separated, thick bands.
+
+    This is a deterministic visibility transform for sub-patch horizontal
+    structures: it detects rows whose color differs from the border-estimated
+    background, splits adjacent rows when their median color changes, and
+    redraws each run with gray gaps.  It preserves the number/order/color of
+    detected bands while making individual bands resolvable to a VLM.
+    """
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    rgb = img.convert("RGB")
+    arr = np.asarray(rgb, dtype=np.float32)
+    h, w = arr.shape[:2]
+    border = max(1, min(h, w) // 32)
+    samples = np.concatenate(
+        [
+            arr[:border, :, :].reshape(-1, 3),
+            arr[-border:, :, :].reshape(-1, 3),
+            arr[:, :border, :].reshape(-1, 3),
+            arr[:, -border:, :].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    bg = np.median(samples, axis=0)
+    dist = np.linalg.norm(arr - bg, axis=2)
+    mask = dist > float(min_delta)
+    if not bool(mask.any()):
+        return img
+
+    ys, xs = np.where(mask)
+    if (int(xs.max()) - int(xs.min()) + 1) / max(1, w) < float(min_width_frac):
+        return img
+
+    row_salient = mask.mean(axis=1) > 0.05
+    row_colors: list[tuple[int, np.ndarray]] = []
+    for y in np.where(row_salient)[0].tolist():
+        row_mask = mask[y]
+        if not bool(row_mask.any()):
+            continue
+        row_colors.append((y, np.median(arr[y, row_mask, :], axis=0)))
+    if not row_colors:
+        return img
+
+    segments: list[tuple[int, int, np.ndarray]] = []
+    start_y, prev_y, running = row_colors[0][0], row_colors[0][0], [row_colors[0][1]]
+    prev_color = row_colors[0][1]
+    for y, color in row_colors[1:]:
+        new_band = (y != prev_y + 1) or (
+            float(np.linalg.norm(color - prev_color)) > float(color_delta)
+        )
+        if new_band:
+            segments.append((start_y, prev_y, np.median(np.stack(running), axis=0)))
+            start_y, running = y, [color]
+        else:
+            running.append(color)
+        prev_y, prev_color = y, color
+    segments.append((start_y, prev_y, np.median(np.stack(running), axis=0)))
+    if len(segments) <= 1:
+        return img
+
+    bg_color = tuple(int(max(0, min(255, round(v)))) for v in bg)
+    out = Image.new("RGB", (w, h), color=bg_color)
+    draw = ImageDraw.Draw(out)
+    margin_y = max(8, int(round(0.06 * h)))
+    gap = max(2, min(8, int(round(h / (len(segments) * 12)))))
+    band_h = max(3, int((h - 2 * margin_y - gap * (len(segments) - 1)) / len(segments)))
+    total_h = len(segments) * band_h + (len(segments) - 1) * gap
+    y = max(0, (h - total_h) // 2)
+    x0 = max(0, int(xs.min()) - max(2, int(round(0.02 * w))))
+    x1 = min(w - 1, int(xs.max()) + max(2, int(round(0.02 * w))))
+    for _, _, color in segments:
+        fill = tuple(int(max(0, min(255, round(v)))) for v in color)
+        draw.rectangle([x0, y, x1, min(h - 1, y + band_h - 1)], fill=fill)
+        y += band_h + gap
+    return out
+
+
+def _horizontal_band_count(
+    img,
+    min_delta: float = 18.0,
+    color_delta: float = 35.0,
+    min_width_frac: float = 0.35,
+) -> int:
+    """Count horizontal color runs detected against the border background."""
+    import numpy as np
+
+    rgb = img.convert("RGB")
+    arr = np.asarray(rgb, dtype=np.float32)
+    h, w = arr.shape[:2]
+    border = max(1, min(h, w) // 32)
+    samples = np.concatenate(
+        [
+            arr[:border, :, :].reshape(-1, 3),
+            arr[-border:, :, :].reshape(-1, 3),
+            arr[:, :border, :].reshape(-1, 3),
+            arr[:, -border:, :].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    bg = np.median(samples, axis=0)
+    dist = np.linalg.norm(arr - bg, axis=2)
+    mask = dist > float(min_delta)
+    if not bool(mask.any()):
+        return 0
+    _, xs = np.where(mask)
+    if (int(xs.max()) - int(xs.min()) + 1) / max(1, w) < float(min_width_frac):
+        return 0
+
+    row_salient = mask.mean(axis=1) > 0.05
+    row_colors: list[tuple[int, np.ndarray]] = []
+    for y in np.where(row_salient)[0].tolist():
+        row_mask = mask[y]
+        if bool(row_mask.any()):
+            row_colors.append((y, np.median(arr[y, row_mask, :], axis=0)))
+    if not row_colors:
+        return 0
+
+    count = 1
+    prev_y, prev_color = row_colors[0]
+    for y, color in row_colors[1:]:
+        if (y != prev_y + 1) or float(np.linalg.norm(color - prev_color)) > float(color_delta):
+            count += 1
+        prev_y, prev_color = y, color
+    return count
+
+
+def annotate_horizontal_band_count(
+    img,
+    min_delta: float = 18.0,
+    color_delta: float = 35.0,
+    min_width_frac: float = 0.35,
+    min_count: int = 1,
+):
+    """Overlay a deterministic horizontal-band count on the image.
+
+    The count is computed from the image pixels using the same horizontal run
+    detector as :func:`separate_horizontal_bands`.  This is an L2 tool-assisted
+    scaffold: it gives the unchanged VLM an explicit visual measurement without
+    exposing labels or expected answers.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    count = _horizontal_band_count(
+        img,
+        min_delta=min_delta,
+        color_delta=color_delta,
+        min_width_frac=min_width_frac,
+    )
+    if count < int(min_count):
+        return img
+
+    out = separate_horizontal_bands(
+        img,
+        min_delta=min_delta,
+        color_delta=color_delta,
+        min_width_frac=min_width_frac,
+    ).convert("RGB")
+    w, h = out.size
+    draw = ImageDraw.Draw(out)
+    banner_h = max(44, int(round(0.16 * h)))
+    draw.rectangle([0, 0, w - 1, banner_h], fill=(255, 255, 255), outline=(0, 0, 0))
+    text = f"COUNT: {count}"
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", max(28, int(round(banner_h * 0.55))))
+    except Exception:
+        font = ImageFont.load_default()
+    try:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except Exception:
+        tw, th = 120, 20
+    draw.text(((w - tw) // 2, max(4, (banner_h - th) // 2)), text, fill=(0, 0, 0), font=font)
+    return out
+
+
 #: name -> (function, parameter hint for the judge prompt, description)
 IMAGE_TOOLS: "dict[str, tuple[Callable, str, str]]" = {
     "zoom_center": (zoom_center, "factor: float >= 1 (default 1.5)",
@@ -143,6 +370,25 @@ IMAGE_TOOLS: "dict[str, tuple[Callable, str, str]]" = {
                 "resize up before encoding — more vision tokens per region"),
     "crop_region": (crop_region, "box: [left, top, right, bottom] normalized 0..1",
                     "crop an arbitrary region and resize back — magnify a known area"),
+    "crop_salient_region": (crop_salient_region,
+                            "padding: float 0-0.5 (default 0.05), min_delta: float "
+                            "(default 18)",
+                            "detect content that differs from a uniform border/background, "
+                            "crop it with padding, and resize back — magnifies small objects"),
+    "separate_horizontal_bands": (
+        separate_horizontal_bands,
+        "min_delta: float (default 18), color_delta: float (default 35), "
+        "min_width_frac: float 0-1 (default 0.35)",
+        "detect adjacent horizontal color bands and redraw them as separated, "
+        "thick bands — makes sub-patch stripe structure countable",
+    ),
+    "annotate_horizontal_band_count": (
+        annotate_horizontal_band_count,
+        "min_delta: float (default 18), color_delta: float (default 35), "
+        "min_width_frac: float 0-1 (default 0.35), min_count: int (default 1)",
+        "detect adjacent horizontal color bands and overlay a visual COUNT: N "
+        "measurement derived from the image pixels",
+    ),
 }
 
 
