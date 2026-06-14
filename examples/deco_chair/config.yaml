@@ -1,16 +1,38 @@
-# deco_chair — Finding-2 replication + stepwise DeCo fix (DESIGN.md)
-model: qwen3-vl-8b-instruct
+# deco_chair — object hallucination in open-ended captioning (DeCo family,
+# arXiv 2410.11779). The failure is a description that NAMES AN ABSENT OBJECT;
+# the batch mixes hallucinated captions (FAIL) with clean ones (PASS) and the
+# fix is scored by a recall-floored CHAIR scorer, so a degenerate "stay vague"
+# fix loses recall on the clean controls and cannot win (no-free-lunch guard).
+model: qwen3-vl-2b-instruct   # also mined: qwen3-vl-4b-instruct / 8b (heavier)
 
-window: [0.55, 0.80]   # fractions of depth; reuse deco_pope's tuned value
+# Layer-probe window / DeCo-rescoring grid — consumed only by the bespoke
+# mention-level probe/fix (TODO.md Steps 3-4), NOT by the loop wiring here.
+window: [0.55, 0.80]
 tau: 0.05
-alpha: 0.4             # start lower than POPE: long generation amplifies the
-                       # "no free lunch" repetition side-effect (paper App. A)
+alpha: 0.4
 top_k: 20
 top_p: 0.9
-
-min_effect: 0.03       # CHAIR deltas will be small on Qwen3-VL (low base rate)
+min_effect: 0.03
 explore_frac: 0.6
 
-# Judge for M2/M3/M5 (agy quota exhausted -> claude CLI; sonnet/haiku for tests)
-judge_model: claude-fable-5
+# Judge for M1 selection / M2 / M3 / M5 + codegen coder — both are claude -p CLI
+# calls; fable-5 is currently unavailable, so both use opus-4-8 low effort.
+judge_model: claude-opus-4-8
 judge_effort: low
+codegen_model: claude-opus-4-8
+codegen_effort: low
+codegen_budget_usd: 2.0
+codegen_timeout_sec: 240
+
+# Fix module. L2 is the realistic captioning lever (prompt rewrite + a coded
+# self-verification scaffold that re-checks each named object); internals-write
+# primitives are yes/no-oriented, so the tier stays at L2 to keep the search
+# focused and the cost bounded.
+fix_max_tier: L2
+fix_validation_cases: 24    # stratified subset; long captions make full-batch
+                            # validation slow. 24 -> ~12 FAIL + 12 PASS (recall guard)
+fix_exec_timeout_sec: 1200  # wall-clock per coded-pipeline session (long captions)
+fix_repair_rounds: 3        # feedback-driven repair: up to 3 rounds. A failed
+                            # round's per-candidate results (fixed/broke/effect)
+                            # are fed back to the judge/coder, which proposes
+                            # DIFFERENT candidates within L2 (no tier escalation).

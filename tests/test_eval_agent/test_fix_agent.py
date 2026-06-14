@@ -193,6 +193,81 @@ def test_l1_judge_candidate_validates_and_fixes():
     assert out.recommendation is None
     # max_tier=L1 -> no L2 candidates were attempted
     assert all(v.candidate.tier is FixTier.L1_PROMPT for v in out.attempted)
+    assert out.repair_rounds == 1  # single-shot by default
+
+
+class FeedbackDrivenJudge(Model):
+    """Proposes a useless template first, the winning one only once it sees the
+    failure feedback — models the round-2 result-driven re-proposal."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text"})
+
+    def __init__(self) -> None:
+        self.rounds = 0
+        self.saw_feedback: list[bool] = []
+
+    def generate(self, inputs, **kwargs) -> str:
+        from evalvitals.eval_agent.stages.fix_agent import _FEEDBACK_HEADER
+
+        prompt = str(inputs)
+        has_fb = _FEEDBACK_HEADER in prompt and "broke" in prompt
+        self.saw_feedback.append(has_fb)
+        if has_fb:  # round 2+: propose the template that actually works
+            return json.dumps([{"name": "careful_v2",
+                                 "prompt_template": "Look very carefully. {prompt}"}])
+        self.rounds += 1            # round 1: a template that fixes nothing
+        return json.dumps([{"name": "polite",
+                            "prompt_template": "Please answer. {prompt}"}])
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_feedback_round_one_fails_round_two_fixes():
+    """With max_repair_rounds>1, a failed round's results are fed back and the
+    judge's NEW proposal validates — no tier escalation."""
+    judge = FeedbackDrivenJudge()
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(),
+        [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is True
+    assert out.repair_rounds == 2            # stopped as soon as round 2 validated
+    assert out.recommendation is None
+    assert out.best is not None and out.best.candidate.name == "careful_v2"
+    # round 1's failed candidate is still recorded, and round 2 DID see feedback
+    assert any(v.candidate.name == "polite" and not v.fixed for v in out.attempted)
+    assert any(judge.saw_feedback)
+
+
+def test_single_round_does_not_retry_on_failure():
+    """max_repair_rounds=1 (default) keeps the original single-shot behaviour:
+    the useless round-1 proposal is never re-proposed, outcome recommends up."""
+    judge = FeedbackDrivenJudge()
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=1)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(),
+        [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is False
+    assert out.repair_rounds == 1
+    assert out.recommendation is not None   # nothing validated -> recommend raise
+    assert judge.saw_feedback == [False]    # judge consulted exactly once, no feedback
+
+
+def test_repair_round_stops_when_no_new_candidate():
+    """A judge that keeps proposing the SAME failing candidate is deduped, so
+    the round loop stops early instead of re-validating identical work."""
+    judge = ScriptedJudge(json.dumps([
+        {"name": "polite", "prompt_template": "Please answer. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(), [_hyp("x")])
+    assert out.fixed is False
+    # round 1 validated the one distinct candidate; round 2 re-proposed it,
+    # got deduped to zero new candidates, and the loop stopped at round 2.
+    assert out.repair_rounds == 1
+    assert sum(1 for v in out.attempted if v.candidate.name == "polite") == 1
 
 
 def test_l2_pipeline_candidate_fixes_zoom_sensitive_model():

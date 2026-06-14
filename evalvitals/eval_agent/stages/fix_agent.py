@@ -7,9 +7,17 @@ function, exactly :mod:`~evalvitals.eval_agent.ab_runner`'s *strategy*
 contract — and validates each against the unmodified baseline with the paired
 machinery from :mod:`evalvitals.stats` (McNemar + e-value, never a bare p).
 
-There is **no automatic escalation**: when no candidate within the allowed
+There is **no automatic tier escalation**: when no candidate within the allowed
 tier validates, the outcome carries a *recommendation* to raise the tier,
 routed from the verified hypotheses' mechanisms (:func:`route_min_tier`).
+
+What the agent *does* retry within the allowed tier is the **proposal** itself:
+``max_repair_rounds`` (default 1) lets it run up to N propose→validate rounds.
+After a round in which nothing validates, the per-candidate results (how many
+cases each fixed / broke, net effect, or an execution error) are summarised and
+fed back to the judge/coder, which then proposes *different* strategies — never
+re-running an identical candidate, never raising the tier.  The loop stops as
+soon as a candidate validates, or when a round yields no new candidate.
 
 Executors by tier:
 
@@ -74,6 +82,15 @@ logger = logging.getLogger(__name__)
 _MAX_JUDGE_CANDIDATES = 3
 _EXAMPLE_PROMPTS = 3
 
+# Header for the block that feeds a failed round's results back into the next
+# proposal.  Rendered empty ("(none ...)") on the first round.
+_FEEDBACK_HEADER = (
+    "PRIOR REPAIR ATTEMPTS THAT FAILED TO VALIDATE (do NOT repeat any of these; "
+    "diagnose WHY each failed — broke too many correct cases? net effect "
+    "negative or insignificant? never executed? — and propose meaningfully "
+    "DIFFERENT strategies that avoid those failure modes):"
+)
+
 _L1_PROMPT = """\
 You are designing PROMPT-LEVEL fixes (tier L1: the input space only) for a \
 vision-language model failure.
@@ -83,6 +100,8 @@ VERIFIED FAILURE HYPOTHESES:
 
 EXAMPLE FAILING PROMPTS:
 {examples}
+
+{feedback}
 
 Propose up to {k} prompt rewrite strategies that could repair these failures
 WITHOUT changing the model or adding pipeline steps.  Each strategy is a
@@ -101,6 +120,8 @@ VERIFIED FAILURE HYPOTHESES:
 
 EXAMPLE FAILING PROMPTS:
 {examples}
+
+{feedback}
 
 AVAILABLE IMAGE TOOLS (applied to the case image before the model sees it):
 {catalog}
@@ -122,6 +143,8 @@ VERIFIED FAILURE HYPOTHESES:
 
 EXAMPLE FAILING PROMPTS:
 {examples}
+
+{feedback}
 
 EXECUTION CONTRACT:
 - "{cases_file}" in the current directory: {{"cases": [{{"id": str, "prompt": str}}]}}
@@ -175,6 +198,8 @@ code — you choose which to run and with what parameters.
 
 VERIFIED FAILURE HYPOTHESES:
 {hypotheses}
+
+{feedback}
 
 AVAILABLE PRIMITIVES:
 {catalog}
@@ -259,10 +284,13 @@ class FixOutcome:
     best: "FixValidation | None" = None
     fixed: bool = False
     recommendation: "dict[str, Any] | None" = None
+    # Number of feedback-driven propose->validate rounds actually run (>= 1).
+    repair_rounds: int = 0
 
     def to_dict(self) -> "dict[str, Any]":
         return {
             "max_tier": self.max_tier.label,
+            "repair_rounds": self.repair_rounds,
             "routed": self.routed,
             "attempted": [
                 {
@@ -318,6 +346,13 @@ class FixAgent:
                           (all-FAIL-first; deterministic).  Every candidate
                           validation costs >= one model call per case, so an
                           unbounded batch makes coded pipelines time out.
+        max_repair_rounds: Number of feedback-driven propose->validate rounds
+                          (default 1 = original single-shot behaviour).  When
+                          > 1 and a round validates nothing, the failed
+                          candidates' results are fed back to the judge/coder,
+                          which proposes *different* strategies within the SAME
+                          tier (no tier escalation).  Stops early on the first
+                          validated fix or when a round adds no new candidate.
     """
 
     def __init__(
@@ -331,6 +366,7 @@ class FixAgent:
         sandbox: "Any | None" = None,
         exec_timeout_sec: int = 600,
         max_validation_cases: int = 0,
+        max_repair_rounds: int = 1,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -341,6 +377,7 @@ class FixAgent:
         self._sandbox = sandbox
         self._exec_timeout_sec = exec_timeout_sec
         self.max_validation_cases = max_validation_cases
+        self.max_repair_rounds = max(1, int(max_repair_rounds))
         self._last_repair_prompt = ""
         self._last_usage: dict | None = None
 
@@ -382,9 +419,36 @@ class FixAgent:
             self._emit(outcome)
             return outcome
 
-        for candidate in self._propose(hypotheses, data, model):
-            validation = self._validate(candidate, model, data, baseline)
-            outcome.attempted.append(validation)
+        # Feedback-driven repair rounds: propose -> validate; if nothing
+        # validates, summarise the failures and ask for DIFFERENT candidates
+        # within the same tier (never escalating).  Stop on first validated
+        # fix or when a round adds no new candidate.
+        seen: "set[tuple[str, str]]" = set()
+        for round_idx in range(self.max_repair_rounds):
+            prior = outcome.attempted if round_idx else None
+            new_candidates: "list[FixCandidate]" = []
+            for candidate in self._propose(hypotheses, data, model, prior_attempts=prior):
+                sig = self._signature(candidate)
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                new_candidates.append(candidate)
+            if not new_candidates:
+                logger.info("FixAgent: repair round %d produced no NEW candidate; stopping",
+                            round_idx + 1)
+                break
+            round_fixed = False
+            for candidate in new_candidates:
+                validation = self._validate(candidate, model, data, baseline)
+                outcome.attempted.append(validation)
+                round_fixed = round_fixed or validation.fixed
+            outcome.repair_rounds = round_idx + 1
+            if round_fixed:
+                break
+            if round_idx + 1 < self.max_repair_rounds:
+                logger.info("FixAgent: repair round %d validated no fix; feeding "
+                            "%d failed attempt(s) back for round %d",
+                            round_idx + 1, len(new_candidates), round_idx + 2)
 
         winners = [v for v in outcome.attempted if v.fixed]
         if winners:
@@ -440,7 +504,11 @@ class FixAgent:
     # -- candidate generation --------------------------------------------
 
     def _propose(
-        self, hypotheses: "list[Hypothesis]", data: "CaseBatch", model: "Model"
+        self,
+        hypotheses: "list[Hypothesis]",
+        data: "CaseBatch",
+        model: "Model",
+        prior_attempts: "list[FixValidation] | None" = None,
     ) -> "list[FixCandidate]":
         hyp_lines = "\n".join(
             f"- [{getattr(h, 'predicted_failure_mode', '')}] {getattr(h, 'statement', h)}"
@@ -451,21 +519,67 @@ class FixAgent:
             for c in list(data)
             if getattr(getattr(c, "label", None), "value", None) == "fail"
         )[: 1000] or "- (none)"
+        feedback = self._format_feedback(prior_attempts)
 
-        candidates = self._l1_candidates(hyp_lines, examples)
+        candidates = self._l1_candidates(hyp_lines, examples, feedback)
         if self.max_tier >= FixTier.L2_SCAFFOLD:
-            candidates += self._l2_candidates(hyp_lines, examples)
+            candidates += self._l2_candidates(hyp_lines, examples, feedback)
             if self.codegen_available:
-                candidates += self._l2_coded_candidate(hyp_lines, examples, model)
+                candidates += self._l2_coded_candidate(hyp_lines, examples, model, feedback)
         if self.max_tier >= FixTier.L3A_INTERNALS_READ:
-            candidates += self._l3_candidates(hyp_lines, model)
+            candidates += self._l3_candidates(hyp_lines, model, feedback)
         if self.max_tier >= FixTier.L4_PARAMETERS:
             candidates += self._l4_candidates(hyp_lines)
         return candidates
 
-    def _l1_candidates(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
+    @staticmethod
+    def _signature(candidate: FixCandidate) -> "tuple[str, str]":
+        """Identity of a candidate, to skip re-validating an identical one.
+
+        Coded pipelines carry fresh source each round, so they never collide;
+        templates / specs / primitives dedup on their defining payload.
+        """
+        p = candidate.payload
+        if candidate.kind == "template":
+            key = str(p.get("prompt_template", ""))
+        elif candidate.kind == "primitive":
+            key = json.dumps({"primitive": p.get("primitive"),
+                              "params": p.get("params")}, sort_keys=True, default=str)
+        elif candidate.kind == "code":
+            key = str(p.get("code", ""))
+        else:
+            key = json.dumps({k: v for k, v in p.items() if k != "exec_error"},
+                             sort_keys=True, default=str)
+        return (candidate.kind, key)
+
+    def _format_feedback(
+        self, prior_attempts: "list[FixValidation] | None"
+    ) -> str:
+        """Render prior failed candidates as a feedback block for the judge."""
+        if not prior_attempts:
+            return "(none — this is the first repair round)"
+        lines = [_FEEDBACK_HEADER]
+        for v in prior_attempts:
+            if v.fixed:
+                continue  # only failures are fed back
+            c = v.candidate
+            if v.exec_error:
+                detail = f"NEVER EXECUTED — {v.exec_error[:140]}"
+            elif v.n_pairs == 0:
+                detail = f"not validatable — {v.summary[:120]}"
+            else:
+                eff = "n/a" if v.effect is None else f"{v.effect:+.3f}"
+                detail = (f"fixed {v.n_fixed}, broke {v.n_broken}, net effect {eff}"
+                          f" — rejected (not a significant net improvement)")
+            lines.append(f"- {c.name} ({c.tier.label}/{c.kind}): {detail}")
+        return "\n".join(lines) if len(lines) > 1 else "(none)"
+
+    def _l1_candidates(
+        self, hyp_lines: str, examples: str, feedback: str = ""
+    ) -> "list[FixCandidate]":
         proposals = self._ask_judge(_L1_PROMPT.format(
-            hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES))
+            hypotheses=hyp_lines, examples=examples, feedback=feedback,
+            k=_MAX_JUDGE_CANDIDATES))
         out: "list[FixCandidate]" = []
         for p in proposals:
             template = str(p.get("prompt_template", ""))
@@ -483,10 +597,12 @@ class FixAgent:
                     "low-contrast regions, before answering. {prompt}")})]
         return out[:_MAX_JUDGE_CANDIDATES]
 
-    def _l2_candidates(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
+    def _l2_candidates(
+        self, hyp_lines: str, examples: str, feedback: str = ""
+    ) -> "list[FixCandidate]":
         proposals = self._ask_judge(_L2_PROMPT.format(
-            hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES,
-            catalog=catalog_text()))
+            hypotheses=hyp_lines, examples=examples, feedback=feedback,
+            k=_MAX_JUDGE_CANDIDATES, catalog=catalog_text()))
         out: "list[FixCandidate]" = []
         for p in proposals:
             spec = PipelineSpec.from_dict(p) if isinstance(p, dict) else None
@@ -511,7 +627,7 @@ class FixAgent:
         return out[:_MAX_JUDGE_CANDIDATES]
 
     def _l2_coded_candidate(
-        self, hyp_lines: str, examples: str, model: "Model"
+        self, hyp_lines: str, examples: str, model: "Model", feedback: str = ""
     ) -> "list[FixCandidate]":
         """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
         from evalvitals.core.capability import Capability
@@ -532,7 +648,8 @@ class FixAgent:
             "crop_region there and re-ask."
         ) if enable_attend else ""
         code, source, prompt, raw = "", "", "", ""
-        base = dict(hypotheses=hyp_lines, examples=examples, catalog=catalog_text(),
+        base = dict(hypotheses=hyp_lines, examples=examples, feedback=feedback,
+                    catalog=catalog_text(),
                     cases_file=CASES_FILENAME, marker=RESULT_MARKER,
                     attend_hint=attend_hint)
         if self._cli_config is not None and self._cli_config.provider != "llm":
@@ -610,7 +727,9 @@ class FixAgent:
         except Exception as exc:  # logging must never break the fix step
             logger.debug("FixAgent: log_tool_codegen failed: %s", exc)
 
-    def _l3_candidates(self, hyp_lines: str, model: "Model") -> "list[FixCandidate]":
+    def _l3_candidates(
+        self, hyp_lines: str, model: "Model", feedback: str = ""
+    ) -> "list[FixCandidate]":
         """Judge-parameterised configs of the pre-audited internals primitives."""
         catalog = primitives_catalog_text(model, self.max_tier)
         if not catalog:
@@ -618,7 +737,8 @@ class FixAgent:
             return []
         out: "list[FixCandidate]" = []
         for p in self._ask_judge(_L3_PROMPT.format(
-                hypotheses=hyp_lines, catalog=catalog, k=_MAX_JUDGE_CANDIDATES)):
+                hypotheses=hyp_lines, catalog=catalog, feedback=feedback,
+                k=_MAX_JUDGE_CANDIDATES)):
             prim = INTERNALS_PRIMITIVES.get(str(p.get("primitive", "")))
             if prim is None or prim.tier > self.max_tier or not prim.available(model):
                 continue
