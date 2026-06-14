@@ -1,0 +1,4517 @@
+{
+  "model": "qwen3-vl-4b-instruct",
+  "prompt_template": "Is there a {obj} in the image? Please answer Yes or No.",
+  "seed": 42,
+  "decoding": {
+    "do_sample": false,
+    "max_new_tokens": 8
+  },
+  "pope_commit": "08d957b917e5a378a2f99d35b6293c536a66298b",
+  "versions": {
+    "transformers": "4.57.6",
+    "torch": "2.6.0+cu124",
+    "dtype": "bfloat16"
+  },
+  "source": "deco_pope/data/cases/qwen3-vl-4b-instruct.json (hallucination slice)",
+  "subset": "hallucination = adversarial-absent answered 'Yes'; controls = correct rejections + present-object detections (no-free-lunch)",
+  "yields": {
+    "explore": {
+      "fail": 21,
+      "pass": 96
+    },
+    "validate": {
+      "fail": 14,
+      "pass": 64
+    }
+  },
+  "n_hallucination": 35,
+  "n_correct_reject": 80,
+  "n_present_detect": 80,
+  "cases": [
+    {
+      "image_id": 210789,
+      "file_name": "COCO_val2014_000000210789.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 157084,
+      "file_name": "COCO_val2014_000000157084.jpg",
+      "object": "bottle",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 7320,
+      "file_name": "COCO_val2014_000000007320.jpg",
+      "object": "chair",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 564336,
+      "file_name": "COCO_val2014_000000564336.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 227227,
+      "file_name": "COCO_val2014_000000227227.jpg",
+      "object": "truck",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 114710,
+      "file_name": "COCO_val2014_000000114710.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 87435,
+      "file_name": "COCO_val2014_000000087435.jpg",
+      "object": "bicycle",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 567886,
+      "file_name": "COCO_val2014_000000567886.jpg",
+      "object": "bear",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 327771,
+      "file_name": "COCO_val2014_000000327771.jpg",
+      "object": "potted plant",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 358255,
+      "file_name": "COCO_val2014_000000358255.jpg",
+      "object": "bear",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 506483,
+      "file_name": "COCO_val2014_000000506483.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 249720,
+      "file_name": "COCO_val2014_000000249720.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 134075,
+      "file_name": "COCO_val2014_000000134075.jpg",
+      "object": "bowl",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 378873,
+      "file_name": "COCO_val2014_000000378873.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 275863,
+      "file_name": "COCO_val2014_000000275863.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 184338,
+      "file_name": "COCO_val2014_000000184338.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 49473,
+      "file_name": "COCO_val2014_000000049473.jpg",
+      "object": "potted plant",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 463522,
+      "file_name": "COCO_val2014_000000463522.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 463542,
+      "file_name": "COCO_val2014_000000463542.jpg",
+      "object": "backpack",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 108189,
+      "file_name": "COCO_val2014_000000108189.jpg",
+      "object": "bowl",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 245448,
+      "file_name": "COCO_val2014_000000245448.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 196462,
+      "file_name": "COCO_val2014_000000196462.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 304819,
+      "file_name": "COCO_val2014_000000304819.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 549390,
+      "file_name": "COCO_val2014_000000549390.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 243158,
+      "file_name": "COCO_val2014_000000243158.jpg",
+      "object": "potted plant",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 458325,
+      "file_name": "COCO_val2014_000000458325.jpg",
+      "object": "truck",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 117527,
+      "file_name": "COCO_val2014_000000117527.jpg",
+      "object": "chair",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 405205,
+      "file_name": "COCO_val2014_000000405205.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 233426,
+      "file_name": "COCO_val2014_000000233426.jpg",
+      "object": "couch",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 465346,
+      "file_name": "COCO_val2014_000000465346.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 396068,
+      "file_name": "COCO_val2014_000000396068.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 41180,
+      "file_name": "COCO_val2014_000000041180.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 554002,
+      "file_name": "COCO_val2014_000000554002.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 533201,
+      "file_name": "COCO_val2014_000000533201.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 122962,
+      "file_name": "COCO_val2014_000000122962.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "fail",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 279499,
+      "file_name": "COCO_val2014_000000279499.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 498759,
+      "file_name": "COCO_val2014_000000498759.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 544456,
+      "file_name": "COCO_val2014_000000544456.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 554328,
+      "file_name": "COCO_val2014_000000554328.jpg",
+      "object": "baseball glove",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 238691,
+      "file_name": "COCO_val2014_000000238691.jpg",
+      "object": "skis",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 265719,
+      "file_name": "COCO_val2014_000000265719.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 318550,
+      "file_name": "COCO_val2014_000000318550.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 117527,
+      "file_name": "COCO_val2014_000000117527.jpg",
+      "object": "dining table",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 16451,
+      "file_name": "COCO_val2014_000000016451.jpg",
+      "object": "skis",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 355256,
+      "file_name": "COCO_val2014_000000355256.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 445200,
+      "file_name": "COCO_val2014_000000445200.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 73182,
+      "file_name": "COCO_val2014_000000073182.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 270609,
+      "file_name": "COCO_val2014_000000270609.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 184338,
+      "file_name": "COCO_val2014_000000184338.jpg",
+      "object": "truck",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 219622,
+      "file_name": "COCO_val2014_000000219622.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 308907,
+      "file_name": "COCO_val2014_000000308907.jpg",
+      "object": "traffic light",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 17708,
+      "file_name": "COCO_val2014_000000017708.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 50627,
+      "file_name": "COCO_val2014_000000050627.jpg",
+      "object": "baseball glove",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 175506,
+      "file_name": "COCO_val2014_000000175506.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 238691,
+      "file_name": "COCO_val2014_000000238691.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 429706,
+      "file_name": "COCO_val2014_000000429706.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 283412,
+      "file_name": "COCO_val2014_000000283412.jpg",
+      "object": "dog",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 375909,
+      "file_name": "COCO_val2014_000000375909.jpg",
+      "object": "bottle",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 526368,
+      "file_name": "COCO_val2014_000000526368.jpg",
+      "object": "laptop",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 429580,
+      "file_name": "COCO_val2014_000000429580.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 288639,
+      "file_name": "COCO_val2014_000000288639.jpg",
+      "object": "sink",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 397665,
+      "file_name": "COCO_val2014_000000397665.jpg",
+      "object": "truck",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 331366,
+      "file_name": "COCO_val2014_000000331366.jpg",
+      "object": "truck",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 489728,
+      "file_name": "COCO_val2014_000000489728.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 92624,
+      "file_name": "COCO_val2014_000000092624.jpg",
+      "object": "giraffe",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 287035,
+      "file_name": "COCO_val2014_000000287035.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 199959,
+      "file_name": "COCO_val2014_000000199959.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 39516,
+      "file_name": "COCO_val2014_000000039516.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 421455,
+      "file_name": "COCO_val2014_000000421455.jpg",
+      "object": "dog",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 200739,
+      "file_name": "COCO_val2014_000000200739.jpg",
+      "object": "traffic light",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 243158,
+      "file_name": "COCO_val2014_000000243158.jpg",
+      "object": "vase",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 23731,
+      "file_name": "COCO_val2014_000000023731.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 381195,
+      "file_name": "COCO_val2014_000000381195.jpg",
+      "object": "bowl",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 554328,
+      "file_name": "COCO_val2014_000000554328.jpg",
+      "object": "baseball bat",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 33270,
+      "file_name": "COCO_val2014_000000033270.jpg",
+      "object": "tv",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 40361,
+      "file_name": "COCO_val2014_000000040361.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 437347,
+      "file_name": "COCO_val2014_000000437347.jpg",
+      "object": "baseball glove",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 327038,
+      "file_name": "COCO_val2014_000000327038.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 365822,
+      "file_name": "COCO_val2014_000000365822.jpg",
+      "object": "potted plant",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 382670,
+      "file_name": "COCO_val2014_000000382670.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 573796,
+      "file_name": "COCO_val2014_000000573796.jpg",
+      "object": "knife",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 207205,
+      "file_name": "COCO_val2014_000000207205.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 394535,
+      "file_name": "COCO_val2014_000000394535.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 7795,
+      "file_name": "COCO_val2014_000000007795.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 501294,
+      "file_name": "COCO_val2014_000000501294.jpg",
+      "object": "tv",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 511341,
+      "file_name": "COCO_val2014_000000511341.jpg",
+      "object": "skis",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 501898,
+      "file_name": "COCO_val2014_000000501898.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 381195,
+      "file_name": "COCO_val2014_000000381195.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 83275,
+      "file_name": "COCO_val2014_000000083275.jpg",
+      "object": "baseball glove",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 468997,
+      "file_name": "COCO_val2014_000000468997.jpg",
+      "object": "dog",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 142056,
+      "file_name": "COCO_val2014_000000142056.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 15738,
+      "file_name": "COCO_val2014_000000015738.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 23084,
+      "file_name": "COCO_val2014_000000023084.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 327532,
+      "file_name": "COCO_val2014_000000327532.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 377951,
+      "file_name": "COCO_val2014_000000377951.jpg",
+      "object": "pizza",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 355256,
+      "file_name": "COCO_val2014_000000355256.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 521643,
+      "file_name": "COCO_val2014_000000521643.jpg",
+      "object": "vase",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 267684,
+      "file_name": "COCO_val2014_000000267684.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 273450,
+      "file_name": "COCO_val2014_000000273450.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 224155,
+      "file_name": "COCO_val2014_000000224155.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 249715,
+      "file_name": "COCO_val2014_000000249715.jpg",
+      "object": "chair",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 6033,
+      "file_name": "COCO_val2014_000000006033.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 203479,
+      "file_name": "COCO_val2014_000000203479.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 235203,
+      "file_name": "COCO_val2014_000000235203.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 544456,
+      "file_name": "COCO_val2014_000000544456.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 252135,
+      "file_name": "COCO_val2014_000000252135.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 545353,
+      "file_name": "COCO_val2014_000000545353.jpg",
+      "object": "pizza",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 239773,
+      "file_name": "COCO_val2014_000000239773.jpg",
+      "object": "dog",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 495311,
+      "file_name": "COCO_val2014_000000495311.jpg",
+      "object": "truck",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 198397,
+      "file_name": "COCO_val2014_000000198397.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 175506,
+      "file_name": "COCO_val2014_000000175506.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 100238,
+      "file_name": "COCO_val2014_000000100238.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 557016,
+      "file_name": "COCO_val2014_000000557016.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 84447,
+      "file_name": "COCO_val2014_000000084447.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 236023,
+      "file_name": "COCO_val2014_000000236023.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 467887,
+      "file_name": "COCO_val2014_000000467887.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 267684,
+      "file_name": "COCO_val2014_000000267684.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 94501,
+      "file_name": "COCO_val2014_000000094501.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 489728,
+      "file_name": "COCO_val2014_000000489728.jpg",
+      "object": "bowl",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 83275,
+      "file_name": "COCO_val2014_000000083275.jpg",
+      "object": "dog",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 565941,
+      "file_name": "COCO_val2014_000000565941.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 170077,
+      "file_name": "COCO_val2014_000000170077.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 122962,
+      "file_name": "COCO_val2014_000000122962.jpg",
+      "object": "pizza",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 467176,
+      "file_name": "COCO_val2014_000000467176.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 304387,
+      "file_name": "COCO_val2014_000000304387.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 60213,
+      "file_name": "COCO_val2014_000000060213.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 456178,
+      "file_name": "COCO_val2014_000000456178.jpg",
+      "object": "traffic light",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 573796,
+      "file_name": "COCO_val2014_000000573796.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 45685,
+      "file_name": "COCO_val2014_000000045685.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 265472,
+      "file_name": "COCO_val2014_000000265472.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 142774,
+      "file_name": "COCO_val2014_000000142774.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "explore",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 281766,
+      "file_name": "COCO_val2014_000000281766.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 328301,
+      "file_name": "COCO_val2014_000000328301.jpg",
+      "object": "car",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 244455,
+      "file_name": "COCO_val2014_000000244455.jpg",
+      "object": "traffic light",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 473199,
+      "file_name": "COCO_val2014_000000473199.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 17379,
+      "file_name": "COCO_val2014_000000017379.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 293564,
+      "file_name": "COCO_val2014_000000293564.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 246199,
+      "file_name": "COCO_val2014_000000246199.jpg",
+      "object": "bowl",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 534121,
+      "file_name": "COCO_val2014_000000534121.jpg",
+      "object": "tv",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 424585,
+      "file_name": "COCO_val2014_000000424585.jpg",
+      "object": "traffic light",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 313162,
+      "file_name": "COCO_val2014_000000313162.jpg",
+      "object": "pizza",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 384040,
+      "file_name": "COCO_val2014_000000384040.jpg",
+      "object": "bowl",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 472375,
+      "file_name": "COCO_val2014_000000472375.jpg",
+      "object": "dog",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 415727,
+      "file_name": "COCO_val2014_000000415727.jpg",
+      "object": "handbag",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 295377,
+      "file_name": "COCO_val2014_000000295377.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 61507,
+      "file_name": "COCO_val2014_000000061507.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 524979,
+      "file_name": "COCO_val2014_000000524979.jpg",
+      "object": "baseball glove",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 204100,
+      "file_name": "COCO_val2014_000000204100.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 17379,
+      "file_name": "COCO_val2014_000000017379.jpg",
+      "object": "tv",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 198312,
+      "file_name": "COCO_val2014_000000198312.jpg",
+      "object": "cup",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 208028,
+      "file_name": "COCO_val2014_000000208028.jpg",
+      "object": "keyboard",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 388237,
+      "file_name": "COCO_val2014_000000388237.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 518177,
+      "file_name": "COCO_val2014_000000518177.jpg",
+      "object": "toaster",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 480122,
+      "file_name": "COCO_val2014_000000480122.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 239130,
+      "file_name": "COCO_val2014_000000239130.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 377401,
+      "file_name": "COCO_val2014_000000377401.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 80022,
+      "file_name": "COCO_val2014_000000080022.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 472375,
+      "file_name": "COCO_val2014_000000472375.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 543393,
+      "file_name": "COCO_val2014_000000543393.jpg",
+      "object": "fire hydrant",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 388983,
+      "file_name": "COCO_val2014_000000388983.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 280734,
+      "file_name": "COCO_val2014_000000280734.jpg",
+      "object": "pizza",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 8749,
+      "file_name": "COCO_val2014_000000008749.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 480122,
+      "file_name": "COCO_val2014_000000480122.jpg",
+      "object": "banana",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 217397,
+      "file_name": "COCO_val2014_000000217397.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 415727,
+      "file_name": "COCO_val2014_000000415727.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 245642,
+      "file_name": "COCO_val2014_000000245642.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 190788,
+      "file_name": "COCO_val2014_000000190788.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 401398,
+      "file_name": "COCO_val2014_000000401398.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 172648,
+      "file_name": "COCO_val2014_000000172648.jpg",
+      "object": "truck",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 406403,
+      "file_name": "COCO_val2014_000000406403.jpg",
+      "object": "backpack",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 534516,
+      "file_name": "COCO_val2014_000000534516.jpg",
+      "object": "traffic light",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 240434,
+      "file_name": "COCO_val2014_000000240434.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 511622,
+      "file_name": "COCO_val2014_000000511622.jpg",
+      "object": "bowl",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 350898,
+      "file_name": "COCO_val2014_000000350898.jpg",
+      "object": "bowl",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 542145,
+      "file_name": "COCO_val2014_000000542145.jpg",
+      "object": "sink",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 167110,
+      "file_name": "COCO_val2014_000000167110.jpg",
+      "object": "truck",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 300368,
+      "file_name": "COCO_val2014_000000300368.jpg",
+      "object": "knife",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 172648,
+      "file_name": "COCO_val2014_000000172648.jpg",
+      "object": "traffic light",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 430052,
+      "file_name": "COCO_val2014_000000430052.jpg",
+      "object": "vase",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 233521,
+      "file_name": "COCO_val2014_000000233521.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 560744,
+      "file_name": "COCO_val2014_000000560744.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 170365,
+      "file_name": "COCO_val2014_000000170365.jpg",
+      "object": "bottle",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 211674,
+      "file_name": "COCO_val2014_000000211674.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 410597,
+      "file_name": "COCO_val2014_000000410597.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 572075,
+      "file_name": "COCO_val2014_000000572075.jpg",
+      "object": "bowl",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 553992,
+      "file_name": "COCO_val2014_000000553992.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 482476,
+      "file_name": "COCO_val2014_000000482476.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 551881,
+      "file_name": "COCO_val2014_000000551881.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 61507,
+      "file_name": "COCO_val2014_000000061507.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 511622,
+      "file_name": "COCO_val2014_000000511622.jpg",
+      "object": "dining table",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 298633,
+      "file_name": "COCO_val2014_000000298633.jpg",
+      "object": "person",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 38645,
+      "file_name": "COCO_val2014_000000038645.jpg",
+      "object": "person",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 218224,
+      "file_name": "COCO_val2014_000000218224.jpg",
+      "object": "truck",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    },
+    {
+      "image_id": 447787,
+      "file_name": "COCO_val2014_000000447787.jpg",
+      "object": "car",
+      "pope_label": "no",
+      "probe_type": "adversarial",
+      "observed": "No",
+      "pred": "no",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ],
+      "out_token_ids": [
+        902,
+        2152,
+        2308,
+        2753
+      ]
+    },
+    {
+      "image_id": 69196,
+      "file_name": "COCO_val2014_000000069196.jpg",
+      "object": "backpack",
+      "pope_label": "yes",
+      "probe_type": "present",
+      "observed": "Yes",
+      "pred": "yes",
+      "label": "pass",
+      "split": "validate",
+      "gt_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ],
+      "out_token_ids": [
+        7414,
+        9454,
+        9693,
+        9834
+      ]
+    }
+  ]
+}
