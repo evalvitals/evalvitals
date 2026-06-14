@@ -877,9 +877,9 @@ def main() -> None:
         print("  skipped — no verified hypotheses")
 
     # ── Fix: tiered repair applied to failure cases ───────────────────────
-    _bar("FIX  (tiered repair · up to L3a)")
+    _bar("FIX  (auto-escalating · L2 → L3b)")
     if report.verified_hypotheses:
-        fix_outcome = loop.run_fix(report, cases, max_tier="L3a")
+        fix_outcome = loop.run_fix(report, cases, auto_escalate=True, max_tier="L3b")
         if fix_outcome is not None:
             n_fail_cases = sum(1 for c in cases if c.label.value == "fail")
             best = fix_outcome.best

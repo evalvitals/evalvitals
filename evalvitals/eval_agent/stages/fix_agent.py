@@ -359,8 +359,13 @@ class FixAgent:
         model: "Model",
         data: "CaseBatch",
         hypotheses: "list[Hypothesis]",
+        prior_attempts: "list[FixValidation] | None" = None,
     ) -> FixOutcome:
         """Generate candidates within the allowed tiers, validate, recommend."""
+        prior_text = self._format_prior(prior_attempts) if prior_attempts else ""
+        prior_names: "frozenset[str]" = frozenset(
+            v.candidate.name for v in (prior_attempts or [])
+        )
         outcome = FixOutcome(max_tier=self.max_tier)
         routed_tiers: "list[FixTier]" = []
         for h in hypotheses:
@@ -382,7 +387,7 @@ class FixAgent:
             self._emit(outcome)
             return outcome
 
-        for candidate in self._propose(hypotheses, data, model):
+        for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
             validation = self._validate(candidate, model, data, baseline)
             outcome.attempted.append(validation)
 
@@ -440,7 +445,12 @@ class FixAgent:
     # -- candidate generation --------------------------------------------
 
     def _propose(
-        self, hypotheses: "list[Hypothesis]", data: "CaseBatch", model: "Model"
+        self,
+        hypotheses: "list[Hypothesis]",
+        data: "CaseBatch",
+        model: "Model",
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
     ) -> "list[FixCandidate]":
         hyp_lines = "\n".join(
             f"- [{getattr(h, 'predicted_failure_mode', '')}] {getattr(h, 'statement', h)}"
@@ -452,20 +462,26 @@ class FixAgent:
             if getattr(getattr(c, "label", None), "value", None) == "fail"
         )[: 1000] or "- (none)"
 
-        candidates = self._l1_candidates(hyp_lines, examples)
+        candidates = self._l1_candidates(hyp_lines, examples, prior_text, prior_names)
         if self.max_tier >= FixTier.L2_SCAFFOLD:
-            candidates += self._l2_candidates(hyp_lines, examples)
+            candidates += self._l2_candidates(hyp_lines, examples, prior_text, prior_names)
             if self.codegen_available:
-                candidates += self._l2_coded_candidate(hyp_lines, examples, model)
+                candidates += self._l2_coded_candidate(hyp_lines, examples, model, prior_text)
         if self.max_tier >= FixTier.L3A_INTERNALS_READ:
-            candidates += self._l3_candidates(hyp_lines, model)
+            candidates += self._l3_candidates(hyp_lines, model, prior_text, prior_names)
         if self.max_tier >= FixTier.L4_PARAMETERS:
             candidates += self._l4_candidates(hyp_lines)
         return candidates
 
-    def _l1_candidates(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
+    def _l1_candidates(
+        self,
+        hyp_lines: str,
+        examples: str,
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
+    ) -> "list[FixCandidate]":
         proposals = self._ask_judge(_L1_PROMPT.format(
-            hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES))
+            hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES) + prior_text)
         out: "list[FixCandidate]" = []
         for p in proposals:
             template = str(p.get("prompt_template", ""))
@@ -474,7 +490,7 @@ class FixAgent:
                 out.append(FixCandidate(
                     tier=FixTier.L1_PROMPT, name=name, kind="template",
                     payload={"prompt_template": template}))
-        if not out:
+        if not out and "attend_carefully" not in prior_names:
             out = [FixCandidate(
                 tier=FixTier.L1_PROMPT, name="attend_carefully", kind="template",
                 source="default",
@@ -483,10 +499,16 @@ class FixAgent:
                     "low-contrast regions, before answering. {prompt}")})]
         return out[:_MAX_JUDGE_CANDIDATES]
 
-    def _l2_candidates(self, hyp_lines: str, examples: str) -> "list[FixCandidate]":
+    def _l2_candidates(
+        self,
+        hyp_lines: str,
+        examples: str,
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
+    ) -> "list[FixCandidate]":
         proposals = self._ask_judge(_L2_PROMPT.format(
             hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES,
-            catalog=catalog_text()))
+            catalog=catalog_text()) + prior_text)
         out: "list[FixCandidate]" = []
         for p in proposals:
             spec = PipelineSpec.from_dict(p) if isinstance(p, dict) else None
@@ -494,7 +516,7 @@ class FixAgent:
                 out.append(FixCandidate(
                     tier=FixTier.L2_SCAFFOLD, name=spec.name, payload=spec.to_dict()))
         if not out:
-            out = [
+            defaults = [
                 FixCandidate(
                     tier=FixTier.L2_SCAFFOLD, name="zoom_equalize", source="default",
                     payload=PipelineSpec(
@@ -508,10 +530,11 @@ class FixAgent:
                         image_ops=[{"tool": "upscale", "params": {"factor": 2.0}},
                                    {"tool": "sharpen", "params": {"factor": 2.0}}]).to_dict()),
             ]
+            out = [c for c in defaults if c.name not in prior_names]
         return out[:_MAX_JUDGE_CANDIDATES]
 
     def _l2_coded_candidate(
-        self, hyp_lines: str, examples: str, model: "Model"
+        self, hyp_lines: str, examples: str, model: "Model", prior_text: str = ""
     ) -> "list[FixCandidate]":
         """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
         from evalvitals.core.capability import Capability
@@ -537,12 +560,12 @@ class FixAgent:
                     attend_hint=attend_hint)
         if self._cli_config is not None and self._cli_config.provider != "llm":
             prompt = _L2_CODE_PROMPT.format(
-                fences_hint=", written to a file named pipeline.py", **base)
+                fences_hint=", written to a file named pipeline.py", **base) + prior_text
             code, raw = self._write_code_cli(prompt)
             source = f"cli:{self._cli_config.provider}"
         if not code.strip() and self._judge is not None:
             prompt = _L2_CODE_PROMPT.format(
-                fences_hint=" inside a ```python code block", **base)
+                fences_hint=" inside a ```python code block", **base) + prior_text
             try:
                 raw = str(self._judge.generate(prompt))
             except Exception as exc:
@@ -594,6 +617,28 @@ class FixAgent:
             self._sandbox = ExperimentSandbox()
         return str(self._sandbox.workdir)
 
+    @staticmethod
+    def _format_prior(attempts: "list[FixValidation]") -> str:
+        """Format failed prior attempts as a context block for judge prompts."""
+        items = []
+        for v in attempts:
+            c = v.candidate
+            if c.kind == "finetune_spec":
+                continue
+            effect = f"effect={v.effect:+.2f}" if v.effect is not None else "did not execute"
+            broken = (f", broke {v.broken_cases[:3]}" if v.broken_cases else "")
+            items.append(
+                f"- [{c.tier.label}/{c.kind}] {c.name}: "
+                f"{v.n_fixed} fixed / {v.n_broken} broken ({effect}{broken})"
+            )
+        if not items:
+            return ""
+        return (
+            "\n\nPRIOR ATTEMPTS THAT DID NOT WORK — reason from these failures "
+            "and design something FUNDAMENTALLY DIFFERENT (different mechanism, "
+            "not just different parameters):\n" + "\n".join(items)
+        )
+
     def _emit_codegen(
         self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool
     ) -> None:
@@ -610,7 +655,13 @@ class FixAgent:
         except Exception as exc:  # logging must never break the fix step
             logger.debug("FixAgent: log_tool_codegen failed: %s", exc)
 
-    def _l3_candidates(self, hyp_lines: str, model: "Model") -> "list[FixCandidate]":
+    def _l3_candidates(
+        self,
+        hyp_lines: str,
+        model: "Model",
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
+    ) -> "list[FixCandidate]":
         """Judge-parameterised configs of the pre-audited internals primitives."""
         catalog = primitives_catalog_text(model, self.max_tier)
         if not catalog:
@@ -618,7 +669,7 @@ class FixAgent:
             return []
         out: "list[FixCandidate]" = []
         for p in self._ask_judge(_L3_PROMPT.format(
-                hypotheses=hyp_lines, catalog=catalog, k=_MAX_JUDGE_CANDIDATES)):
+                hypotheses=hyp_lines, catalog=catalog, k=_MAX_JUDGE_CANDIDATES) + prior_text):
             prim = INTERNALS_PRIMITIVES.get(str(p.get("primitive", "")))
             if prim is None or prim.tier > self.max_tier or not prim.available(model):
                 continue
@@ -631,6 +682,8 @@ class FixAgent:
                 "visual_embedding_boost": {"gamma": 1.5},
             }
             for name, params in defaults.items():
+                if name in prior_names:
+                    continue
                 prim = INTERNALS_PRIMITIVES[name]
                 if prim.tier <= self.max_tier and prim.available(model):
                     out.append(FixCandidate(
