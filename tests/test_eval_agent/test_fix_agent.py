@@ -48,6 +48,10 @@ def test_routing_by_mechanism_keywords():
         mode="resolution_limit"))
     assert tier is FixTier.L2_SCAFFOLD and "resolution" in why
 
+    tier, why = route_min_tier(_hyp(
+        "a training-free crop/enhance scaffold should magnify the small text"))
+    assert tier is FixTier.L2_SCAFFOLD and "train" not in why
+
     tier, _ = route_min_tier(_hyp(
         "suppress the attention sink on structural tokens", mode="attention_sink"))
     assert tier is FixTier.L3B_INTERNALS_WRITE  # write verbs beat bare "attention"

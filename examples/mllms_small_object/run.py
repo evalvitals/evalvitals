@@ -22,6 +22,7 @@ import json
 import re
 import textwrap
 from pathlib import Path
+from typing import Any
 
 _OUTPUTS_DIR = Path(__file__).parent / "outputs"
 _TEXTVQA_ROOT = Path("/data/rjin02/evalvitals/textvqa_mllms_know")
@@ -33,31 +34,85 @@ _DEFAULT_TEXTVQA_IMAGE_DIR = _TEXTVQA_ROOT / "images"
 # Scoring helpers (word-boundary safe)
 # ---------------------------------------------------------------------------
 
-def _contains(term: str, text: str) -> bool:
-    term = term.lower().strip()
-    if not term:
+def _normalize_answer(value: Any) -> str:
+    text = str(value).lower()
+    text = re.sub(r"\*\*|__|`", "", text)
+    text = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2019", "'")
+    text = re.sub(r"[^a-z0-9:%#.'+-]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .,:;\"'")
+    return text
+
+
+def _answer_candidates(observed: str) -> list[str]:
+    """Extract likely final-answer spans from verbose VLM output.
+
+    TextVQA models often answer in prose. Scoring the whole explanation is too
+    permissive because a wrong main answer can mention a gold answer as a
+    rejected alternative. Prefer answer-like spans, then only short lead text.
+    """
+    text = str(observed).strip()
+    out: list[str] = []
+    first_para = re.split(r"\n\s*\n", text, maxsplit=1)[0].strip()
+
+    for span in re.findall(r"\*\*([^*]{1,120})\*\*", first_para or text):
+        out.append(span)
+    for match in re.finditer(r"(?im)^\s*(?:answer|final answer)\s*[:\-]\s*(.{1,120})$", text):
+        out.append(match.group(1))
+
+    if first_para:
+        first_line = first_para.splitlines()[0].strip()
+        first_sentence = re.split(r"(?<=[.!?])\s+", first_line, maxsplit=1)[0].strip()
+        out.extend([first_line, first_sentence])
+
+    if len(text) <= 120:
+        out.append(text)
+
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for candidate in out:
+        candidate = candidate.strip(" \t\r\n-*#>\"'")
+        norm = _normalize_answer(candidate)
+        if norm and norm not in seen:
+            cleaned.append(candidate)
+            seen.add(norm)
+    return cleaned
+
+
+def _matches_answer(gold: str, candidate: str) -> bool:
+    gold_norm = _normalize_answer(gold)
+    cand_norm = _normalize_answer(candidate)
+    if not gold_norm or not cand_norm:
         return False
-    if re.fullmatch(r"[a-z0-9]+", term):
-        return re.search(rf"\b{re.escape(term)}\b", text) is not None
-    return term in text
+    if cand_norm == gold_norm:
+        return True
+    # For short/numeric answers, require the extracted answer span to be short;
+    # otherwise explanations like "388 ... number 22 is separate" become false
+    # positives for gold "22".
+    if len(gold_norm) <= 3 or re.fullmatch(r"[0-9.:%+-]+", gold_norm):
+        if len(cand_norm) > max(12, len(gold_norm) + 6):
+            return False
+        return re.search(rf"(?<![a-z0-9]){re.escape(gold_norm)}(?![a-z0-9])", cand_norm) is not None
+    if len(cand_norm) > max(80, len(gold_norm) * 4):
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(gold_norm)}(?![a-z0-9])", cand_norm) is not None
 
 
 def _score_case(case, observed):
     from evalvitals.core.case import Label
 
-    text = re.sub(r"\s+", " ", str(observed).lower())
+    candidates = _answer_candidates(str(observed))
     expected = case.expected
     if isinstance(expected, dict):
-        if any(_contains(t, text) for t in expected.get("none_of", [])):
+        if any(_matches_answer(t, c) for t in expected.get("none_of", []) for c in candidates):
             return Label.FAIL
-        if not all(_contains(t, text) for t in expected.get("all_of", [])):
+        if not all(any(_matches_answer(t, c) for c in candidates) for t in expected.get("all_of", [])):
             return Label.FAIL
         any_of = expected.get("any_of", [])
-        if any_of and not any(_contains(t, text) for t in any_of):
+        if any_of and not any(_matches_answer(t, c) for t in any_of for c in candidates):
             return Label.FAIL
         return Label.PASS
     if isinstance(expected, str):
-        return Label.PASS if _contains(expected, text) else Label.FAIL
+        return Label.PASS if any(_matches_answer(expected, c) for c in candidates) else Label.FAIL
     return Label.UNKNOWN
 
 

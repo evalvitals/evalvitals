@@ -128,6 +128,7 @@ def route_min_tier(hypothesis: "Hypothesis") -> "tuple[FixTier, str]":
         str(getattr(hypothesis, attr, "") or "")
         for attr in ("predicted_failure_mode", "statement", "test_design")
     ).lower()
+    text = text.replace("training-free", "").replace("train-free", "")
     for tier, keywords in _TIER_KEYWORDS:
         hits = [k for k in keywords if k in text]
         if hits:
