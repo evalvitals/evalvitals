@@ -114,6 +114,78 @@ def test_crop_salient_region_magnifies_small_content():
     assert after_red > before_red * 5
 
 
+def test_crop_case_bbox_magnifies_metadata_box():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.core.case import FailureCase, Inputs
+    from evalvitals.eval_agent.stages.fix_tools import crop_case_bbox
+
+    img = PIL.Image.new("RGB", (100, 100), color=(220, 220, 220))
+    for y in range(10, 14):
+        for x in range(80, 84):
+            img.putpixel((x, y), (20, 20, 20))
+    case = FailureCase(
+        id="tiny_text_region",
+        inputs=Inputs(prompt="read it", image=img),
+        metadata={"answer_bbox_xyxy_norm": [0.8, 0.1, 0.84, 0.14]},
+    )
+
+    out = crop_case_bbox(img, case=case, padding=0.0, min_size_frac=0.08)
+    arr = np.asarray(out)
+    dark = (arr[:, :, 0] < 80) & (arr[:, :, 1] < 80) & (arr[:, :, 2] < 80)
+
+    assert out.size == img.size
+    assert dark.mean() > 0.2
+
+
+def test_crop_case_bbox_no_bbox_is_noop_even_with_enhancement():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.core.case import FailureCase, Inputs
+    from evalvitals.eval_agent.stages.fix_tools import crop_case_bbox
+
+    img = PIL.Image.new("RGB", (32, 32), color=(120, 130, 140))
+    case = FailureCase(id="no_bbox", inputs=Inputs(prompt="q", image=img), metadata={})
+
+    out = crop_case_bbox(img, case=case, sharpen_factor=3.0, contrast_factor=1.5)
+
+    assert out is img
+    assert np.asarray(out).mean() == np.asarray(img).mean()
+
+
+def test_run_pipeline_can_fix_textvqa_style_bbox_case():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import PipelineSpec, run_pipeline
+
+    img = PIL.Image.new("RGB", (100, 100), color=(220, 220, 220))
+    for y in range(10, 14):
+        for x in range(80, 84):
+            img.putpixel((x, y), (20, 20, 20))
+    case = FailureCase(
+        id="textvqa_small",
+        inputs=Inputs(prompt="What text is shown?", image=img),
+        expected="abc",
+        metadata={"answer_bbox_xyxy_norm": [0.8, 0.1, 0.84, 0.14]},
+    )
+
+    class BBoxSensitiveModel:
+        def generate(self, inputs, **kwargs):
+            arr = np.asarray(inputs.image)
+            dark = (arr[:, :, 0] < 80) & (arr[:, :, 1] < 80) & (arr[:, :, 2] < 80)
+            return "abc" if dark.mean() > 0.2 else "wrong"
+
+    spec = PipelineSpec(
+        name="answer_bbox_crop",
+        image_ops=[{"tool": "crop_case_bbox", "params": {"padding": 0.0, "min_size_frac": 0.08}}],
+    )
+
+    assert run_pipeline(BBoxSensitiveModel(), case, spec, _label_score) is True
+
+
 def test_separate_horizontal_bands_adds_visible_gaps():
     PIL = pytest.importorskip("PIL")
     import numpy as np

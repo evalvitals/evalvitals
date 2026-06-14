@@ -129,6 +129,86 @@ def crop_region(img, box=(0.25, 0.25, 0.75, 0.75)):
     return img.crop(px).resize((w, h), Image.LANCZOS)
 
 
+def crop_case_bbox(
+    img,
+    case: "FailureCase | None" = None,
+    bbox_key: str = "answer_bbox_xyxy_norm",
+    padding: float = 0.15,
+    min_size_frac: float = 0.08,
+    sharpen_factor: float = 1.0,
+    contrast_factor: float = 1.0,
+):
+    """Crop a per-case normalized bbox from metadata, then resize back.
+
+    TextVQA-style size-sensitivity experiments often include answer bboxes.
+    This L2 scaffold implements the paper's human-CROP intervention: use a
+    dataset-provided visual localization annotation to magnify the small answer
+    region.  It does not read labels or expected answers, and is a no-op for
+    cases without a usable bbox.
+    """
+    meta = getattr(case, "metadata", {}) or {}
+    raw = meta.get(bbox_key) or meta.get("answer_bbox_norm") or meta.get("bbox_xyxy_norm")
+    if raw is None:
+        return img
+    if isinstance(raw, dict):
+        try:
+            box = [raw["left"], raw["top"], raw["right"], raw["bottom"]]
+        except KeyError:
+            try:
+                box = [raw["x1"], raw["y1"], raw["x2"], raw["y2"]]
+            except KeyError:
+                return img
+    else:
+        box = raw
+    try:
+        left, top, right, bottom = (float(v) for v in box)
+    except Exception:
+        return img
+    if right <= left or bottom <= top:
+        return img
+
+    left, top = max(0.0, min(1.0, left)), max(0.0, min(1.0, top))
+    right, bottom = max(0.0, min(1.0, right)), max(0.0, min(1.0, bottom))
+    cx, cy = (left + right) / 2.0, (top + bottom) / 2.0
+    side = max(right - left, bottom - top, float(min_size_frac))
+    side = min(1.0, side * (1.0 + 2.0 * max(0.0, float(padding))))
+    new_left = cx - side / 2.0
+    new_top = cy - side / 2.0
+    new_right = cx + side / 2.0
+    new_bottom = cy + side / 2.0
+    if new_left < 0.0:
+        new_right -= new_left
+        new_left = 0.0
+    if new_top < 0.0:
+        new_bottom -= new_top
+        new_top = 0.0
+    if new_right > 1.0:
+        new_left -= new_right - 1.0
+        new_right = 1.0
+    if new_bottom > 1.0:
+        new_top -= new_bottom - 1.0
+        new_bottom = 1.0
+    out = crop_region(
+        img,
+        box=(
+            max(0.0, new_left),
+            max(0.0, new_top),
+            min(1.0, new_right),
+            min(1.0, new_bottom),
+        ),
+    )
+    try:
+        from PIL import ImageEnhance
+
+        if float(sharpen_factor) != 1.0:
+            out = ImageEnhance.Sharpness(out).enhance(float(sharpen_factor))
+        if float(contrast_factor) != 1.0:
+            out = ImageEnhance.Contrast(out).enhance(float(contrast_factor))
+    except Exception:
+        return out
+    return out
+
+
 def crop_salient_region(img, padding: float = 0.05, min_delta: float = 18.0):
     """Crop non-background content, then resize back to the original size.
 
@@ -370,6 +450,14 @@ IMAGE_TOOLS: "dict[str, tuple[Callable, str, str]]" = {
                 "resize up before encoding — more vision tokens per region"),
     "crop_region": (crop_region, "box: [left, top, right, bottom] normalized 0..1",
                     "crop an arbitrary region and resize back — magnify a known area"),
+    "crop_case_bbox": (
+        crop_case_bbox,
+        "bbox_key: str metadata key (default answer_bbox_xyxy_norm), padding: float "
+        "(default 0.15), min_size_frac: float (default 0.08), "
+        "sharpen_factor: float (default 1), contrast_factor: float (default 1)",
+        "crop the per-case bbox stored in metadata and resize back — paper-style "
+        "human-CROP for TextVQA answer regions, optionally sharpened/enhanced",
+    ),
     "crop_salient_region": (crop_salient_region,
                             "padding: float 0-0.5 (default 0.05), min_delta: float "
                             "(default 18)",
@@ -400,7 +488,11 @@ def catalog_text() -> str:
     )
 
 
-def apply_image_ops(image: Any, ops: "list[dict[str, Any]]") -> Any:
+def apply_image_ops(
+    image: Any,
+    ops: "list[dict[str, Any]]",
+    case: "FailureCase | None" = None,
+) -> Any:
     """Apply ``[{"tool": name, "params": {...}}, ...]`` to *image*.
 
     Unknown tools and per-op failures are skipped (logged); returns the
@@ -417,7 +509,10 @@ def apply_image_ops(image: Any, ops: "list[dict[str, Any]]") -> Any:
             continue
         fn = entry[0]
         try:
-            img = fn(img, **dict(op.get("params") or {}))
+            if name == "crop_case_bbox":
+                img = fn(img, case=case, **dict(op.get("params") or {}))
+            else:
+                img = fn(img, **dict(op.get("params") or {}))
         except Exception as exc:
             logger.warning("fix_tools: tool %r failed (%s); skipped", name, exc)
     return img
@@ -484,7 +579,7 @@ def run_pipeline(
     prompt = str(getattr(inp, "prompt", "")) if inp is not None else ""
     image = getattr(inp, "image", None) if inp is not None else None
     if spec.image_ops:
-        image = apply_image_ops(image, spec.image_ops)
+        image = apply_image_ops(image, spec.image_ops, case=case)
     new_inputs = Inputs(prompt=spec.prompt_template.format(prompt=prompt), image=image)
 
     votes: "list[bool]" = []

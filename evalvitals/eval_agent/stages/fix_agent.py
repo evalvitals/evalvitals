@@ -519,6 +519,28 @@ class FixAgent:
         if not out:
             defaults = [
                 FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="answer_bbox_crop",
+                    source="default",
+                    payload=PipelineSpec(
+                        name="answer_bbox_crop",
+                        image_ops=[
+                            {"tool": "crop_case_bbox",
+                             "params": {
+                                 "bbox_key": "answer_bbox_xyxy_norm",
+                                 "padding": 0.40,
+                                 "min_size_frac": 0.12,
+                                 "sharpen_factor": 3.0,
+                                 "contrast_factor": 1.4,
+                             }},
+                        ],
+                        prompt_template=(
+                            "The image may have been cropped and enhanced around "
+                            "the visual region that contains the answer. Read the "
+                            "visible text or number carefully, then answer the "
+                            "question. {prompt}"
+                        ),
+                    ).to_dict()),
+                FixCandidate(
                     tier=FixTier.L2_SCAFFOLD, name="annotate_horizontal_band_count",
                     source="default",
                     payload=PipelineSpec(
