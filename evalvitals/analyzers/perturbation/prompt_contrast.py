@@ -125,7 +125,7 @@ class PromptContrastAnalyzer(Analyzer):
         answers: dict[str, dict[str, str]] = {s: {} for s in self.strategies}
         n_unscored = 0
 
-        selected = list(cases)[: self.max_cases]
+        selected = cases.stratified_head(self.max_cases)
         for case in selected:
             prompt = str(getattr(case.inputs, "prompt", ""))
             image = getattr(case.inputs, "image", None)

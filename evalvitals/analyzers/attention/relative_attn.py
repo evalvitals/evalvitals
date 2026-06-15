@@ -162,7 +162,7 @@ class RelativeAttentionAnalyzer(Analyzer):
         maps_fail: list[np.ndarray] = []
         maps_pass: list[np.ndarray] = []
 
-        for case in list(cases)[: self.max_cases]:
+        for case in cases.stratified_head(self.max_cases):
             try:
                 rel_np, spatial_map, n_img, n_layers = self._relative_map(model, case)
             except Exception as exc:  # noqa: BLE001 - record and continue the batch

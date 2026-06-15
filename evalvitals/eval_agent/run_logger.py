@@ -678,18 +678,23 @@ class RunLogger:
             tier = a.get("tier", "L?")
             name = a.get("name", "candidate")
             slug = re.sub(r"[^a-zA-Z0-9]+", "_", f"{i:02d}_{tier}_{name}").strip("_")
-            verdict = "FIXED" if a.get("fixed") else "did not fix"
+            verdict = a.get("verdict") or ("FIXED" if a.get("fixed") else "did not fix")
+            cov = a.get("coverage")
             lines = [
                 f"# Fix attempt {i:02d} — {name}  [{tier}]",
                 "",
-                f"**Outcome:** {verdict}",
+                f"**Outcome:** {'FIXED' if a.get('fixed') else 'did not fix'} "
+                f"(verdict: {verdict})",
                 f"**Kind:** {a.get('kind')}    **Source:** {a.get('source')}",
                 "",
                 "## Validation (paired McNemar vs. unmodified baseline)",
-                f"- pairs tested: {a.get('n_pairs')}",
+                f"- pairs tested (applicable): {a.get('n_pairs')}",
                 f"- cases fixed: {a.get('n_fixed')}",
                 f"- cases broken: {a.get('n_broken')}",
+                f"- coverage of failures: {'—' if cov is None else f'{cov:.0%}'}",
+                f"- unstable cases dropped (noise): {a.get('n_unstable', 0)}",
                 f"- effect: {_eff(a.get('effect'))}",
+                f"- e-value: {_eff(a.get('e_value'))}",
                 f"- statistically significant (rejects H0): {a.get('reject')}",
             ]
             if a.get("summary"):
@@ -720,19 +725,33 @@ class RunLogger:
         ]
         rec = d.get("recommendation")
         if rec:
-            head.append(
-                f"**Recommendation:** escalate to {rec.get('recommend_tier')} "
-                f"— {rec.get('reason', '')}"
-            )
+            tier = rec.get("recommend_tier")
+            if tier:
+                head.append(
+                    f"**Recommendation:** escalate to {tier} — {rec.get('reason', '')}"
+                )
+            else:
+                action = rec.get("action", "no fix")
+                head.append(
+                    f"**Recommendation:** {action} — {rec.get('reason', '')}"
+                )
+        refine = d.get("refine_signal")
+        if refine:
+            head.append(f"**Re-diagnose:** {refine.get('message', '')}")
         head += ["", f"## Attempts ({len(attempts)})", ""]
         if attempts:
-            head.append("| # | tier | candidate | fixed | n_fixed | n_broken | effect | sig |")
-            head.append("|---|------|-----------|-------|---------|----------|--------|-----|")
+            head.append("| # | tier | candidate | verdict | n_fixed | n_broken "
+                        "| coverage | effect | sig |")
+            head.append("|---|------|-----------|---------|---------|----------"
+                        "|----------|--------|-----|")
             for i, a in enumerate(attempts, start=1):
+                cov = a.get("coverage")
+                cov_s = "—" if cov is None else f"{cov:.0%}"
                 head.append(
                     f"| {i:02d} | {a.get('tier')} | {a.get('name')} | "
-                    f"{'yes' if a.get('fixed') else 'no'} | {a.get('n_fixed')} | "
-                    f"{a.get('n_broken')} | {_eff(a.get('effect'))} | "
+                    f"{a.get('verdict') or ('fixed' if a.get('fixed') else 'no')} | "
+                    f"{a.get('n_fixed')} | {a.get('n_broken')} | {cov_s} | "
+                    f"{_eff(a.get('effect'))} | "
                     f"{'yes' if a.get('reject') else 'no'} |"
                 )
             head += ["", "Each attempt's full record is in its own folder above "

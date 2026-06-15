@@ -23,6 +23,7 @@ the verified hypotheses via :func:`route_min_tier`.
 
 from __future__ import annotations
 
+import re
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
@@ -89,11 +90,19 @@ def parse_tier(value: "str | FixTier") -> FixTier:
 # ---------------------------------------------------------------------------
 # Hypothesis → minimum effective tier routing
 # ---------------------------------------------------------------------------
-# Keyword tables are checked from the most invasive tier downwards so that
-# specific mechanism vocabulary ("suppress attention sink") wins over generic
-# vocabulary ("attention") that also appears in lower tiers.  A hypothesis's
-# verified mechanism tells you the *space* the failure lives in, hence the
-# minimum tier whose interventions can causally address it.
+# A hypothesis's verified mechanism tells you the *space* the failure lives in,
+# hence the minimum tier whose interventions can causally address it.  Routing
+# prefers an explicit, structured signal (``hypothesis.metadata["fix_tier"]`` or
+# ``["intervention_space"]``) — that is the mechanism, not its phrasing.  Only
+# when no structured field is present does it fall back to keyword matching.
+#
+# Keyword fallback, ordered most-invasive-first so specific vocabulary
+# ("suppress attention sink") wins over generic vocabulary ("attention").  Two
+# precautions distinguish a mechanism from a passing mention of its words:
+#   * stems are matched at a word boundary (``\bcrop``), so "constraint" no
+#     longer matches the L4 stem "train" mid-word;
+#   * negated qualifiers ("training-free", "without fine-tuning", "no retraining")
+#     are stripped first — they assert the OPPOSITE of needing that tier.
 
 _TIER_KEYWORDS: "list[tuple[FixTier, tuple[str, ...]]]" = [
     (FixTier.L4_PARAMETERS, (
@@ -117,20 +126,52 @@ _TIER_KEYWORDS: "list[tuple[FixTier, tuple[str, ...]]]" = [
     )),
 ]
 
+# Phrases that NEGATE a tier's vocabulary ("training-free" ≠ "needs training").
+# Stripped before keyword matching so the negated stem cannot route upward.
+_NEGATION_PATTERNS = (
+    re.compile(r"\b(?:training|train|fine[- ]?tun\w*|finetun\w*|retrain\w*)[- ]free\b"),
+    re.compile(r"\b(?:without|no|avoid(?:s|ing)?|skip(?:s|ping)?|free of)\s+"
+               r"(?:any\s+|re-?\s*)?(?:training|fine[- ]?tuning|finetuning|retraining)\b"),
+    re.compile(r"\b(?:does not|doesn't|do not|don't|cannot|can't|won't|will not|"
+               r"no need to|without needing to)\s+(?:require\s+|need\s+|involve\s+)?"
+               r"(?:any\s+)?(?:re-?\s*)?(?:train\w*|fine[- ]?tun\w*|finetun\w*)\b"),
+)
+
+# Compiled stem matchers: a word boundary before the stem, suffix free after.
+_TIER_PATTERNS: "list[tuple[FixTier, tuple[tuple[str, re.Pattern[str]], ...]]]" = [
+    (tier, tuple((kw, re.compile(r"\b" + re.escape(kw))) for kw in keywords))
+    for tier, keywords in _TIER_KEYWORDS
+]
+
 
 def route_min_tier(hypothesis: "Hypothesis") -> "tuple[FixTier, str]":
     """Return the minimum tier that can causally address *hypothesis*.
 
-    Matches mechanism keywords in ``predicted_failure_mode`` + ``statement`` +
-    ``test_design``; defaults to L1 (cheapest first) when nothing matches.
+    Order of precedence:
+
+    1. An explicit ``hypothesis.metadata["fix_tier"]`` / ``["intervention_space"]``
+       — the structured mechanism wins over any prose.
+    2. Keyword fallback over ``predicted_failure_mode`` + ``statement`` +
+       ``test_design`` (negation-stripped, word-boundary-anchored).
+    3. L1 (cheapest first) when nothing matches.
     """
+    meta = getattr(hypothesis, "metadata", None) or {}
+    explicit = meta.get("fix_tier") or meta.get("intervention_space")
+    if explicit:
+        try:
+            tier = parse_tier(explicit)
+            return tier, f"explicit metadata fix_tier={explicit!r} -> {tier.label}"
+        except ValueError:
+            pass  # malformed hint — fall through to keyword routing
+
     text = " ".join(
         str(getattr(hypothesis, attr, "") or "")
         for attr in ("predicted_failure_mode", "statement", "test_design")
     ).lower()
-    text = text.replace("training-free", "").replace("train-free", "")
-    for tier, keywords in _TIER_KEYWORDS:
-        hits = [k for k in keywords if k in text]
+    for pat in _NEGATION_PATTERNS:
+        text = pat.sub(" ", text)
+    for tier, patterns in _TIER_PATTERNS:
+        hits = [kw for kw, pat in patterns if pat.search(text)]
         if hits:
             return tier, f"matched {hits[:3]} -> {tier.label}"
     return FixTier.L1_PROMPT, "no mechanism keywords matched -> L1 (cheapest first)"

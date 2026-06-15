@@ -68,6 +68,30 @@ def test_routing_by_mechanism_keywords():
     assert tier is FixTier.L1_PROMPT and "cheapest" in why
 
 
+def test_routing_is_word_boundary_and_negation_aware():
+    # "constraint" contains the substring "train" but is not the L4 mechanism —
+    # word-boundary stem matching must not route it to fine-tuning.
+    tier, _ = route_min_tier(_hyp("the decoder violates a layout constraint"))
+    assert tier is FixTier.L1_PROMPT
+
+    # Negated training phrases assert the OPPOSITE of needing L4.
+    tier, why = route_min_tier(_hyp("a crop pipeline fixes this without any retraining"))
+    assert tier is FixTier.L2_SCAFFOLD and "train" not in why
+    tier, _ = route_min_tier(_hyp("zoom helps; no fine-tuning required"))
+    assert tier is FixTier.L2_SCAFFOLD
+
+
+def test_routing_prefers_explicit_metadata():
+    h = _hyp("the model answers too tersely")  # prose alone -> L1
+    h.metadata = {"fix_tier": "L3b"}
+    tier, why = route_min_tier(h)
+    assert tier is FixTier.L3B_INTERNALS_WRITE and "metadata" in why
+    # a malformed hint falls back to keyword routing rather than crashing
+    h.metadata = {"fix_tier": "L99"}
+    tier, _ = route_min_tier(h)
+    assert tier is FixTier.L1_PROMPT
+
+
 # ── L2 image tools + pipeline executor ───────────────────────────────────────
 
 
@@ -895,6 +919,157 @@ for c in cases:
     out.append({"sample_id": c["id"], "output": ans})
 print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
 '''
+
+
+# ── defect 1: applicability predicate / conditional fixes ────────────────────
+
+
+def test_predicate_scopes_validation_to_applicable_cases():
+    """A candidate with a predicate is only judged on the cases it applies to —
+    its safety/coverage exclude cases it never touched."""
+    from evalvitals.eval_agent.stages.fix_agent import FixCandidate
+
+    agent = FixAgent(judge=None, max_tier="L1")
+    data = _gold_yes_batch(n=4)
+    cand = FixCandidate(
+        tier=FixTier.L1_PROMPT, name="careful_subset", kind="template",
+        payload={"prompt_template": "Look carefully. {prompt}"},
+        predicate=lambda c: c.id in {"c0", "c1"})
+    model = BaselineFailsModel()
+    baseline, unstable = agent._baseline(model, data)
+    v = agent._validate(cand, model, data, baseline, unstable)
+    assert v.n_applicable == 2 and v.n_fixed == 2 and v.n_broken == 0
+    assert set(v.fixed_cases) == {"c0", "c1"}
+    assert v.coverage == 0.5  # repaired 2 of the 4 failures it was scoped to
+
+
+def test_spec_noop_cases_are_not_applicable():
+    PIL = pytest.importorskip("PIL")
+    from evalvitals.eval_agent.stages.fix_tools import PipelineSpec, spec_changes_input
+
+    spec = PipelineSpec.from_dict(
+        {"name": "crop", "image_ops": [{"tool": "crop_case_bbox", "params": {}}]})
+    no_bbox = FailureCase(id="x", inputs=Inputs(prompt="q", image=_img()), metadata={})
+    assert spec_changes_input(spec, no_bbox) is False  # crop is a no-op here
+
+    img = PIL.Image.new("RGB", (100, 100), color=(220, 220, 220))
+    for y in range(10, 14):
+        for x in range(80, 84):
+            img.putpixel((x, y), (20, 20, 20))
+    with_bbox = FailureCase(
+        id="y", inputs=Inputs(prompt="q", image=img),
+        metadata={"answer_bbox_xyxy_norm": [0.8, 0.1, 0.84, 0.14]})
+    assert spec_changes_input(spec, with_bbox) is True
+
+
+# ── defect 2: noise floor (baseline stability) ───────────────────────────────
+
+
+class _OneFlakyModel(Model):
+    """Case 0's baseline flips between repeats (sampling noise); others stable.
+    The 'carefully' prompt deterministically answers yes (a real fix)."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    def generate(self, inputs, **kwargs):
+        p = str(getattr(inputs, "prompt", inputs)).lower()
+        if "carefully" in p:
+            return "Yes."
+        if "lesion 0" in p:
+            self._n += 1
+            return "Yes." if self._n % 2 == 1 else "No."
+        return "No."
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_baseline_repeats_flag_and_drop_unstable_cases():
+    agent = FixAgent(judge=None, max_tier="L1", baseline_repeats=2)
+    data = _gold_yes_batch(n=2)
+    model = _OneFlakyModel()
+    baseline, unstable = agent._baseline(model, data)
+    assert "c0" in unstable and "c1" not in unstable
+
+    from evalvitals.eval_agent.stages.fix_agent import FixCandidate
+
+    cand = FixCandidate(
+        tier=FixTier.L1_PROMPT, name="careful", kind="template",
+        payload={"prompt_template": "Look carefully. {prompt}"})
+    v = agent._validate(cand, model, data, baseline, unstable)
+    # c0 is noise -> dropped, not counted as fixed or broken; only c1 is judged.
+    assert v.n_unstable == 1 and v.n_pairs == 1
+    assert v.fixed_cases == ["c1"]
+
+
+# ── defect 4: power-aware verdict ─────────────────────────────────────────────
+
+
+def test_underpowered_run_recommends_gathering_failures():
+    """With too few failures, even a flawless fix cannot reach significance;
+    the recommendation must say 'gather more failures', not 'escalate tier'."""
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look carefully. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1")
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(n=3),
+                                     [_hyp("x")])
+    v = out.attempted[0]
+    assert v.n_fixed == 3 and v.n_broken == 0
+    assert v.verdict == "partial" and v.fixed is False  # net-positive, not sig
+    assert out.fixed is False
+    assert out.recommendation["action"] == "gather_more_failures"
+    assert out.recommendation["recommend_tier"] is None
+
+
+def test_well_powered_run_still_certifies_fix():
+    """Same fix, enough failures (8): e-value clears the gate -> certified."""
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look carefully. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1")
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(n=8),
+                                     [_hyp("x")])
+    assert out.fixed is True and out.best.verdict == "fixed"
+
+
+# ── defect 3: heterogeneity feedback edge ────────────────────────────────────
+
+
+class _MixedModel(Model):
+    """'carefully' repairs even-indexed cases but breaks odd-indexed ones —
+    a heterogeneous failure mode that no single global transform can fix."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        import re as _re
+
+        p = str(getattr(inputs, "prompt", inputs)).lower()
+        m = _re.search(r"lesion (\d+)", p)
+        idx = int(m.group(1)) if m else 0
+        careful = "carefully" in p
+        if idx % 2 == 0:
+            return "Yes." if careful else "No."   # careful fixes evens
+        return "No." if careful else "Yes."        # careful breaks odds
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_heterogeneous_outcome_emits_refine_signal():
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look carefully. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1")
+    out = agent.propose_and_validate(_MixedModel(), _gold_yes_batch(n=4), [_hyp("x")])
+    v = out.attempted[0]
+    assert v.n_fixed > 0 and v.n_broken > 0
+    assert out.refine_signal is not None
+    assert out.refine_signal["kind"] == "heterogeneous_failure_mode"
+    assert out.refine_signal["helped_cases"] and out.refine_signal["hurt_cases"]
 
 
 def test_bridged_attend_enables_coded_l3a(tmp_path):

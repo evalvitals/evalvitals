@@ -562,6 +562,38 @@ class PipelineSpec:
                 "prompt_template": self.prompt_template, "n_samples": self.n_samples}
 
 
+def spec_changes_input(spec: PipelineSpec, case: "FailureCase") -> bool:
+    """True when *spec* actually alters this case's effective input.
+
+    A spec that leaves both the prompt and the image untouched is a *no-op* on
+    the case — e.g. ``crop_case_bbox`` on a case that carries no answer bbox, or
+    an enhancement with unit factors.  Such a case is outside the candidate's
+    applicability: the fix can neither repair nor break it, so it must be scoped
+    out of the safety/coverage accounting rather than counted as an unchanged
+    "control".  This is the structural half of an applicability predicate; an
+    explicit :attr:`FixCandidate.predicate` overrides it.
+    """
+    if spec.prompt_template.strip() != "{prompt}":
+        return True
+    if not spec.image_ops:
+        return False
+    inp = getattr(case, "inputs", None)
+    image = getattr(inp, "image", None) if inp is not None else None
+    before = _as_pil(image)
+    if before is None:
+        return False
+    after = apply_image_ops(before, spec.image_ops, case=case)
+    if after is before:
+        return False
+    try:
+        import numpy as np
+
+        a, b = np.asarray(before), np.asarray(after)
+        return a.shape != b.shape or not np.array_equal(a, b)
+    except Exception:
+        return True  # cannot prove it is a no-op — treat as applicable
+
+
 def run_pipeline(
     model: "Model",
     case: "FailureCase",

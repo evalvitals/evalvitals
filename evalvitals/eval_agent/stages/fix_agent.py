@@ -60,9 +60,11 @@ from evalvitals.eval_agent.stages.fix_tools import (
     catalog_text,
     run_pipeline,
     score_to_bool,
+    spec_changes_input,
 )
 from evalvitals.eval_agent.stages.probe_generator import _extract_code
 from evalvitals.stats import compare
+from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
@@ -216,6 +218,11 @@ class FixCandidate:
                      spec: a :class:`~.fix_tools.PipelineSpec` dict;
                      code: ``{"code": "<python source>"}``.
         source:      ``"judge"``, ``"cli:<provider>"`` or ``"default"``.
+        predicate:   Optional ``(case) -> bool`` applicability gate.  When set,
+                     the candidate is only applied to (and only judged on) the
+                     cases it returns True for — a *conditional* fix.  When
+                     ``None``, applicability is inferred structurally (a spec
+                     that does not change a case's input is a no-op there).
     """
 
     tier: FixTier
@@ -223,11 +230,18 @@ class FixCandidate:
     payload: "dict[str, Any]"
     kind: str = "spec"
     source: str = "judge"
+    predicate: "Callable[[FailureCase], bool] | None" = None
 
 
 @dataclass
 class FixValidation:
-    """Paired validation of one candidate against the unmodified baseline."""
+    """Paired validation of one candidate against the unmodified baseline.
+
+    Safety (``n_broken``) and coverage are scoped to the cases the candidate is
+    *applicable* to — a fix is not blamed for cases it never touched.  Cases
+    whose baseline answer is unstable across repeats (sampling noise) are held
+    out as ``n_unstable`` so a stochastic flip is not mistaken for a regression.
+    """
 
     candidate: FixCandidate
     n_pairs: int = 0
@@ -239,6 +253,14 @@ class FixValidation:
     reject: bool = False
     fixed: bool = False
     summary: str = ""
+    # Applicability + noise accounting (defects 1 & 2).
+    n_applicable: int = 0          # cases the candidate actually touched
+    coverage: "float | None" = None  # applicable FAILs / total FAILs in subset
+    n_unstable: int = 0            # cases dropped as baseline-unstable (noise)
+    e_value: "float | None" = None
+    # Coarse verdict (defect 4): fixed | partial | unsafe | regressed |
+    # no_effect | not_executed.  Richer than the boolean ``fixed`` for triage.
+    verdict: str = ""
     # Non-empty when the candidate never EXECUTED (sandbox crash, timeout,
     # bridge contract violation) — distinct from "executed and not effective".
     # Escalation must not treat these as evidence that the tier is exhausted.
@@ -260,6 +282,10 @@ class FixOutcome:
     best: "FixValidation | None" = None
     fixed: bool = False
     recommendation: "dict[str, Any] | None" = None
+    # Feedback edge back into diagnosis (defect 3): set when a candidate helps
+    # one subset and hurts another — evidence the mechanism is subset-specific
+    # and the hypothesis should be re-scoped, not that no fix exists.
+    refine_signal: "dict[str, Any] | None" = None
 
     def to_dict(self) -> "dict[str, Any]":
         return {
@@ -281,12 +307,18 @@ class FixOutcome:
                     "reject": v.reject,
                     "fixed": v.fixed,
                     "summary": v.summary,
+                    "n_applicable": v.n_applicable,
+                    "coverage": v.coverage,
+                    "n_unstable": v.n_unstable,
+                    "e_value": v.e_value,
+                    "verdict": v.verdict,
                 }
                 for v in self.attempted
             ],
             "best": self.best.candidate.name if self.best else None,
             "fixed": self.fixed,
             "recommendation": self.recommendation,
+            "refine_signal": self.refine_signal,
         }
 
 
@@ -319,6 +351,14 @@ class FixAgent:
                           (all-FAIL-first; deterministic).  Every candidate
                           validation costs >= one model call per case, so an
                           unbounded batch makes coded pipelines time out.
+        baseline_repeats: How many times to re-measure the unmodified baseline
+                          per case (default 1).  With > 1, a case whose baseline
+                          answer flips across repeats is *unstable* (sampling
+                          noise) and is held out of the paired test, so a
+                          stochastic flip is not scored as a regression.
+        alpha:            Significance level for the e-value gate (default 0.05;
+                          rejects when e >= 1/alpha).  Also sets the power
+                          ceiling used to flag underpowered-by-design runs.
     """
 
     def __init__(
@@ -332,6 +372,8 @@ class FixAgent:
         sandbox: "Any | None" = None,
         exec_timeout_sec: int = 600,
         max_validation_cases: int = 0,
+        baseline_repeats: int = 1,
+        alpha: float = 0.05,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -342,6 +384,8 @@ class FixAgent:
         self._sandbox = sandbox
         self._exec_timeout_sec = exec_timeout_sec
         self.max_validation_cases = max_validation_cases
+        self._baseline_repeats = max(1, int(baseline_repeats))
+        self._alpha = float(alpha)
         self._last_repair_prompt = ""
         self._last_usage: dict | None = None
 
@@ -379,7 +423,7 @@ class FixAgent:
             })
 
         data = self._validation_subset(data)
-        baseline = self._baseline(model, data)
+        baseline, unstable = self._baseline(model, data)
         if not any(v is not None for v in baseline.values()):
             logger.warning("FixAgent: no scorable case (no rubrics); nothing to validate")
             outcome.recommendation = self._recommend(routed_tiers, reason_prefix=(
@@ -389,39 +433,120 @@ class FixAgent:
             return outcome
 
         for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
-            validation = self._validate(candidate, model, data, baseline)
+            validation = self._validate(candidate, model, data, baseline, unstable)
             outcome.attempted.append(validation)
 
+        outcome.refine_signal = self._refine_signal(outcome.attempted, data)
         winners = [v for v in outcome.attempted if v.fixed]
         if winners:
             outcome.best = max(winners, key=lambda v: (v.effect or 0.0, -v.n_broken))
             outcome.fixed = True
         else:
-            # Escalation needs the current tier to have been genuinely TRIED:
-            # a candidate that never executed (sandbox crash/timeout/contract
-            # violation) is an engineering failure, not evidence the tier is
-            # exhausted.
-            executed = [v for v in outcome.attempted if v.n_pairs > 0]
-            never_ran = [v for v in outcome.attempted if v.n_pairs == 0]
-            if never_ran and not executed:
-                outcome.recommendation = {
-                    "recommend_tier": self.max_tier.label,
-                    "reason": (
-                        "no candidate EXECUTED — escalating would be premature; "
-                        f"fix candidate execution and retry within {self.max_tier.label}. "
-                        "Failures: " + "; ".join(
-                            f"{v.candidate.name}: {(v.exec_error or v.summary)[:120]}"
-                            for v in never_ran[:3])
-                    ),
-                }
-            else:
-                outcome.recommendation = self._recommend(routed_tiers)
-                if never_ran and outcome.recommendation is not None:
-                    outcome.recommendation["reason"] += (
-                        f" (caveat: {len(never_ran)} candidate(s) never executed: "
-                        + ", ".join(v.candidate.name for v in never_ran[:3]) + ")")
+            outcome.recommendation = self._no_fix_recommendation(
+                outcome.attempted, routed_tiers, data)
         self._emit(outcome)
         return outcome
+
+    # -- no-fix recommendation (escalate vs. gather data vs. retry exec) ----
+
+    def _no_fix_recommendation(
+        self,
+        attempted: "list[FixValidation]",
+        routed_tiers: "list[FixTier]",
+        data: "CaseBatch",
+    ) -> "dict[str, Any] | None":
+        """Decide what 'no candidate validated' actually means.
+
+        Three distinct causes the old single-path recommendation conflated:
+
+        * **never executed** — engineering failure; retry within the tier, do
+          not escalate (a crash is not evidence the tier is exhausted).
+        * **underpowered by design** — even a flawless fix of every failure
+          could not reach significance with this few failures; gather more
+          failing cases instead of climbing the (more invasive) tier ladder.
+        * **genuinely exhausted** — executed, powered, still no fix; escalate.
+        """
+        executed = [v for v in attempted if v.n_pairs > 0]
+        never_ran = [v for v in attempted if v.n_pairs == 0]
+        if never_ran and not executed:
+            return {
+                "recommend_tier": self.max_tier.label,
+                "action": "fix_execution",
+                "reason": (
+                    "no candidate EXECUTED — escalating would be premature; "
+                    f"fix candidate execution and retry within {self.max_tier.label}. "
+                    "Failures: " + "; ".join(
+                        f"{v.candidate.name}: {(v.exec_error or v.summary)[:120]}"
+                        for v in never_ran[:3])
+                ),
+            }
+
+        # Underpowered-by-design: with n_fail failures the best possible result
+        # (every failure repaired, nothing broken) yields an e-value ceiling of
+        # evalue_bernoulli(n_fail, n_fail); if that cannot clear 1/alpha, no fix
+        # of any tier can be certified here — the bottleneck is sample size, and
+        # a "promising" candidate (helped more than it hurt) confirms the lead.
+        n_fail = sum(1 for c in data if getattr(c.label, "value", None) == "fail")
+        ceiling = evalue_bernoulli(n_fail, n_fail, p0=0.5) if n_fail > 0 else 1.0
+        promising = [v for v in executed if (v.n_fixed - v.n_broken) > 0 and not v.reject]
+        if promising and ceiling < 1.0 / self._alpha:
+            best = max(promising, key=lambda v: (v.n_fixed - v.n_broken, v.effect or 0.0))
+            need = self._min_failures_for_power()
+            return {
+                "recommend_tier": None,
+                "action": "gather_more_failures",
+                "reason": (
+                    f"underpowered by design: only {n_fail} failure case(s) — even a "
+                    f"perfect fix tops out at e={ceiling:.1f} (< {1.0 / self._alpha:.0f} "
+                    f"needed). {best.candidate.name!r} already helps net "
+                    f"{best.n_fixed - best.n_broken} case(s); collect >= {need} failing "
+                    "cases and re-validate before escalating the tier."
+                ),
+            }
+
+        rec = self._recommend(routed_tiers)
+        if never_ran and rec is not None:
+            rec["reason"] += (
+                f" (caveat: {len(never_ran)} candidate(s) never executed: "
+                + ", ".join(v.candidate.name for v in never_ran[:3]) + ")")
+        return rec
+
+    def _min_failures_for_power(self) -> int:
+        """Smallest n where a flawless fix could clear the e-value gate."""
+        threshold = 1.0 / self._alpha
+        for n in range(1, 200):
+            if evalue_bernoulli(n, n, p0=0.5) >= threshold:
+                return n
+        return 200
+
+    @staticmethod
+    def _refine_signal(
+        attempted: "list[FixValidation]", data: "CaseBatch"
+    ) -> "dict[str, Any] | None":
+        """Heterogeneity feedback for re-diagnosis (defect 3).
+
+        A candidate that repairs one subset while breaking another is evidence
+        the failure mode is *not* homogeneous: the right next move is to split
+        the population by sub-mechanism and re-diagnose, not to keep proposing
+        whole-population transforms.  Surface the partition so the loop (or a
+        human) can re-scope the hypothesis.
+        """
+        split = [v for v in attempted if v.n_fixed > 0 and v.n_broken > 0]
+        if not split:
+            return None
+        v = max(split, key=lambda x: min(x.n_fixed, x.n_broken))
+        return {
+            "kind": "heterogeneous_failure_mode",
+            "candidate": v.candidate.name,
+            "helped_cases": list(v.fixed_cases),
+            "hurt_cases": list(v.broken_cases),
+            "message": (
+                f"{v.candidate.name!r} repaired {v.n_fixed} case(s) but broke "
+                f"{v.n_broken} — the failure mode is likely subset-specific. "
+                "Re-diagnose: what distinguishes the helped cases from the hurt "
+                "ones, and gate the fix on that predicate."
+            ),
+        }
 
     def _validation_subset(self, data: "CaseBatch") -> "CaseBatch":
         """Label-stratified, deterministic subset for candidate validation."""
@@ -684,8 +809,16 @@ class FixAgent:
 
     @staticmethod
     def _format_prior(attempts: "list[FixValidation]") -> str:
-        """Format failed prior attempts as a context block for judge prompts."""
+        """Format failed prior attempts as a context block for judge prompts.
+
+        Beyond "try a different mechanism", this surfaces the *partition* a
+        prior candidate induced (helped vs hurt) so the next proposal can scope
+        the fix instead of blindly transforming the whole population — a
+        candidate that helps one subset and breaks another is asking to be
+        gated by a predicate, not replaced (defect 3).
+        """
         items = []
+        heterogeneous = []
         for v in attempts:
             c = v.candidate
             if c.kind == "finetune_spec":
@@ -696,13 +829,27 @@ class FixAgent:
                 f"- [{c.tier.label}/{c.kind}] {c.name}: "
                 f"{v.n_fixed} fixed / {v.n_broken} broken ({effect}{broken})"
             )
+            if v.n_fixed > 0 and v.n_broken > 0:
+                heterogeneous.append(
+                    f"  '{c.name}' HELPED {v.fixed_cases[:4]} but HURT "
+                    f"{v.broken_cases[:4]} — these two groups differ; either gate "
+                    "the fix so it only applies to the helped group, or target the "
+                    "mechanism that separates them."
+                )
         if not items:
             return ""
-        return (
+        block = (
             "\n\nPRIOR ATTEMPTS THAT DID NOT WORK — reason from these failures "
             "and design something FUNDAMENTALLY DIFFERENT (different mechanism, "
             "not just different parameters):\n" + "\n".join(items)
         )
+        if heterogeneous:
+            block += (
+                "\n\nHETEROGENEITY — a prior fix helped some cases and broke "
+                "others. Prefer a CONDITIONAL fix (apply only where it helps) "
+                "over a stronger global transform:\n" + "\n".join(heterogeneous)
+            )
+        return block
 
     def _emit_codegen(
         self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool
@@ -820,17 +967,70 @@ class FixAgent:
 
     # -- strategy compilation + validation --------------------------------
 
-    def _baseline(self, model: "Model", data: "CaseBatch") -> "dict[str, Optional[bool]]":
+    def _baseline(
+        self, model: "Model", data: "CaseBatch"
+    ) -> "tuple[dict[str, Optional[bool]], set[str]]":
+        """Measure the unmodified baseline; flag noise-unstable cases.
+
+        Returns ``(scores, unstable_ids)``.  With ``baseline_repeats == 1`` the
+        behaviour is unchanged (one pass, ``unstable`` empty).  With more
+        repeats, each case's modal score is used and any case that both passed
+        and failed across repeats is reported as unstable — its baseline is
+        sampling noise, so blaming a later candidate for "breaking" it would be
+        spurious; such cases are dropped from the paired test.
+        """
+        counts: "dict[str, list[int]]" = {c.id: [0, 0] for c in data}  # [false, true]
+        for _ in range(self._baseline_repeats):
+            for case in data:
+                try:
+                    output = str(model.generate(case.inputs))
+                except Exception as exc:
+                    logger.debug("FixAgent: baseline generate failed on %s: %s",
+                                 case.id, exc)
+                    continue
+                s = score_to_bool(self._score(case, output))
+                if s is True:
+                    counts[case.id][1] += 1
+                elif s is False:
+                    counts[case.id][0] += 1
         scores: "dict[str, Optional[bool]]" = {}
-        for case in data:
+        unstable: "set[str]" = set()
+        for cid, (n_false, n_true) in counts.items():
+            if n_false + n_true == 0:
+                scores[cid] = None
+            else:
+                scores[cid] = n_true >= n_false  # modal; ties -> True
+                if n_false > 0 and n_true > 0:
+                    unstable.add(cid)
+        return scores, unstable
+
+    def _applies(self, candidate: FixCandidate, case: "FailureCase") -> bool:
+        """Whether *candidate* is applicable to *case* (defect 1).
+
+        An explicit predicate wins.  Otherwise applicability is structural: a
+        prompt template that is the identity and image ops that leave the image
+        unchanged mean the candidate never touches the case, so it must not be
+        credited or blamed for it.  Coded/primitive/finetune candidates run
+        their own per-case logic, so they are treated as universally applicable.
+        """
+        if candidate.predicate is not None:
             try:
-                output = str(model.generate(case.inputs))
+                return bool(candidate.predicate(case))
             except Exception as exc:
-                logger.debug("FixAgent: baseline generate failed on %s: %s", case.id, exc)
-                scores[case.id] = None
-                continue
-            scores[case.id] = score_to_bool(self._score(case, output))
-        return scores
+                logger.debug("FixAgent: predicate failed on %s: %s", case.id, exc)
+                return True
+        if candidate.kind == "template":
+            return str(candidate.payload.get("prompt_template", "{prompt}")).strip() != "{prompt}"
+        if candidate.kind == "spec":
+            spec = PipelineSpec.from_dict(candidate.payload)
+            if spec is None:
+                return True
+            try:
+                return spec_changes_input(spec, case)
+            except Exception as exc:
+                logger.debug("FixAgent: applicability check failed on %s: %s", case.id, exc)
+                return True
+        return True
 
     def _strategy(self, candidate: FixCandidate) -> "Callable[[Model, FailureCase], Optional[bool]]":
         """Compile a candidate to a per-case success function (ab_runner shape)."""
@@ -952,24 +1152,41 @@ class FixAgent:
         model: "Model",
         data: "CaseBatch",
         baseline: "dict[str, Optional[bool]]",
+        unstable: "set[str] | None" = None,
     ) -> FixValidation:
         v = FixValidation(candidate=candidate)
         if candidate.kind == "finetune_spec":
+            v.verdict = "not_executed"
             v.summary = ("L4 executor TODO — fine-tune recipe recorded, "
                          "not executed (see candidate payload)")
             return v
+        unstable = unstable or set()
         scores = self._candidate_scores(candidate, model, data)
         if isinstance(candidate.payload, dict):
             v.exec_error = str(candidate.payload.get("exec_error", "") or "")
+
+        n_fail = sum(1 for c in data if getattr(c.label, "value", None) == "fail")
+        applicable_fail = 0
         base_vec: "list[bool]" = []
         cand_vec: "list[bool]" = []
         for case in data:
-            b = baseline.get(case.id)
-            c = scores.get(case.id)
-            b = score_to_bool(b)
-            c = score_to_bool(c)
+            b = score_to_bool(baseline.get(case.id))
+            c = score_to_bool(scores.get(case.id))
             if b is None or c is None:
                 continue
+            # Noise floor (defect 2): a case whose baseline flipped across
+            # repeats is unreliable — excluding it stops a stochastic flip from
+            # masquerading as a fix or a regression.
+            if case.id in unstable:
+                v.n_unstable += 1
+                continue
+            # Applicability (defect 1): the safety/coverage test runs only on
+            # cases the candidate actually touches.
+            if not self._applies(candidate, case):
+                continue
+            is_fail = getattr(case.label, "value", None) == "fail"
+            if is_fail:
+                applicable_fail += 1
             base_vec.append(b)
             cand_vec.append(c)
             if not b and c:
@@ -979,22 +1196,44 @@ class FixAgent:
                 v.n_broken += 1
                 v.broken_cases.append(case.id)
         v.n_pairs = len(base_vec)
+        v.n_applicable = v.n_pairs
+        v.coverage = (applicable_fail / n_fail) if n_fail else None
         if v.n_pairs == 0:
+            v.verdict = "not_executed"
             v.summary = (f"never executed: {v.exec_error}" if v.exec_error
-                         else "no scorable pair — candidate unvalidatable")
+                         else "no applicable scorable pair — candidate unvalidatable")
             return v
         try:
-            stat = compare(base_vec, cand_vec, paired=True)
+            stat = compare(base_vec, cand_vec, paired=True, alpha=self._alpha)
         except Exception as exc:
+            v.verdict = "not_executed"
             v.summary = f"stats failed: {exc}"
             return v
         v.effect = stat.effect
         v.reject = bool(stat.reject)
+        v.e_value = stat.e_value
         # Fixed = the paired test rejects with a net-positive effect: the
         # candidate repairs significantly more cases than it breaks.
         v.fixed = v.reject and (v.effect or 0.0) > 0
-        v.summary = stat.summary()
+        v.verdict = self._verdict(v)
+        cov = "" if v.coverage is None else f", coverage={v.coverage:.0%}"
+        noise = f", {v.n_unstable} unstable dropped" if v.n_unstable else ""
+        v.summary = f"{stat.summary()} [{v.verdict}{cov}{noise}]"
         return v
+
+    @staticmethod
+    def _verdict(v: FixValidation) -> str:
+        """Coarse triage label (defect 4): why a candidate did/didn't pass."""
+        if v.fixed:
+            return "fixed"
+        if v.reject and (v.effect or 0.0) < 0:
+            return "regressed"          # significantly worse
+        net = v.n_fixed - v.n_broken
+        if net > 0:
+            return "partial"            # helped more than hurt, not significant
+        if v.n_broken > v.n_fixed:
+            return "unsafe"             # breaks more than it fixes
+        return "no_effect"
 
     # -- recommendation + logging ------------------------------------------
 
