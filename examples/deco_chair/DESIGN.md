@@ -129,6 +129,52 @@ open-ended captioning slice.
 > everywhere else; only this example sets it to 3. The diagnosis (M1→M5) was
 > already feedback-iterated across cycles; this adds the same idea to repair.
 
+## 4c. Run record — 2026-06-15 (2B, fix tier raised to L3b)
+
+Re-run with `fix_max_tier: L3b` (everything else identical) to let the loop also
+reach internals read/write primitives. It closed again — `repair_rounds=3`,
+`fixed=True`, `recommendation=None`, **30 candidates** over 3 feedback rounds —
+and the result is the scientifically interesting part: **given the internals
+levers, the loop tried them and correctly rejected them, then still converged to
+the same prompt-cap mechanism as the L2 run.**
+
+- **Internals primitives were exercised and refuted, not chosen**:
+  - `visual_embedding_boost` (L3b internals-write): **inert every time** — 0
+    fixed / 0 broken / +0.0 on all four attempts. Scaling image-token
+    embeddings does nothing for multi-object captioning.
+  - `attention_guided_crop` (L3a internals-read): noisy and sometimes
+    **harmful** — across attempts it scored 6/5, 4/3, **6/9 (−0.125)**, 4/5
+    (−0.042), 5/3; never validated. Cropping to one attention peak drops other
+    real objects (recall loss), which the recall-floored scorer penalises.
+  - the L3a coded pipeline (now given a bridged `model_attend()`) wrote a
+    heavier attention-guided program that **timed out at 1200 s** (62 model
+    calls) and triggered the existing execution self-repair round; the rewrite
+    ran but still didn't validate (6/4, 3/0, 6/3).
+- **Same winner family as L2, found in round 3**: three fixes cleared the
+  e-value bar, all "limit what you volunteer" prompts —
+
+  | candidate (tier) | fixed / broke | effect | e-value |
+  |---|---|---|---|
+  | **single_sentence_hard_cap (L1)** | **10 / 0** | **+0.417** | **93.1** ✅ best |
+  | grounded_count_cap (L2) | 10 / 0 | +0.417 | 93.1 ✅ |
+  | consensus_intersection_brief (L2) | 9 / 0 | +0.375 | 51.2 ✅ |
+
+  Rounds 1–2 again produced only directionally-good-but-sub-threshold candidates
+  (best ~+0.29, e≈3); their results were fed back and **round 3** landed the
+  validated caps (e.g. "answer in ONE sentence ≤25 words, name at most three of
+  the largest/central objects"). All three winners break **0** clean captions —
+  the recall floor held — and they match the loop's own CHAIR-gap diagnosis
+  (cap the number of volunteered objects → kill the off-rail hallucinating tail).
+
+**L2 vs L3b takeaway**: raising the tier did not change the *answer* — the fix is
+a prompt-level object cap either way — it only let the loop **demonstrate** that
+the internals levers (embedding boost, attention crop) are inert or recall-harmful
+on this open-ended task instead of us asserting it. Cost is real: L3b added the
+primitive trials plus a 1200 s coded-pipeline timeout, and convergence took 3
+rounds instead of 2. The honest reading: for captioning hallucination on
+Qwen3-VL-2B, the minimum effective tier is **L1/L2 (a volunteering cap)**, and
+the internals tier buys nothing here.
+
 ## 5. 预算
 
 50 图 × 512 token 生成 ×2（基线+DeCo）+ 每 mention 1 次前缀 forward
