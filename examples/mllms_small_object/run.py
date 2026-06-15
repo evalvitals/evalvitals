@@ -14,6 +14,35 @@ Usage (direct):
     python examples/mllms_small_object/run.py
     python examples/mllms_small_object/run.py --max-data-cases 32
     python examples/mllms_small_object/run.py --textvqa-size-split all
+
+Investigation findings (qwen3-vl-4b-instruct, small split, 2026-06-15)
+-----------------------------------------------------------------------
+Model accuracy on the small split is ~79% (64/300 fail), but diagnosis
+is blocked by an M5 statistical power gap:
+
+  - The diagnosis analyzers (prompt_contrast, relative_attention) operate
+    on a 32-case stratified head.  With ~6 FAIL cases in that window,
+    McNemar produces only 2–3 discordant pairs — far below the threshold
+    needed to reject H0 at alpha=0.05 with e-value correction.
+
+  - Despite this, all 3 diagnosis cycles converge on the same finding:
+    ``describe_first`` (ask the model to describe the image before
+    answering) achieves 100% success on the stratified head vs. 93.75%
+    baseline.  The mechanism hypothesis is premature text-token anchoring:
+    image_token_attention_ratio ≈ 0.006, so the model defaults to its
+    language prior and ignores fine-grained visual detail unless forced
+    to do a visual scan first.
+
+  - To break through the power gap: either (a) increase the analyzer
+    ``max_cases`` above 32 so M5 sees more discordant pairs, or (b) run
+    a direct L1 fix validation with ``describe_first`` as the prompt
+    template against the full failure set (skips M5 gating entirely).
+
+  - Two earlier bugs masked these results on prior runs:
+      * ``502fdfe`` — fix-agent scoring: ``Label`` enum passed raw to
+        numpy caused stats to silently fail for 26/27 fix attempts.
+      * ``de3cb01`` — analyzer sampling: ``list(cases)[:32]`` head on
+        a 773-case batch contained ~1 FAIL; switched to stratified_head.
 """
 
 from __future__ import annotations
