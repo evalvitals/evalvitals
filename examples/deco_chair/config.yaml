@@ -24,11 +24,13 @@ codegen_effort: low
 codegen_budget_usd: 2.0
 codegen_timeout_sec: 240
 
-# Fix module. L2 is the realistic captioning lever (prompt rewrite + a coded
-# self-verification scaffold that re-checks each named object); internals-write
-# primitives are yes/no-oriented, so the tier stays at L2 to keep the search
-# focused and the cost bounded.
-fix_max_tier: L2
+# Fix module. L3b lets the loop reach internals-read/-write primitives in
+# addition to the realistic captioning levers (prompt rewrite + a coded
+# self-verification scaffold). The internals primitives are yes/no-oriented, so
+# they will likely come back inert/sub-threshold on captioning and be rejected —
+# allowing the tier just lets the loop demonstrate that itself rather than us
+# pre-deciding it. The recall-floored CHAIR scorer still guards every candidate.
+fix_max_tier: L3b
 fix_validation_cases: 24    # stratified subset; long captions make full-batch
                             # validation slow. 24 -> ~12 FAIL + 12 PASS (recall guard)
 fix_exec_timeout_sec: 1200  # wall-clock per coded-pipeline session (long captions)
