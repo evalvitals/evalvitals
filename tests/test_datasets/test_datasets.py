@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from evalvitals.core.case import CaseBatch
 from evalvitals.datasets import (
     GUIOSDataset,
     LLMQADataset,
     PureQADataset,
     Spatial457Dataset,
+    TextVQASizeDataset,
     VLMQADataset,
     WebSearchQADataset,
     contains_answer,
@@ -90,6 +93,120 @@ def test_spatial457_sample():
     cb = Spatial457Dataset.sample().load()
     assert len(cb) == 2 and "spatial457" in cb[0].tags
     assert cb[0].metadata["dataset"] == "spatial457"
+
+
+# ---------------- TextVQA size split ----------------
+
+def test_textvqa_size_dataset_partitions_by_answer_bbox_area():
+    recs = [
+        {
+            "question_id": "q_small",
+            "image": "small.jpg",
+            "image_width": 1000,
+            "image_height": 1000,
+            "question": "What word is on the tiny sign?",
+            "answers": ["moma", "MoMA"],
+            "answer_bbox": [100, 120, 40, 12],  # 0.00048
+        },
+        {
+            "question_id": "q_medium",
+            "image": "medium.jpg",
+            "image_width": 1000,
+            "image_height": 1000,
+            "question": "What is printed on the poster?",
+            "answers": ["sale"],
+            "answer_bbox": [100, 100, 100, 100],  # 0.01
+        },
+        {
+            "question_id": "q_large",
+            "image": "large.jpg",
+            "image_width": 1000,
+            "image_height": 1000,
+            "question": "What brand is shown?",
+            "answers": ["acme"],
+            "answer_bbox": [100, 100, 300, 300],  # 0.09
+        },
+    ]
+
+    small = TextVQASizeDataset.from_records(recs, size_split="small").load()
+    medium = TextVQASizeDataset.from_records(recs, size_split="medium").load()
+    large = TextVQASizeDataset.from_records(recs, size_split="large").load()
+
+    assert [c.id for c in small] == ["q_small"]
+    assert [c.id for c in medium] == ["q_medium"]
+    assert [c.id for c in large] == ["q_large"]
+    c = small[0]
+    assert c.expected == {"any_of": ["moma", "MoMA"]}
+    assert c.metadata["dataset"] == "textvqa"
+    assert c.metadata["size_split"] == "small"
+    assert c.metadata["answer_bbox_xyxy_norm"] == [0.1, 0.12, 0.14, 0.132]
+    assert {"vlm_qa", "textvqa", "textvqa_small"}.issubset(c.tags)
+
+
+def test_textvqa_size_dataset_reads_image_dimensions_from_path(tmp_path):
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    img_path = tmp_path / "img.jpg"
+    Image.new("RGB", (200, 100), color=(255, 255, 255)).save(img_path)
+    recs = [
+        {
+            "question_id": "q_img",
+            "image": "img.jpg",
+            "question": "What is the small label?",
+            "answer": "abc",
+            "answer_bbox": [20, 10, 10, 5],
+        }
+    ]
+
+    cb = TextVQASizeDataset.from_records(
+        recs,
+        image_dir=tmp_path,
+        size_split="small",
+    ).load()
+
+    assert len(cb) == 1
+    assert cb[0].inputs.image == str(img_path)
+    assert cb[0].metadata["bbox_area_ratio"] == pytest.approx(0.0025)
+
+
+def test_textvqa_size_dataset_accepts_dict_answer_and_normalized_xyxy():
+    recs = [
+        {
+            "question_id": "q_norm",
+            "image_width": 1000,
+            "image_height": 1000,
+            "question": "What word is shown?",
+            "answer": {"text": "exit"},
+            "answer_bbox": [0.1, 0.2, 0.14, 0.23],
+        }
+    ]
+
+    cb = TextVQASizeDataset.from_records(recs, size_split="small").load()
+
+    assert len(cb) == 1
+    assert cb[0].expected == "exit"
+    assert cb[0].metadata["answer_bbox_xyxy_norm"] == [0.1, 0.2, 0.14, 0.23]
+
+
+def test_textvqa_size_dataset_keeps_degenerate_small_bbox():
+    recs = [
+        {
+            "question_id": "q_zero",
+            "image_width": 1000,
+            "image_height": 500,
+            "question": "What word is shown?",
+            "answer": "unknown",
+            "answer_bbox": [100, 200, 0, 0],
+            "bbox_format": "xywh",
+        }
+    ]
+
+    cb = TextVQASizeDataset.from_records(recs, size_split="small").load()
+
+    assert len(cb) == 1
+    assert cb[0].metadata["bbox_degenerate"] is True
+    assert cb[0].metadata["answer_bbox_xyxy_norm"] == [0.1, 0.4, 0.101, 0.402]
 
 
 # ---------------- VQA-RAD ----------------

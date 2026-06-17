@@ -48,6 +48,10 @@ def test_routing_by_mechanism_keywords():
         mode="resolution_limit"))
     assert tier is FixTier.L2_SCAFFOLD and "resolution" in why
 
+    tier, why = route_min_tier(_hyp(
+        "a training-free crop/enhance scaffold should magnify the small text"))
+    assert tier is FixTier.L2_SCAFFOLD and "train" not in why
+
     tier, _ = route_min_tier(_hyp(
         "suppress the attention sink on structural tokens", mode="attention_sink"))
     assert tier is FixTier.L3B_INTERNALS_WRITE  # write verbs beat bare "attention"
@@ -62,6 +66,30 @@ def test_routing_by_mechanism_keywords():
 
     tier, why = route_min_tier(_hyp("the model answers too tersely"))
     assert tier is FixTier.L1_PROMPT and "cheapest" in why
+
+
+def test_routing_is_word_boundary_and_negation_aware():
+    # "constraint" contains the substring "train" but is not the L4 mechanism —
+    # word-boundary stem matching must not route it to fine-tuning.
+    tier, _ = route_min_tier(_hyp("the decoder violates a layout constraint"))
+    assert tier is FixTier.L1_PROMPT
+
+    # Negated training phrases assert the OPPOSITE of needing L4.
+    tier, why = route_min_tier(_hyp("a crop pipeline fixes this without any retraining"))
+    assert tier is FixTier.L2_SCAFFOLD and "train" not in why
+    tier, _ = route_min_tier(_hyp("zoom helps; no fine-tuning required"))
+    assert tier is FixTier.L2_SCAFFOLD
+
+
+def test_routing_prefers_explicit_metadata():
+    h = _hyp("the model answers too tersely")  # prose alone -> L1
+    h.metadata = {"fix_tier": "L3b"}
+    tier, why = route_min_tier(h)
+    assert tier is FixTier.L3B_INTERNALS_WRITE and "metadata" in why
+    # a malformed hint falls back to keyword routing rather than crashing
+    h.metadata = {"fix_tier": "L99"}
+    tier, _ = route_min_tier(h)
+    assert tier is FixTier.L1_PROMPT
 
 
 # ── L2 image tools + pipeline executor ───────────────────────────────────────
@@ -92,6 +120,153 @@ def test_apply_image_ops_skips_unknown_and_loads_paths(tmp_path):
         {"tool": "upscale", "params": {"factor": 2.0}},
     ])
     assert out.size == (128, 96)
+
+
+def test_crop_salient_region_magnifies_small_content():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import crop_salient_region
+
+    img = PIL.Image.new("RGB", (64, 64), color=(210, 210, 210))
+    for y in range(30, 34):
+        for x in range(64):
+            img.putpixel((x, y), (200, 40, 40))
+
+    before = np.asarray(img)
+    out = crop_salient_region(img, padding=0.02)
+    after = np.asarray(out)
+    before_red = ((before[:, :, 0] > 150) & (before[:, :, 1] < 100)).sum()
+    after_red = ((after[:, :, 0] > 150) & (after[:, :, 1] < 140)).sum()
+    assert out.size == img.size
+    assert after_red > before_red * 5
+
+
+def test_crop_case_bbox_magnifies_metadata_box():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.core.case import FailureCase, Inputs
+    from evalvitals.eval_agent.stages.fix_tools import crop_case_bbox
+
+    img = PIL.Image.new("RGB", (100, 100), color=(220, 220, 220))
+    for y in range(10, 14):
+        for x in range(80, 84):
+            img.putpixel((x, y), (20, 20, 20))
+    case = FailureCase(
+        id="tiny_text_region",
+        inputs=Inputs(prompt="read it", image=img),
+        metadata={"answer_bbox_xyxy_norm": [0.8, 0.1, 0.84, 0.14]},
+    )
+
+    out = crop_case_bbox(img, case=case, padding=0.0, min_size_frac=0.08)
+    arr = np.asarray(out)
+    dark = (arr[:, :, 0] < 80) & (arr[:, :, 1] < 80) & (arr[:, :, 2] < 80)
+
+    assert out.size == img.size
+    assert dark.mean() > 0.2
+
+
+def test_crop_case_bbox_no_bbox_is_noop_even_with_enhancement():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.core.case import FailureCase, Inputs
+    from evalvitals.eval_agent.stages.fix_tools import crop_case_bbox
+
+    img = PIL.Image.new("RGB", (32, 32), color=(120, 130, 140))
+    case = FailureCase(id="no_bbox", inputs=Inputs(prompt="q", image=img), metadata={})
+
+    out = crop_case_bbox(img, case=case, sharpen_factor=3.0, contrast_factor=1.5)
+
+    assert out is img
+    assert np.asarray(out).mean() == np.asarray(img).mean()
+
+
+def test_run_pipeline_can_fix_textvqa_style_bbox_case():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import PipelineSpec, run_pipeline
+
+    img = PIL.Image.new("RGB", (100, 100), color=(220, 220, 220))
+    for y in range(10, 14):
+        for x in range(80, 84):
+            img.putpixel((x, y), (20, 20, 20))
+    case = FailureCase(
+        id="textvqa_small",
+        inputs=Inputs(prompt="What text is shown?", image=img),
+        expected="abc",
+        metadata={"answer_bbox_xyxy_norm": [0.8, 0.1, 0.84, 0.14]},
+    )
+
+    class BBoxSensitiveModel:
+        def generate(self, inputs, **kwargs):
+            arr = np.asarray(inputs.image)
+            dark = (arr[:, :, 0] < 80) & (arr[:, :, 1] < 80) & (arr[:, :, 2] < 80)
+            return "abc" if dark.mean() > 0.2 else "wrong"
+
+    spec = PipelineSpec(
+        name="answer_bbox_crop",
+        image_ops=[{"tool": "crop_case_bbox", "params": {"padding": 0.0, "min_size_frac": 0.08}}],
+    )
+
+    assert run_pipeline(BBoxSensitiveModel(), case, spec, _label_score) is True
+
+
+def test_separate_horizontal_bands_adds_visible_gaps():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import separate_horizontal_bands
+
+    colors = [(200, 40, 40), (40, 160, 40), (40, 40, 200), (210, 150, 30), (160, 50, 200)]
+    img = PIL.Image.new("RGB", (80, 80), color=(210, 210, 210))
+    y = 35
+    for color in colors:
+        for yy in range(y, y + 2):
+            for x in range(80):
+                img.putpixel((x, yy), color)
+        y += 2
+
+    out = separate_horizontal_bands(img)
+    arr = np.asarray(out, dtype=np.int16)
+    bg = np.array([210, 210, 210], dtype=np.int16)
+    salient_rows = (np.linalg.norm(arr - bg, axis=2) > 30).mean(axis=1) > 0.2
+    groups = 0
+    prev = False
+    for flag in salient_rows.tolist():
+        if flag and not prev:
+            groups += 1
+        prev = flag
+    assert out.size == img.size
+    assert groups == len(colors)
+
+
+def test_annotate_horizontal_band_count_overlays_measurement():
+    PIL = pytest.importorskip("PIL")
+    import numpy as np
+
+    from evalvitals.eval_agent.stages.fix_tools import (
+        _horizontal_band_count,
+        annotate_horizontal_band_count,
+    )
+
+    img = PIL.Image.new("RGB", (96, 96), color=(210, 210, 210))
+    colors = [(200, 40, 40), (40, 160, 40), (40, 40, 200), (210, 150, 30)]
+    y = 40
+    for color in colors:
+        for yy in range(y, y + 2):
+            for x in range(96):
+                img.putpixel((x, yy), color)
+        y += 2
+
+    assert _horizontal_band_count(img) == len(colors)
+    out = annotate_horizontal_band_count(img)
+    arr = np.asarray(out)
+    assert out.size == img.size
+    assert ((arr[:20] > 240).all(axis=2)).mean() > 0.7  # white banner
+    assert (arr[:30].min(axis=2) < 40).any()  # black text/border pixels
 
 
 def test_pipeline_spec_validation():
@@ -174,6 +349,16 @@ def _gold_yes_batch(n: int = 8, image=None) -> CaseBatch:
                     expected=yes, label=Label.FAIL)
         for i in range(n)
     ])
+
+
+def _label_score(case, observed):
+    """CaseDiscovery-style scorer: returns Label instead of bool."""
+    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
+
+    score = _default_score(case, observed)
+    if score is None:
+        return Label.UNKNOWN
+    return Label.PASS if score else Label.FAIL
 
 
 # ── FixAgent: L1 repair via judge proposal ───────────────────────────────────
@@ -268,6 +453,19 @@ def test_repair_round_stops_when_no_new_candidate():
     # got deduped to zero new candidates, and the loop stopped at round 2.
     assert out.repair_rounds == 1
     assert sum(1 for v in out.attempted if v.candidate.name == "polite") == 1
+
+
+def test_fix_agent_accepts_label_returning_scorer():
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look very carefully. {prompt}"},
+    ]))
+    agent = FixAgent(judge=judge, max_tier="L1", score_fn=_label_score)
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(),
+                                     [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is True
+    assert out.best is not None
+    assert out.best.n_fixed == 8 and out.best.n_broken == 0
+    assert "stats failed" not in out.best.summary
 
 
 def test_l2_pipeline_candidate_fixes_zoom_sensitive_model():
@@ -460,6 +658,19 @@ def test_coded_pipeline_bridge_round_trip(tmp_path):
     assert result.ok and result.n_calls == 3
     scores = score_outputs(result, cases, _default_score)
     assert all(scores[c.id] is True for c in cases)  # upscale repairs every case
+
+
+def test_score_outputs_coerces_label_scores():
+    from evalvitals.eval_agent.stages.fix_pipeline import CodedPipelineResult, score_outputs
+
+    cases = _gold_yes_batch(n=2)
+    result = CodedPipelineResult(
+        outputs={cases[0].id: "Yes.", cases[1].id: "No."},
+        ok=True,
+    )
+    scores = score_outputs(result, cases, _label_score)
+    assert scores[cases[0].id] is True
+    assert scores[cases[1].id] is False
 
 
 def test_coded_pipeline_call_budget_kills_runaway(tmp_path):
@@ -786,6 +997,157 @@ for c in cases:
     out.append({"sample_id": c["id"], "output": ans})
 print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
 '''
+
+
+# ── defect 1: applicability predicate / conditional fixes ────────────────────
+
+
+def test_predicate_scopes_validation_to_applicable_cases():
+    """A candidate with a predicate is only judged on the cases it applies to —
+    its safety/coverage exclude cases it never touched."""
+    from evalvitals.eval_agent.stages.fix_agent import FixCandidate
+
+    agent = FixAgent(judge=None, max_tier="L1")
+    data = _gold_yes_batch(n=4)
+    cand = FixCandidate(
+        tier=FixTier.L1_PROMPT, name="careful_subset", kind="template",
+        payload={"prompt_template": "Look carefully. {prompt}"},
+        predicate=lambda c: c.id in {"c0", "c1"})
+    model = BaselineFailsModel()
+    baseline, unstable = agent._baseline(model, data)
+    v = agent._validate(cand, model, data, baseline, unstable)
+    assert v.n_applicable == 2 and v.n_fixed == 2 and v.n_broken == 0
+    assert set(v.fixed_cases) == {"c0", "c1"}
+    assert v.coverage == 0.5  # repaired 2 of the 4 failures it was scoped to
+
+
+def test_spec_noop_cases_are_not_applicable():
+    PIL = pytest.importorskip("PIL")
+    from evalvitals.eval_agent.stages.fix_tools import PipelineSpec, spec_changes_input
+
+    spec = PipelineSpec.from_dict(
+        {"name": "crop", "image_ops": [{"tool": "crop_case_bbox", "params": {}}]})
+    no_bbox = FailureCase(id="x", inputs=Inputs(prompt="q", image=_img()), metadata={})
+    assert spec_changes_input(spec, no_bbox) is False  # crop is a no-op here
+
+    img = PIL.Image.new("RGB", (100, 100), color=(220, 220, 220))
+    for y in range(10, 14):
+        for x in range(80, 84):
+            img.putpixel((x, y), (20, 20, 20))
+    with_bbox = FailureCase(
+        id="y", inputs=Inputs(prompt="q", image=img),
+        metadata={"answer_bbox_xyxy_norm": [0.8, 0.1, 0.84, 0.14]})
+    assert spec_changes_input(spec, with_bbox) is True
+
+
+# ── defect 2: noise floor (baseline stability) ───────────────────────────────
+
+
+class _OneFlakyModel(Model):
+    """Case 0's baseline flips between repeats (sampling noise); others stable.
+    The 'carefully' prompt deterministically answers yes (a real fix)."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    def generate(self, inputs, **kwargs):
+        p = str(getattr(inputs, "prompt", inputs)).lower()
+        if "carefully" in p:
+            return "Yes."
+        if "lesion 0" in p:
+            self._n += 1
+            return "Yes." if self._n % 2 == 1 else "No."
+        return "No."
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_baseline_repeats_flag_and_drop_unstable_cases():
+    agent = FixAgent(judge=None, max_tier="L1", baseline_repeats=2)
+    data = _gold_yes_batch(n=2)
+    model = _OneFlakyModel()
+    baseline, unstable = agent._baseline(model, data)
+    assert "c0" in unstable and "c1" not in unstable
+
+    from evalvitals.eval_agent.stages.fix_agent import FixCandidate
+
+    cand = FixCandidate(
+        tier=FixTier.L1_PROMPT, name="careful", kind="template",
+        payload={"prompt_template": "Look carefully. {prompt}"})
+    v = agent._validate(cand, model, data, baseline, unstable)
+    # c0 is noise -> dropped, not counted as fixed or broken; only c1 is judged.
+    assert v.n_unstable == 1 and v.n_pairs == 1
+    assert v.fixed_cases == ["c1"]
+
+
+# ── defect 4: power-aware verdict ─────────────────────────────────────────────
+
+
+def test_underpowered_run_recommends_gathering_failures():
+    """With too few failures, even a flawless fix cannot reach significance;
+    the recommendation must say 'gather more failures', not 'escalate tier'."""
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look carefully. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1")
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(n=3),
+                                     [_hyp("x")])
+    v = out.attempted[0]
+    assert v.n_fixed == 3 and v.n_broken == 0
+    assert v.verdict == "partial" and v.fixed is False  # net-positive, not sig
+    assert out.fixed is False
+    assert out.recommendation["action"] == "gather_more_failures"
+    assert out.recommendation["recommend_tier"] is None
+
+
+def test_well_powered_run_still_certifies_fix():
+    """Same fix, enough failures (8): e-value clears the gate -> certified."""
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look carefully. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1")
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(n=8),
+                                     [_hyp("x")])
+    assert out.fixed is True and out.best.verdict == "fixed"
+
+
+# ── defect 3: heterogeneity feedback edge ────────────────────────────────────
+
+
+class _MixedModel(Model):
+    """'carefully' repairs even-indexed cases but breaks odd-indexed ones —
+    a heterogeneous failure mode that no single global transform can fix."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        import re as _re
+
+        p = str(getattr(inputs, "prompt", inputs)).lower()
+        m = _re.search(r"lesion (\d+)", p)
+        idx = int(m.group(1)) if m else 0
+        careful = "carefully" in p
+        if idx % 2 == 0:
+            return "Yes." if careful else "No."   # careful fixes evens
+        return "No." if careful else "Yes."        # careful breaks odds
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_heterogeneous_outcome_emits_refine_signal():
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look carefully. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1")
+    out = agent.propose_and_validate(_MixedModel(), _gold_yes_batch(n=4), [_hyp("x")])
+    v = out.attempted[0]
+    assert v.n_fixed > 0 and v.n_broken > 0
+    assert out.refine_signal is not None
+    assert out.refine_signal["kind"] == "heterogeneous_failure_mode"
+    assert out.refine_signal["helped_cases"] and out.refine_signal["hurt_cases"]
 
 
 def test_bridged_attend_enables_coded_l3a(tmp_path):

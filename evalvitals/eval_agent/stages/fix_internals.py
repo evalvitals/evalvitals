@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 import numpy as np
 
 from evalvitals.eval_agent.stages.fix_tiers import FixTier
+from evalvitals.eval_agent.stages.fix_tools import score_to_bool
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
@@ -60,14 +61,18 @@ ScoreFn = Callable[["FailureCase", str], Optional[bool]]
 # ---------------------------------------------------------------------------
 
 def attention_heatmap(
-    model: "Model", case: "FailureCase", layer: int = -1
+    model: "Model", case: "FailureCase", layer: "int | float" = 0.75
 ) -> "np.ndarray | None":
     """One ATTENTION forward → (H, W) image-patch heatmap, or ``None``.
 
     Reduction mirrors the white-box probe capture: head-averaged attention from
     the last query position, restricted to image-token positions, reshaped via
-    the backend's ``image_spatial_shape`` (near-square fallback).
+    the backend's ``image_spatial_shape`` (near-square fallback).  ``layer`` is
+    resolved by :func:`~evalvitals.analyzers.attention.relative_attn.resolve_attention_layer`
+    — a float is a fractional depth (default 0.75, a spatially-grounded
+    late-middle layer); the last layer is sink-dominated and localizes poorly.
     """
+    from evalvitals.analyzers.attention.relative_attn import resolve_attention_layer
     from evalvitals.core.capability import Capability
 
     if Capability.ATTENTION not in getattr(model, "capabilities", frozenset()):
@@ -75,7 +80,8 @@ def attention_heatmap(
     try:
         trace = model.forward(case.inputs, capture={Capability.ATTENTION})
         attns = trace.require(Capability.ATTENTION)
-        row = attns[layer].float().mean(dim=0)[-1].cpu().numpy()  # (seq,)
+        layer_idx = resolve_attention_layer(layer, len(attns))
+        row = attns[layer_idx].float().mean(dim=0)[-1].cpu().numpy()  # (seq,)
         mask = trace.extras.get("image_token_mask")
         if mask is None:
             return None
@@ -164,7 +170,7 @@ def run_visual_embedding_boost(
                     logger.debug("boosted generate failed on %s: %s", case.id, exc)
                     scores[case.id] = None
                     continue
-                scores[case.id] = score_fn(case, out)
+                scores[case.id] = score_to_bool(score_fn(case, out))
     except RuntimeError as exc:
         logger.warning("visual_embedding_boost unavailable: %s", exc)
         return {c.id: None for c in cases}

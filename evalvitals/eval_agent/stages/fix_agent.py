@@ -7,17 +7,9 @@ function, exactly :mod:`~evalvitals.eval_agent.ab_runner`'s *strategy*
 contract — and validates each against the unmodified baseline with the paired
 machinery from :mod:`evalvitals.stats` (McNemar + e-value, never a bare p).
 
-There is **no automatic tier escalation**: when no candidate within the allowed
+There is **no automatic escalation**: when no candidate within the allowed
 tier validates, the outcome carries a *recommendation* to raise the tier,
 routed from the verified hypotheses' mechanisms (:func:`route_min_tier`).
-
-What the agent *does* retry within the allowed tier is the **proposal** itself:
-``max_repair_rounds`` (default 1) lets it run up to N propose→validate rounds.
-After a round in which nothing validates, the per-candidate results (how many
-cases each fixed / broke, net effect, or an execution error) are summarised and
-fed back to the judge/coder, which then proposes *different* strategies — never
-re-running an identical candidate, never raising the tier.  The loop stops as
-soon as a candidate validates, or when a round yields no new candidate.
 
 Executors by tier:
 
@@ -67,9 +59,12 @@ from evalvitals.eval_agent.stages.fix_tools import (
     PipelineSpec,
     catalog_text,
     run_pipeline,
+    score_to_bool,
+    spec_changes_input,
 )
 from evalvitals.eval_agent.stages.probe_generator import _extract_code
 from evalvitals.stats import compare
+from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
@@ -82,8 +77,6 @@ logger = logging.getLogger(__name__)
 _MAX_JUDGE_CANDIDATES = 3
 _EXAMPLE_PROMPTS = 3
 
-# Header for the block that feeds a failed round's results back into the next
-# proposal.  Rendered empty ("(none ...)") on the first round.
 _FEEDBACK_HEADER = (
     "PRIOR REPAIR ATTEMPTS THAT FAILED TO VALIDATE (do NOT repeat any of these; "
     "diagnose WHY each failed — broke too many correct cases? net effect "
@@ -100,8 +93,6 @@ VERIFIED FAILURE HYPOTHESES:
 
 EXAMPLE FAILING PROMPTS:
 {examples}
-
-{feedback}
 
 Propose up to {k} prompt rewrite strategies that could repair these failures
 WITHOUT changing the model or adding pipeline steps.  Each strategy is a
@@ -120,8 +111,6 @@ VERIFIED FAILURE HYPOTHESES:
 
 EXAMPLE FAILING PROMPTS:
 {examples}
-
-{feedback}
 
 AVAILABLE IMAGE TOOLS (applied to the case image before the model sees it):
 {catalog}
@@ -143,8 +132,6 @@ VERIFIED FAILURE HYPOTHESES:
 
 EXAMPLE FAILING PROMPTS:
 {examples}
-
-{feedback}
 
 EXECUTION CONTRACT:
 - "{cases_file}" in the current directory: {{"cases": [{{"id": str, "prompt": str}}]}}
@@ -199,8 +186,6 @@ code — you choose which to run and with what parameters.
 VERIFIED FAILURE HYPOTHESES:
 {hypotheses}
 
-{feedback}
-
 AVAILABLE PRIMITIVES:
 {catalog}
 
@@ -240,6 +225,11 @@ class FixCandidate:
                      spec: a :class:`~.fix_tools.PipelineSpec` dict;
                      code: ``{"code": "<python source>"}``.
         source:      ``"judge"``, ``"cli:<provider>"`` or ``"default"``.
+        predicate:   Optional ``(case) -> bool`` applicability gate.  When set,
+                     the candidate is only applied to (and only judged on) the
+                     cases it returns True for — a *conditional* fix.  When
+                     ``None``, applicability is inferred structurally (a spec
+                     that does not change a case's input is a no-op there).
     """
 
     tier: FixTier
@@ -247,11 +237,18 @@ class FixCandidate:
     payload: "dict[str, Any]"
     kind: str = "spec"
     source: str = "judge"
+    predicate: "Callable[[FailureCase], bool] | None" = None
 
 
 @dataclass
 class FixValidation:
-    """Paired validation of one candidate against the unmodified baseline."""
+    """Paired validation of one candidate against the unmodified baseline.
+
+    Safety (``n_broken``) and coverage are scoped to the cases the candidate is
+    *applicable* to — a fix is not blamed for cases it never touched.  Cases
+    whose baseline answer is unstable across repeats (sampling noise) are held
+    out as ``n_unstable`` so a stochastic flip is not mistaken for a regression.
+    """
 
     candidate: FixCandidate
     n_pairs: int = 0
@@ -263,6 +260,14 @@ class FixValidation:
     reject: bool = False
     fixed: bool = False
     summary: str = ""
+    # Applicability + noise accounting (defects 1 & 2).
+    n_applicable: int = 0          # cases the candidate actually touched
+    coverage: "float | None" = None  # applicable FAILs / total FAILs in subset
+    n_unstable: int = 0            # cases dropped as baseline-unstable (noise)
+    e_value: "float | None" = None
+    # Coarse verdict (defect 4): fixed | partial | unsafe | regressed |
+    # no_effect | not_executed.  Richer than the boolean ``fixed`` for triage.
+    verdict: str = ""
     # Non-empty when the candidate never EXECUTED (sandbox crash, timeout,
     # bridge contract violation) — distinct from "executed and not effective".
     # Escalation must not treat these as evidence that the tier is exhausted.
@@ -284,13 +289,16 @@ class FixOutcome:
     best: "FixValidation | None" = None
     fixed: bool = False
     recommendation: "dict[str, Any] | None" = None
+    # Feedback edge back into diagnosis (defect 3): set when a candidate helps
+    # one subset and hurts another — evidence the mechanism is subset-specific
+    # and the hypothesis should be re-scoped, not that no fix exists.
+    refine_signal: "dict[str, Any] | None" = None
     # Number of feedback-driven propose->validate rounds actually run (>= 1).
     repair_rounds: int = 0
 
     def to_dict(self) -> "dict[str, Any]":
         return {
             "max_tier": self.max_tier.label,
-            "repair_rounds": self.repair_rounds,
             "routed": self.routed,
             "attempted": [
                 {
@@ -308,12 +316,19 @@ class FixOutcome:
                     "reject": v.reject,
                     "fixed": v.fixed,
                     "summary": v.summary,
+                    "n_applicable": v.n_applicable,
+                    "coverage": v.coverage,
+                    "n_unstable": v.n_unstable,
+                    "e_value": v.e_value,
+                    "verdict": v.verdict,
                 }
                 for v in self.attempted
             ],
             "best": self.best.candidate.name if self.best else None,
             "fixed": self.fixed,
             "recommendation": self.recommendation,
+            "refine_signal": self.refine_signal,
+            "repair_rounds": self.repair_rounds,
         }
 
 
@@ -346,13 +361,14 @@ class FixAgent:
                           (all-FAIL-first; deterministic).  Every candidate
                           validation costs >= one model call per case, so an
                           unbounded batch makes coded pipelines time out.
-        max_repair_rounds: Number of feedback-driven propose->validate rounds
-                          (default 1 = original single-shot behaviour).  When
-                          > 1 and a round validates nothing, the failed
-                          candidates' results are fed back to the judge/coder,
-                          which proposes *different* strategies within the SAME
-                          tier (no tier escalation).  Stops early on the first
-                          validated fix or when a round adds no new candidate.
+        baseline_repeats: How many times to re-measure the unmodified baseline
+                          per case (default 1).  With > 1, a case whose baseline
+                          answer flips across repeats is *unstable* (sampling
+                          noise) and is held out of the paired test, so a
+                          stochastic flip is not scored as a regression.
+        alpha:            Significance level for the e-value gate (default 0.05;
+                          rejects when e >= 1/alpha).  Also sets the power
+                          ceiling used to flag underpowered-by-design runs.
     """
 
     def __init__(
@@ -367,6 +383,8 @@ class FixAgent:
         exec_timeout_sec: int = 600,
         max_validation_cases: int = 0,
         max_repair_rounds: int = 1,
+        baseline_repeats: int = 1,
+        alpha: float = 0.05,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -378,6 +396,8 @@ class FixAgent:
         self._exec_timeout_sec = exec_timeout_sec
         self.max_validation_cases = max_validation_cases
         self.max_repair_rounds = max(1, int(max_repair_rounds))
+        self._baseline_repeats = max(1, int(baseline_repeats))
+        self._alpha = float(alpha)
         self._last_repair_prompt = ""
         self._last_usage: dict | None = None
 
@@ -396,8 +416,19 @@ class FixAgent:
         model: "Model",
         data: "CaseBatch",
         hypotheses: "list[Hypothesis]",
+        prior_attempts: "list[FixValidation] | None" = None,
     ) -> FixOutcome:
-        """Generate candidates within the allowed tiers, validate, recommend."""
+        """Generate candidates within the allowed tiers, validate, recommend.
+
+        Runs up to ``max_repair_rounds`` feedback-driven rounds: each round
+        proposes -> validates, and if nothing validates the failed attempts are
+        fed back (via the prior_text / prior_names channel) so the judge yields
+        DIFFERENT candidates within the same tier (never escalating).  Stops on
+        the first validated fix or when a round adds no NEW candidate.  Any
+        ``prior_attempts`` carried in from an upstream (cross-tier) call seed
+        both the dedup set and the feedback, so already-failed candidates are
+        never re-proposed.
+        """
         outcome = FixOutcome(max_tier=self.max_tier)
         routed_tiers: "list[FixTier]" = []
         for h in hypotheses:
@@ -410,7 +441,7 @@ class FixAgent:
             })
 
         data = self._validation_subset(data)
-        baseline = self._baseline(model, data)
+        baseline, unstable = self._baseline(model, data)
         if not any(v is not None for v in baseline.values()):
             logger.warning("FixAgent: no scorable case (no rubrics); nothing to validate")
             outcome.recommendation = self._recommend(routed_tiers, reason_prefix=(
@@ -419,15 +450,18 @@ class FixAgent:
             self._emit(outcome)
             return outcome
 
-        # Feedback-driven repair rounds: propose -> validate; if nothing
-        # validates, summarise the failures and ask for DIFFERENT candidates
-        # within the same tier (never escalating).  Stop on first validated
-        # fix or when a round adds no new candidate.
-        seen: "set[tuple[str, str]]" = set()
+        # Feedback-driven repair rounds (jiaqiliu) wrapped around ruinan's
+        # propose/validate: dedup candidates across rounds via _signature, and
+        # rebuild the prior_text / prior_names feedback from every attempt seen
+        # so far (carried-in prior_attempts + this call's attempts).
+        carried = list(prior_attempts or [])
+        seen: "set[tuple[str, str]]" = {self._signature(v.candidate) for v in carried}
         for round_idx in range(self.max_repair_rounds):
-            prior = outcome.attempted if round_idx else None
+            prior = carried + outcome.attempted
+            prior_text = self._format_feedback(prior) if prior else ""
+            prior_names: "frozenset[str]" = frozenset(v.candidate.name for v in prior)
             new_candidates: "list[FixCandidate]" = []
-            for candidate in self._propose(hypotheses, data, model, prior_attempts=prior):
+            for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
                 sig = self._signature(candidate)
                 if sig in seen:
                     continue
@@ -439,7 +473,7 @@ class FixAgent:
                 break
             round_fixed = False
             for candidate in new_candidates:
-                validation = self._validate(candidate, model, data, baseline)
+                validation = self._validate(candidate, model, data, baseline, unstable)
                 outcome.attempted.append(validation)
                 round_fixed = round_fixed or validation.fixed
             outcome.repair_rounds = round_idx + 1
@@ -450,36 +484,117 @@ class FixAgent:
                             "%d failed attempt(s) back for round %d",
                             round_idx + 1, len(new_candidates), round_idx + 2)
 
+        outcome.refine_signal = self._refine_signal(outcome.attempted, data)
         winners = [v for v in outcome.attempted if v.fixed]
         if winners:
             outcome.best = max(winners, key=lambda v: (v.effect or 0.0, -v.n_broken))
             outcome.fixed = True
         else:
-            # Escalation needs the current tier to have been genuinely TRIED:
-            # a candidate that never executed (sandbox crash/timeout/contract
-            # violation) is an engineering failure, not evidence the tier is
-            # exhausted.
-            executed = [v for v in outcome.attempted if v.n_pairs > 0]
-            never_ran = [v for v in outcome.attempted if v.n_pairs == 0]
-            if never_ran and not executed:
-                outcome.recommendation = {
-                    "recommend_tier": self.max_tier.label,
-                    "reason": (
-                        "no candidate EXECUTED — escalating would be premature; "
-                        f"fix candidate execution and retry within {self.max_tier.label}. "
-                        "Failures: " + "; ".join(
-                            f"{v.candidate.name}: {(v.exec_error or v.summary)[:120]}"
-                            for v in never_ran[:3])
-                    ),
-                }
-            else:
-                outcome.recommendation = self._recommend(routed_tiers)
-                if never_ran and outcome.recommendation is not None:
-                    outcome.recommendation["reason"] += (
-                        f" (caveat: {len(never_ran)} candidate(s) never executed: "
-                        + ", ".join(v.candidate.name for v in never_ran[:3]) + ")")
+            outcome.recommendation = self._no_fix_recommendation(
+                outcome.attempted, routed_tiers, data)
         self._emit(outcome)
         return outcome
+
+    # -- no-fix recommendation (escalate vs. gather data vs. retry exec) ----
+
+    def _no_fix_recommendation(
+        self,
+        attempted: "list[FixValidation]",
+        routed_tiers: "list[FixTier]",
+        data: "CaseBatch",
+    ) -> "dict[str, Any] | None":
+        """Decide what 'no candidate validated' actually means.
+
+        Three distinct causes the old single-path recommendation conflated:
+
+        * **never executed** — engineering failure; retry within the tier, do
+          not escalate (a crash is not evidence the tier is exhausted).
+        * **underpowered by design** — even a flawless fix of every failure
+          could not reach significance with this few failures; gather more
+          failing cases instead of climbing the (more invasive) tier ladder.
+        * **genuinely exhausted** — executed, powered, still no fix; escalate.
+        """
+        executed = [v for v in attempted if v.n_pairs > 0]
+        never_ran = [v for v in attempted if v.n_pairs == 0]
+        if never_ran and not executed:
+            return {
+                "recommend_tier": self.max_tier.label,
+                "action": "fix_execution",
+                "reason": (
+                    "no candidate EXECUTED — escalating would be premature; "
+                    f"fix candidate execution and retry within {self.max_tier.label}. "
+                    "Failures: " + "; ".join(
+                        f"{v.candidate.name}: {(v.exec_error or v.summary)[:120]}"
+                        for v in never_ran[:3])
+                ),
+            }
+
+        # Underpowered-by-design: with n_fail failures the best possible result
+        # (every failure repaired, nothing broken) yields an e-value ceiling of
+        # evalue_bernoulli(n_fail, n_fail); if that cannot clear 1/alpha, no fix
+        # of any tier can be certified here — the bottleneck is sample size, and
+        # a "promising" candidate (helped more than it hurt) confirms the lead.
+        n_fail = sum(1 for c in data if getattr(c.label, "value", None) == "fail")
+        ceiling = evalue_bernoulli(n_fail, n_fail, p0=0.5) if n_fail > 0 else 1.0
+        promising = [v for v in executed if (v.n_fixed - v.n_broken) > 0 and not v.reject]
+        if promising and ceiling < 1.0 / self._alpha:
+            best = max(promising, key=lambda v: (v.n_fixed - v.n_broken, v.effect or 0.0))
+            need = self._min_failures_for_power()
+            return {
+                "recommend_tier": None,
+                "action": "gather_more_failures",
+                "reason": (
+                    f"underpowered by design: only {n_fail} failure case(s) — even a "
+                    f"perfect fix tops out at e={ceiling:.1f} (< {1.0 / self._alpha:.0f} "
+                    f"needed). {best.candidate.name!r} already helps net "
+                    f"{best.n_fixed - best.n_broken} case(s); collect >= {need} failing "
+                    "cases and re-validate before escalating the tier."
+                ),
+            }
+
+        rec = self._recommend(routed_tiers)
+        if never_ran and rec is not None:
+            rec["reason"] += (
+                f" (caveat: {len(never_ran)} candidate(s) never executed: "
+                + ", ".join(v.candidate.name for v in never_ran[:3]) + ")")
+        return rec
+
+    def _min_failures_for_power(self) -> int:
+        """Smallest n where a flawless fix could clear the e-value gate."""
+        threshold = 1.0 / self._alpha
+        for n in range(1, 200):
+            if evalue_bernoulli(n, n, p0=0.5) >= threshold:
+                return n
+        return 200
+
+    @staticmethod
+    def _refine_signal(
+        attempted: "list[FixValidation]", data: "CaseBatch"
+    ) -> "dict[str, Any] | None":
+        """Heterogeneity feedback for re-diagnosis (defect 3).
+
+        A candidate that repairs one subset while breaking another is evidence
+        the failure mode is *not* homogeneous: the right next move is to split
+        the population by sub-mechanism and re-diagnose, not to keep proposing
+        whole-population transforms.  Surface the partition so the loop (or a
+        human) can re-scope the hypothesis.
+        """
+        split = [v for v in attempted if v.n_fixed > 0 and v.n_broken > 0]
+        if not split:
+            return None
+        v = max(split, key=lambda x: min(x.n_fixed, x.n_broken))
+        return {
+            "kind": "heterogeneous_failure_mode",
+            "candidate": v.candidate.name,
+            "helped_cases": list(v.fixed_cases),
+            "hurt_cases": list(v.broken_cases),
+            "message": (
+                f"{v.candidate.name!r} repaired {v.n_fixed} case(s) but broke "
+                f"{v.n_broken} — the failure mode is likely subset-specific. "
+                "Re-diagnose: what distinguishes the helped cases from the hurt "
+                "ones, and gate the fix on that predicate."
+            ),
+        }
 
     def _validation_subset(self, data: "CaseBatch") -> "CaseBatch":
         """Label-stratified, deterministic subset for candidate validation."""
@@ -502,35 +617,6 @@ class FixAgent:
         return CaseBatch(keep)
 
     # -- candidate generation --------------------------------------------
-
-    def _propose(
-        self,
-        hypotheses: "list[Hypothesis]",
-        data: "CaseBatch",
-        model: "Model",
-        prior_attempts: "list[FixValidation] | None" = None,
-    ) -> "list[FixCandidate]":
-        hyp_lines = "\n".join(
-            f"- [{getattr(h, 'predicted_failure_mode', '')}] {getattr(h, 'statement', h)}"
-            for h in hypotheses
-        ) or "- (no verified hypotheses; failures are unexplained)"
-        examples = "\n".join(
-            f"- {str(getattr(c.inputs, 'prompt', ''))[:160]}"
-            for c in list(data)
-            if getattr(getattr(c, "label", None), "value", None) == "fail"
-        )[: 1000] or "- (none)"
-        feedback = self._format_feedback(prior_attempts)
-
-        candidates = self._l1_candidates(hyp_lines, examples, feedback)
-        if self.max_tier >= FixTier.L2_SCAFFOLD:
-            candidates += self._l2_candidates(hyp_lines, examples, feedback)
-            if self.codegen_available:
-                candidates += self._l2_coded_candidate(hyp_lines, examples, model, feedback)
-        if self.max_tier >= FixTier.L3A_INTERNALS_READ:
-            candidates += self._l3_candidates(hyp_lines, model, feedback)
-        if self.max_tier >= FixTier.L4_PARAMETERS:
-            candidates += self._l4_candidates(hyp_lines)
-        return candidates
 
     @staticmethod
     def _signature(candidate: FixCandidate) -> "tuple[str, str]":
@@ -574,12 +660,44 @@ class FixAgent:
             lines.append(f"- {c.name} ({c.tier.label}/{c.kind}): {detail}")
         return "\n".join(lines) if len(lines) > 1 else "(none)"
 
+    def _propose(
+        self,
+        hypotheses: "list[Hypothesis]",
+        data: "CaseBatch",
+        model: "Model",
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
+    ) -> "list[FixCandidate]":
+        hyp_lines = "\n".join(
+            f"- [{getattr(h, 'predicted_failure_mode', '')}] {getattr(h, 'statement', h)}"
+            for h in hypotheses
+        ) or "- (no verified hypotheses; failures are unexplained)"
+        examples = "\n".join(
+            f"- {str(getattr(c.inputs, 'prompt', ''))[:160]}"
+            for c in list(data)
+            if getattr(getattr(c, "label", None), "value", None) == "fail"
+        )[: 1000] or "- (none)"
+
+        candidates = self._l1_candidates(hyp_lines, examples, prior_text, prior_names)
+        if self.max_tier >= FixTier.L2_SCAFFOLD:
+            candidates += self._l2_candidates(hyp_lines, examples, prior_text, prior_names)
+            if self.codegen_available:
+                candidates += self._l2_coded_candidate(hyp_lines, examples, model, prior_text)
+        if self.max_tier >= FixTier.L3A_INTERNALS_READ:
+            candidates += self._l3_candidates(hyp_lines, model, prior_text, prior_names)
+        if self.max_tier >= FixTier.L4_PARAMETERS:
+            candidates += self._l4_candidates(hyp_lines)
+        return candidates
+
     def _l1_candidates(
-        self, hyp_lines: str, examples: str, feedback: str = ""
+        self,
+        hyp_lines: str,
+        examples: str,
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
     ) -> "list[FixCandidate]":
         proposals = self._ask_judge(_L1_PROMPT.format(
-            hypotheses=hyp_lines, examples=examples, feedback=feedback,
-            k=_MAX_JUDGE_CANDIDATES))
+            hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES) + prior_text)
         out: "list[FixCandidate]" = []
         for p in proposals:
             template = str(p.get("prompt_template", ""))
@@ -588,7 +706,7 @@ class FixAgent:
                 out.append(FixCandidate(
                     tier=FixTier.L1_PROMPT, name=name, kind="template",
                     payload={"prompt_template": template}))
-        if not out:
+        if not out and "attend_carefully" not in prior_names:
             out = [FixCandidate(
                 tier=FixTier.L1_PROMPT, name="attend_carefully", kind="template",
                 source="default",
@@ -598,11 +716,15 @@ class FixAgent:
         return out[:_MAX_JUDGE_CANDIDATES]
 
     def _l2_candidates(
-        self, hyp_lines: str, examples: str, feedback: str = ""
+        self,
+        hyp_lines: str,
+        examples: str,
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
     ) -> "list[FixCandidate]":
         proposals = self._ask_judge(_L2_PROMPT.format(
-            hypotheses=hyp_lines, examples=examples, feedback=feedback,
-            k=_MAX_JUDGE_CANDIDATES, catalog=catalog_text()))
+            hypotheses=hyp_lines, examples=examples, k=_MAX_JUDGE_CANDIDATES,
+            catalog=catalog_text()) + prior_text)
         out: "list[FixCandidate]" = []
         for p in proposals:
             spec = PipelineSpec.from_dict(p) if isinstance(p, dict) else None
@@ -610,7 +732,71 @@ class FixAgent:
                 out.append(FixCandidate(
                     tier=FixTier.L2_SCAFFOLD, name=spec.name, payload=spec.to_dict()))
         if not out:
-            out = [
+            defaults = [
+                FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="answer_bbox_crop",
+                    source="default",
+                    payload=PipelineSpec(
+                        name="answer_bbox_crop",
+                        image_ops=[
+                            {"tool": "crop_case_bbox",
+                             "params": {
+                                 "bbox_key": "answer_bbox_xyxy_norm",
+                                 "padding": 0.40,
+                                 "min_size_frac": 0.12,
+                                 "sharpen_factor": 3.0,
+                                 "contrast_factor": 1.4,
+                             }},
+                        ],
+                        prompt_template=(
+                            "The image may have been cropped and enhanced around "
+                            "the visual region that contains the answer. Read the "
+                            "visible text or number carefully, then answer the "
+                            "question. {prompt}"
+                        ),
+                    ).to_dict()),
+                FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="annotate_horizontal_band_count",
+                    source="default",
+                    payload=PipelineSpec(
+                        name="annotate_horizontal_band_count",
+                        image_ops=[
+                            {"tool": "annotate_horizontal_band_count",
+                             "params": {
+                                 "min_delta": 18.0,
+                                 "color_delta": 35.0,
+                                 "min_count": 8,
+                             }},
+                        ],
+                        prompt_template=(
+                            "A visual counting overlay may have been added to the "
+                            "image. If a COUNT value is visible, use that value. "
+                            "{prompt}"
+                        ),
+                    ).to_dict()),
+                FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="separate_horizontal_bands",
+                    source="default",
+                    payload=PipelineSpec(
+                        name="separate_horizontal_bands",
+                        image_ops=[
+                            {"tool": "separate_horizontal_bands",
+                             "params": {"min_delta": 18.0, "color_delta": 35.0}},
+                        ],
+                        prompt_template=(
+                            "The image has been preprocessed so adjacent colored "
+                            "horizontal bands, if present, are separated by gray "
+                            "gaps. Count every colored band. {prompt}"
+                        ),
+                    ).to_dict()),
+                FixCandidate(
+                    tier=FixTier.L2_SCAFFOLD, name="salient_crop", source="default",
+                    payload=PipelineSpec(
+                        name="salient_crop",
+                        image_ops=[
+                            {"tool": "crop_salient_region",
+                             "params": {"padding": 0.04, "min_delta": 18.0}},
+                        ]).to_dict()),
                 FixCandidate(
                     tier=FixTier.L2_SCAFFOLD, name="zoom_equalize", source="default",
                     payload=PipelineSpec(
@@ -624,10 +810,11 @@ class FixAgent:
                         image_ops=[{"tool": "upscale", "params": {"factor": 2.0}},
                                    {"tool": "sharpen", "params": {"factor": 2.0}}]).to_dict()),
             ]
+            out = [c for c in defaults if c.name not in prior_names]
         return out[:_MAX_JUDGE_CANDIDATES]
 
     def _l2_coded_candidate(
-        self, hyp_lines: str, examples: str, model: "Model", feedback: str = ""
+        self, hyp_lines: str, examples: str, model: "Model", prior_text: str = ""
     ) -> "list[FixCandidate]":
         """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
         from evalvitals.core.capability import Capability
@@ -648,18 +835,17 @@ class FixAgent:
             "crop_region there and re-ask."
         ) if enable_attend else ""
         code, source, prompt, raw = "", "", "", ""
-        base = dict(hypotheses=hyp_lines, examples=examples, feedback=feedback,
-                    catalog=catalog_text(),
+        base = dict(hypotheses=hyp_lines, examples=examples, catalog=catalog_text(),
                     cases_file=CASES_FILENAME, marker=RESULT_MARKER,
                     attend_hint=attend_hint)
         if self._cli_config is not None and self._cli_config.provider != "llm":
             prompt = _L2_CODE_PROMPT.format(
-                fences_hint=", written to a file named pipeline.py", **base)
+                fences_hint=", written to a file named pipeline.py", **base) + prior_text
             code, raw = self._write_code_cli(prompt)
             source = f"cli:{self._cli_config.provider}"
         if not code.strip() and self._judge is not None:
             prompt = _L2_CODE_PROMPT.format(
-                fences_hint=" inside a ```python code block", **base)
+                fences_hint=" inside a ```python code block", **base) + prior_text
             try:
                 raw = str(self._judge.generate(prompt))
             except Exception as exc:
@@ -728,7 +914,11 @@ class FixAgent:
             logger.debug("FixAgent: log_tool_codegen failed: %s", exc)
 
     def _l3_candidates(
-        self, hyp_lines: str, model: "Model", feedback: str = ""
+        self,
+        hyp_lines: str,
+        model: "Model",
+        prior_text: str = "",
+        prior_names: "frozenset[str]" = frozenset(),
     ) -> "list[FixCandidate]":
         """Judge-parameterised configs of the pre-audited internals primitives."""
         catalog = primitives_catalog_text(model, self.max_tier)
@@ -737,8 +927,7 @@ class FixAgent:
             return []
         out: "list[FixCandidate]" = []
         for p in self._ask_judge(_L3_PROMPT.format(
-                hypotheses=hyp_lines, catalog=catalog, feedback=feedback,
-                k=_MAX_JUDGE_CANDIDATES)):
+                hypotheses=hyp_lines, catalog=catalog, k=_MAX_JUDGE_CANDIDATES) + prior_text):
             prim = INTERNALS_PRIMITIVES.get(str(p.get("primitive", "")))
             if prim is None or prim.tier > self.max_tier or not prim.available(model):
                 continue
@@ -746,12 +935,13 @@ class FixAgent:
                 tier=prim.tier, name=prim.name, kind="primitive",
                 payload={"primitive": prim.name, "params": dict(p.get("params") or {})}))
         if not out:
-            # Internals-WRITE defaults only; reads (L3a) are authored by the
-            # coded pipeline against model_attend(), not proposed as primitives.
             defaults = {
+                "attention_guided_crop": {"layer": 0.75, "crop_frac": 0.5},
                 "visual_embedding_boost": {"gamma": 1.5},
             }
             for name, params in defaults.items():
+                if name in prior_names:
+                    continue
                 prim = INTERNALS_PRIMITIVES[name]
                 if prim.tier <= self.max_tier and prim.available(model):
                     out.append(FixCandidate(
@@ -823,17 +1013,70 @@ class FixAgent:
 
     # -- strategy compilation + validation --------------------------------
 
-    def _baseline(self, model: "Model", data: "CaseBatch") -> "dict[str, Optional[bool]]":
+    def _baseline(
+        self, model: "Model", data: "CaseBatch"
+    ) -> "tuple[dict[str, Optional[bool]], set[str]]":
+        """Measure the unmodified baseline; flag noise-unstable cases.
+
+        Returns ``(scores, unstable_ids)``.  With ``baseline_repeats == 1`` the
+        behaviour is unchanged (one pass, ``unstable`` empty).  With more
+        repeats, each case's modal score is used and any case that both passed
+        and failed across repeats is reported as unstable — its baseline is
+        sampling noise, so blaming a later candidate for "breaking" it would be
+        spurious; such cases are dropped from the paired test.
+        """
+        counts: "dict[str, list[int]]" = {c.id: [0, 0] for c in data}  # [false, true]
+        for _ in range(self._baseline_repeats):
+            for case in data:
+                try:
+                    output = str(model.generate(case.inputs))
+                except Exception as exc:
+                    logger.debug("FixAgent: baseline generate failed on %s: %s",
+                                 case.id, exc)
+                    continue
+                s = score_to_bool(self._score(case, output))
+                if s is True:
+                    counts[case.id][1] += 1
+                elif s is False:
+                    counts[case.id][0] += 1
         scores: "dict[str, Optional[bool]]" = {}
-        for case in data:
+        unstable: "set[str]" = set()
+        for cid, (n_false, n_true) in counts.items():
+            if n_false + n_true == 0:
+                scores[cid] = None
+            else:
+                scores[cid] = n_true >= n_false  # modal; ties -> True
+                if n_false > 0 and n_true > 0:
+                    unstable.add(cid)
+        return scores, unstable
+
+    def _applies(self, candidate: FixCandidate, case: "FailureCase") -> bool:
+        """Whether *candidate* is applicable to *case* (defect 1).
+
+        An explicit predicate wins.  Otherwise applicability is structural: a
+        prompt template that is the identity and image ops that leave the image
+        unchanged mean the candidate never touches the case, so it must not be
+        credited or blamed for it.  Coded/primitive/finetune candidates run
+        their own per-case logic, so they are treated as universally applicable.
+        """
+        if candidate.predicate is not None:
             try:
-                output = str(model.generate(case.inputs))
+                return bool(candidate.predicate(case))
             except Exception as exc:
-                logger.debug("FixAgent: baseline generate failed on %s: %s", case.id, exc)
-                scores[case.id] = None
-                continue
-            scores[case.id] = self._score(case, output)
-        return scores
+                logger.debug("FixAgent: predicate failed on %s: %s", case.id, exc)
+                return True
+        if candidate.kind == "template":
+            return str(candidate.payload.get("prompt_template", "{prompt}")).strip() != "{prompt}"
+        if candidate.kind == "spec":
+            spec = PipelineSpec.from_dict(candidate.payload)
+            if spec is None:
+                return True
+            try:
+                return spec_changes_input(spec, case)
+            except Exception as exc:
+                logger.debug("FixAgent: applicability check failed on %s: %s", case.id, exc)
+                return True
+        return True
 
     def _strategy(self, candidate: FixCandidate) -> "Callable[[Model, FailureCase], Optional[bool]]":
         """Compile a candidate to a per-case success function (ab_runner shape)."""
@@ -848,7 +1091,7 @@ class FixAgent:
                     prompt=template.format(prompt=str(getattr(inp, "prompt", ""))),
                     image=getattr(inp, "image", None))
                 try:
-                    return self._score(case, str(model.generate(new_inputs)))
+                    return score_to_bool(self._score(case, str(model.generate(new_inputs))))
                 except Exception:
                     return None
             return l1
@@ -955,22 +1198,41 @@ class FixAgent:
         model: "Model",
         data: "CaseBatch",
         baseline: "dict[str, Optional[bool]]",
+        unstable: "set[str] | None" = None,
     ) -> FixValidation:
         v = FixValidation(candidate=candidate)
         if candidate.kind == "finetune_spec":
+            v.verdict = "not_executed"
             v.summary = ("L4 executor TODO — fine-tune recipe recorded, "
                          "not executed (see candidate payload)")
             return v
+        unstable = unstable or set()
         scores = self._candidate_scores(candidate, model, data)
         if isinstance(candidate.payload, dict):
             v.exec_error = str(candidate.payload.get("exec_error", "") or "")
+
+        n_fail = sum(1 for c in data if getattr(c.label, "value", None) == "fail")
+        applicable_fail = 0
         base_vec: "list[bool]" = []
         cand_vec: "list[bool]" = []
         for case in data:
-            b = baseline.get(case.id)
-            c = scores.get(case.id)
+            b = score_to_bool(baseline.get(case.id))
+            c = score_to_bool(scores.get(case.id))
             if b is None or c is None:
                 continue
+            # Noise floor (defect 2): a case whose baseline flipped across
+            # repeats is unreliable — excluding it stops a stochastic flip from
+            # masquerading as a fix or a regression.
+            if case.id in unstable:
+                v.n_unstable += 1
+                continue
+            # Applicability (defect 1): the safety/coverage test runs only on
+            # cases the candidate actually touches.
+            if not self._applies(candidate, case):
+                continue
+            is_fail = getattr(case.label, "value", None) == "fail"
+            if is_fail:
+                applicable_fail += 1
             base_vec.append(b)
             cand_vec.append(c)
             if not b and c:
@@ -980,22 +1242,44 @@ class FixAgent:
                 v.n_broken += 1
                 v.broken_cases.append(case.id)
         v.n_pairs = len(base_vec)
+        v.n_applicable = v.n_pairs
+        v.coverage = (applicable_fail / n_fail) if n_fail else None
         if v.n_pairs == 0:
+            v.verdict = "not_executed"
             v.summary = (f"never executed: {v.exec_error}" if v.exec_error
-                         else "no scorable pair — candidate unvalidatable")
+                         else "no applicable scorable pair — candidate unvalidatable")
             return v
         try:
-            stat = compare(base_vec, cand_vec, paired=True)
+            stat = compare(base_vec, cand_vec, paired=True, alpha=self._alpha)
         except Exception as exc:
+            v.verdict = "not_executed"
             v.summary = f"stats failed: {exc}"
             return v
         v.effect = stat.effect
         v.reject = bool(stat.reject)
+        v.e_value = stat.e_value
         # Fixed = the paired test rejects with a net-positive effect: the
         # candidate repairs significantly more cases than it breaks.
         v.fixed = v.reject and (v.effect or 0.0) > 0
-        v.summary = stat.summary()
+        v.verdict = self._verdict(v)
+        cov = "" if v.coverage is None else f", coverage={v.coverage:.0%}"
+        noise = f", {v.n_unstable} unstable dropped" if v.n_unstable else ""
+        v.summary = f"{stat.summary()} [{v.verdict}{cov}{noise}]"
         return v
+
+    @staticmethod
+    def _verdict(v: FixValidation) -> str:
+        """Coarse triage label (defect 4): why a candidate did/didn't pass."""
+        if v.fixed:
+            return "fixed"
+        if v.reject and (v.effect or 0.0) < 0:
+            return "regressed"          # significantly worse
+        net = v.n_fixed - v.n_broken
+        if net > 0:
+            return "partial"            # helped more than hurt, not significant
+        if v.n_broken > v.n_fixed:
+            return "unsafe"             # breaks more than it fixes
+        return "no_effect"
 
     # -- recommendation + logging ------------------------------------------
 
