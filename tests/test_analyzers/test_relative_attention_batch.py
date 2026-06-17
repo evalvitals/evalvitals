@@ -121,6 +121,89 @@ def test_all_cases_failing_raises_actionable_error():
         RelativeAttentionAnalyzer().run(NoMaskVLM(), _labeled_batch())
 
 
+def _labeled_batch_with_real_images() -> CaseBatch:
+    """Same shape as _labeled_batch but with real PIL images (overlay needs .convert)."""
+    from PIL import Image
+
+    img = Image.new("RGB", (32, 32), color=(100, 110, 120))
+    return CaseBatch([
+        FailureCase(id="p0", inputs=Inputs(prompt="FOCUS on the lesion", image=img),
+                    label=Label.PASS),
+        FailureCase(id="f0", inputs=Inputs(prompt="is there a finding", image=img),
+                    label=Label.FAIL),
+    ])
+
+
+def test_overlay_anchors_each_map_on_its_recorded_case():
+    from PIL import Image
+
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch_with_real_images())
+    for key in ("spatial_map", "fail_mean_map", "pass_mean_map", "diff_map_fail_minus_pass"):
+        case_id = res.findings[f"{key}_case_id"]
+        assert case_id in {"p0", "f0"}
+        img = res.overlay(key)
+        assert isinstance(img, Image.Image)
+        assert img.size == (32, 32)
+        assert img.mode == "RGB"
+
+
+def test_overlay_none_when_image_is_an_unresolvable_string():
+    # Existing tests use a placeholder string for `image` (not a real path/URL)
+    # — overlay must not raise, just return None.
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    assert res.overlay("spatial_map") is None
+
+
+def test_overlay_resolves_a_real_file_path_string(tmp_path):
+    """Inputs.image may be a lazy path the backend resolves (see Inputs'
+    docstring — TextVQASizeDataset stores exactly this); overlay() must
+    decode it the same way the model's own forward pass does."""
+    from PIL import Image
+
+    img_path = tmp_path / "case.png"
+    Image.new("RGB", (32, 32), color=(100, 110, 120)).save(img_path)
+    cases = CaseBatch([
+        FailureCase(id="p0", inputs=Inputs(prompt="FOCUS on the lesion", image=str(img_path)),
+                    label=Label.PASS),
+        FailureCase(id="f0", inputs=Inputs(prompt="is there a finding", image=str(img_path)),
+                    label=Label.FAIL),
+    ])
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), cases)
+    img = res.overlay("spatial_map")
+    assert isinstance(img, Image.Image)
+    assert img.size == (32, 32)
+
+
+def test_overlay_none_for_unknown_or_1d_map():
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch_with_real_images())
+    assert res.overlay("does_not_exist") is None
+
+
+def test_save_overlay_writes_a_real_png(tmp_path):
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch_with_real_images())
+    path = tmp_path / "overlay.png"
+    assert res.save_overlay("spatial_map", path) is True
+    assert path.exists()
+
+
+def test_image_overlays_writes_one_file_per_available_map(tmp_path):
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch_with_real_images())
+    paths = res.image_overlays(tmp_path, "c0_relative_attention")
+    names = {p.name for p in paths}
+    assert names == {
+        "c0_relative_attention_spatial_map_overlay.png",
+        "c0_relative_attention_fail_mean_map_overlay.png",
+        "c0_relative_attention_pass_mean_map_overlay.png",
+        "c0_relative_attention_diff_map_fail_minus_pass_overlay.png",
+    }
+    assert all(p.exists() for p in paths)
+
+
+def test_image_overlays_is_empty_and_does_not_raise_without_real_images():
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    assert res.image_overlays("/tmp", "c0_relative_attention") == []
+
+
 def test_stats_layer_picks_up_attention_signals():
     from evalvitals.eval_agent.stages.stats_tools import build_stats_input, describe_data
 

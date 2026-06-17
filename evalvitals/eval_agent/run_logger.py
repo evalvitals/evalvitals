@@ -515,10 +515,10 @@ class RunLogger:
         """M1: log findings (JSON) and persist heavy artifacts to disk.
 
         Returns a list of PNG figure paths that were saved for this cycle
-        (attention heatmaps, spatial maps, etc.) so callers can forward them
-        to the judge as visual context.
+        (attention heatmaps, spatial maps, heatmap-on-image overlays, etc.)
+        so callers can forward them to the judge as visual context.
         """
-        artifact_paths = self._save_probe_artifacts(cycle, results)
+        artifact_paths, overlay_pngs = self._save_probe_artifacts(cycle, results)
         entry: dict[str, Any] = {
             "event": "probe",
             "cycle": cycle,
@@ -535,9 +535,10 @@ class RunLogger:
             entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.m1")
 
-        # Collect PNG heatmap paths saved for the .npy arrays.  In context mode
-        # figures live under figures/; in legacy mode next to the .npy data.
-        png_figures: list[Path] = []
+        # Collect PNG heatmap paths saved for the .npy arrays, plus any
+        # heatmap-on-image overlays.  In context mode figures live under
+        # figures/; in legacy mode next to the .npy data.
+        png_figures: list[Path] = list(overlay_pngs)
         fig_dir = self._figures_dir or self.artifact_dir
         for rel_npy in artifact_paths.values():
             if not rel_npy.endswith(".npy"):
@@ -1191,16 +1192,31 @@ class RunLogger:
         self,
         cycle: int,
         results: dict[str, "Result"],
-    ) -> dict[str, str]:
-        """Persist heavy artifacts from all M1 results; return {key: path} map."""
+    ) -> "tuple[dict[str, str], list[Path]]":
+        """Persist heavy artifacts from all M1 results.
+
+        Returns ``({key: path}, overlay_pngs)``. *overlay_pngs* are heatmap-on-
+        image visualisations from ``Result`` subclasses defining an
+        ``image_overlays()`` hook (duck-typed — e.g. ``RelativeAttentionResult``),
+        saved alongside the bare heatmaps so a multimodal judge sees the actual
+        photo under the highlighted patches instead of an abstract colour grid.
+        """
         paths: dict[str, str] = {}
+        overlay_pngs: list[Path] = []
+        fig_dir = self._figures_dir or self.artifact_dir
         for analyzer_name, result in results.items():
             for art_name, artifact in result.artifacts.items():
                 stem = f"c{cycle}_{analyzer_name}_{art_name}"
                 path = self._save_artifact(stem, artifact)
                 if path is not None:
                     paths[f"{analyzer_name}/{art_name}"] = str(path.relative_to(self.run_dir))
-        return paths
+            image_overlays = getattr(result, "image_overlays", None)
+            if image_overlays is not None:
+                try:
+                    overlay_pngs.extend(image_overlays(fig_dir, f"c{cycle}_{analyzer_name}"))
+                except Exception as exc:  # noqa: BLE001 - viz must never break the probe
+                    warnings.warn(f"RunLogger: image_overlays failed for {analyzer_name}: {exc}")
+        return paths, overlay_pngs
 
     def _save_artifact(self, stem: str, artifact: Any) -> Path | None:
         """Write one artifact to ``artifacts/<stem>.<ext>``; return path or None.
