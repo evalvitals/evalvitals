@@ -16,5 +16,6 @@ codegen_timeout_sec: 240
 # Fix module: allow internals-write (L3b). Whether any tier flips a confident
 # hallucination without breaking present detections is the open question.
 fix_max_tier: L3b
-fix_validation_cases: 80   # larger: the no-free-lunch guard needs present cases in the check
-fix_exec_timeout_sec: 900
+fix_validation_cases: 0    # 0 = no cap: validate every candidate on the FULL batch
+                           # (all 201 cases). Higher power, ~2.5x the model calls.
+fix_exec_timeout_sec: 1800 # full batch -> coded pipeline does up to 201 calls; widen
