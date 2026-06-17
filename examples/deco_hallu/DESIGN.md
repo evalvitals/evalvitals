@@ -101,6 +101,39 @@ This complements deco_miss (misses fixed by surfacing evidence) and contrasts
 with deco_pope's mixed run (no guard, honest L4): on a guarded, focused
 hallucination slice the loop produces a real, recall-preserving repair.
 
+## 4c. Re-run — 2026-06-17 (after removing the canned attention_guided_crop primitive)
+
+Re-run unchanged (L3b, single round, 80-case validation) to confirm the
+`fix_internals` refactor — which **deleted** the pre-audited
+`attention_guided_crop` primitive (an L3a *read*) on the grounds that the agent
+can author it itself against the `model_attend()` bridge — did not break this
+slice. It did not: the loop still closes to a validated, recall-preserving fix.
+
+- M5 verified 1/3, converged in 1 cycle (`criteria_met`).
+- `run_fix`: **fixed=True, recommendation=None**. Two candidates cleared the
+  e-value bar; both keep present-detections intact:
+
+  | candidate (tier) | fixed / broke | effect | e-value |
+  |---|---|---|---|
+  | **negative_framed_vote (L2)** | **13 / 0** | **+0.163** | **585** ✅ best |
+  | coded_pipeline (L3a, agent-written) | 13 / 1 | +0.150 | 78 ✅ |
+
+- **The key check passed**: with the canned primitive gone, the **agent-written**
+  `coded_pipeline` was handed the read bridge (`enable_attend=True`, tagged L3a)
+  and still validated (13/1, e=78) — the self-repair path does not need a
+  pre-built attention-crop tool. `attention_guided_crop` appears nowhere in the
+  run. The L3b *write* primitive we kept, `visual_embedding_boost`, was tried
+  three times and stayed inert/negative (1/2, 0/1, 3/1) — correctly rejected, as
+  on a confident hallucination there is no latent signal to amplify.
+- The no-free-lunch guard still bit: `evidence_first_zoom` broke more present
+  detections than it fixed (7/8, −0.013) and was rejected.
+
+The fixed-count is lower than the 2026-06-13 run (13 vs 22) — expected
+run-to-run variance: the coded pipeline is written fresh each run, this run
+converged in 1 cycle, and the winner here is actually *cleaner* (0 broken,
+e=585). Conclusion unchanged, and the refactor is validated end-to-end: removing
+a tool the agent can write itself did not cost the loop its repair.
+
 ## 5. Files
 
 ```
