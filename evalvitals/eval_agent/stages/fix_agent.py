@@ -7,9 +7,19 @@ function, exactly :mod:`~evalvitals.eval_agent.ab_runner`'s *strategy*
 contract — and validates each against the unmodified baseline with the paired
 machinery from :mod:`evalvitals.stats` (McNemar + e-value, never a bare p).
 
-There is **no automatic escalation**: when no candidate within the allowed
+There is **no automatic tier escalation**: when no candidate within the allowed
 tier validates, the outcome carries a *recommendation* to raise the tier,
 routed from the verified hypotheses' mechanisms (:func:`route_min_tier`).
+
+What the agent *does* retry within the allowed tier is the **proposal** itself:
+``max_repair_rounds`` (default 1) lets it run up to N propose→validate rounds.
+After a round in which nothing validates, the per-candidate results (how many
+cases each fixed / broke, net effect, or an execution error — see
+:meth:`FixAgent._format_prior`) are summarised and fed back to the judge/coder,
+which then proposes *different* strategies — never re-running an identical
+candidate (:meth:`FixAgent._signature`), never raising the tier.  The loop
+stops as soon as a candidate validates, or when a round yields no new
+candidate.
 
 Executors by tier:
 
@@ -21,9 +31,10 @@ Executors by tier:
   intermediate outputs — only the model itself is unchanged.  The code runs
   sandboxed with bridged model access (:mod:`fix_pipeline`); labels and
   rubrics never reach it, so it cannot cheat by echoing gold answers.
-* **L3a** — internals read (:mod:`fix_internals`): attention-guided crop
-  (capture host-side, crop at the attention peak, re-ask); coded pipelines
-  additionally get a bridged ``model_attend()`` when the tier allows.
+* **L3a** — internals read (:mod:`fix_internals`): no canned primitive; the
+  L2 coded pipeline gets a bridged ``model_attend()`` (read-only attention
+  heatmap) and authors its own peak-find -> crop -> re-ask scaffold when the
+  tier allows.
 * **L3b** — internals write (:mod:`fix_internals`): pre-audited intervention
   primitives (v1: visual embedding boost via a forward hook) — the judge
   selects and parameterises; never free codegen against the model handle.
@@ -286,10 +297,13 @@ class FixOutcome:
     # one subset and hurts another — evidence the mechanism is subset-specific
     # and the hypothesis should be re-scoped, not that no fix exists.
     refine_signal: "dict[str, Any] | None" = None
+    # Number of feedback-driven propose->validate rounds actually run (>= 1).
+    repair_rounds: int = 0
 
     def to_dict(self) -> "dict[str, Any]":
         return {
             "max_tier": self.max_tier.label,
+            "repair_rounds": self.repair_rounds,
             "routed": self.routed,
             "attempted": [
                 {
@@ -359,6 +373,18 @@ class FixAgent:
         alpha:            Significance level for the e-value gate (default 0.05;
                           rejects when e >= 1/alpha).  Also sets the power
                           ceiling used to flag underpowered-by-design runs.
+        run_context:      Optional :class:`~evalvitals.eval_agent.run_context.RunContext`.
+                          When set (directly, or inherited from ``run_logger``),
+                          coded-pipeline sandbox workdirs are allocated durably
+                          under ``workspace/`` instead of an ephemeral temp dir.
+        max_repair_rounds: Number of feedback-driven propose->validate rounds
+                          (default 1 = single-shot).  When > 1 and a round
+                          validates nothing, the failed candidates' results are
+                          fed back to the judge/coder (see
+                          :meth:`_format_prior`), which proposes *different*
+                          strategies within the SAME tier (no tier escalation).
+                          Stops early on the first validated fix or when a
+                          round adds no new candidate.
     """
 
     def __init__(
@@ -375,6 +401,7 @@ class FixAgent:
         baseline_repeats: int = 1,
         alpha: float = 0.05,
         run_context: "Any | None" = None,
+        max_repair_rounds: int = 1,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -391,6 +418,7 @@ class FixAgent:
         self.max_validation_cases = max_validation_cases
         self._baseline_repeats = max(1, int(baseline_repeats))
         self._alpha = float(alpha)
+        self.max_repair_rounds = max(1, int(max_repair_rounds))
         self._last_repair_prompt = ""
         self._last_usage: dict | None = None
 
@@ -412,10 +440,6 @@ class FixAgent:
         prior_attempts: "list[FixValidation] | None" = None,
     ) -> FixOutcome:
         """Generate candidates within the allowed tiers, validate, recommend."""
-        prior_text = self._format_prior(prior_attempts) if prior_attempts else ""
-        prior_names: "frozenset[str]" = frozenset(
-            v.candidate.name for v in (prior_attempts or [])
-        )
         outcome = FixOutcome(max_tier=self.max_tier)
         routed_tiers: "list[FixTier]" = []
         for h in hypotheses:
@@ -437,9 +461,41 @@ class FixAgent:
             self._emit(outcome)
             return outcome
 
-        for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
-            validation = self._validate(candidate, model, data, baseline, unstable)
-            outcome.attempted.append(validation)
+        # Feedback-driven repair rounds: propose -> validate; if nothing
+        # validates, summarise the failures (this call's own attempts, PLUS
+        # any prior_attempts carried over from an earlier escalation tier) and
+        # ask for DIFFERENT candidates within the same tier (never escalating).
+        # Stop on first validated fix or when a round adds no new candidate.
+        seen: "set[tuple[str, str]]" = set()
+        for round_idx in range(self.max_repair_rounds):
+            combined_prior = list(prior_attempts or []) + outcome.attempted
+            prior_text = self._format_prior(combined_prior) if combined_prior else ""
+            prior_names: "frozenset[str]" = frozenset(
+                v.candidate.name for v in combined_prior
+            )
+            new_candidates: "list[FixCandidate]" = []
+            for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
+                sig = self._signature(candidate)
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                new_candidates.append(candidate)
+            if not new_candidates:
+                logger.info("FixAgent: repair round %d produced no NEW candidate; stopping",
+                            round_idx + 1)
+                break
+            round_fixed = False
+            for candidate in new_candidates:
+                validation = self._validate(candidate, model, data, baseline, unstable)
+                outcome.attempted.append(validation)
+                round_fixed = round_fixed or validation.fixed
+            outcome.repair_rounds = round_idx + 1
+            if round_fixed:
+                break
+            if round_idx + 1 < self.max_repair_rounds:
+                logger.info("FixAgent: repair round %d validated no fix; feeding "
+                            "%d failed attempt(s) back for round %d",
+                            round_idx + 1, len(new_candidates), round_idx + 2)
 
         outcome.refine_signal = self._refine_signal(outcome.attempted, data)
         winners = [v for v in outcome.attempted if v.fixed]
@@ -603,6 +659,26 @@ class FixAgent:
         if self.max_tier >= FixTier.L4_PARAMETERS:
             candidates += self._l4_candidates(hyp_lines)
         return candidates
+
+    @staticmethod
+    def _signature(candidate: FixCandidate) -> "tuple[str, str]":
+        """Identity of a candidate, to skip re-validating an identical one.
+
+        Coded pipelines carry fresh source each round, so they never collide;
+        templates / specs / primitives dedup on their defining payload.
+        """
+        p = candidate.payload
+        if candidate.kind == "template":
+            key = str(p.get("prompt_template", ""))
+        elif candidate.kind == "primitive":
+            key = json.dumps({"primitive": p.get("primitive"),
+                              "params": p.get("params")}, sort_keys=True, default=str)
+        elif candidate.kind == "code":
+            key = str(p.get("code", ""))
+        else:
+            key = json.dumps({k: v for k, v in p.items() if k != "exec_error"},
+                             sort_keys=True, default=str)
+        return (candidate.kind, key)
 
     def _l1_candidates(
         self,
@@ -899,8 +975,9 @@ class FixAgent:
                 tier=prim.tier, name=prim.name, kind="primitive",
                 payload={"primitive": prim.name, "params": dict(p.get("params") or {})}))
         if not out:
+            # Internals-WRITE defaults only; reads (L3a) are authored by the
+            # coded pipeline against model_attend(), not proposed as primitives.
             defaults = {
-                "attention_guided_crop": {"layer": 0.75, "crop_frac": 0.5},
                 "visual_embedding_boost": {"gamma": 1.5},
             }
             for name, params in defaults.items():

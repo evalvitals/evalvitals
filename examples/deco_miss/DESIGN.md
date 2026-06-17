@@ -105,6 +105,35 @@ OUTSIDE this repository so the loop's coding agents cannot read them.
   finds and validates a real repair. The two examples together exercise both
   honest-no-fix and validated-fix paths of the loop.
 
+## 4c. Run record — 2026-06-13 (full M1→M5→M4 closure, after defects 10 & 11)
+
+Re-run after raising the white-box analyzer case caps (defect 10) and fixing the
+surgery agent's interpreter PATH (defect 11). The loop now closes **every**
+stage to a decision:
+
+- **M5 verified 2/3** (was 0/3): with all ~59 misses in the now-128-cap
+  stratified subsample, the per-strategy and per-layer contrasts cleared the
+  e-value bar. Top supported hypothesis: *misses are caused by a late-layer
+  (24–28) negative-answer prior that overrides an already-correct interim
+  representation* (conf 1.0). Loop converged in **1 cycle** (`criteria_met`).
+- **M4 surgery RAN and produced a real verdict** (was None / then a 240s
+  timeout): with a verified hypothesis, `run_m4` invoked the SurgeryAgent, whose
+  CLI agent wrote an 80-line `import evalvitals` experiment — `m.final_norm()` +
+  per-layer `forward` readout, splitting cases into late-decided (layer ≥26,
+  late_drop>0.15) vs early-decided. `returncode=0, sandbox_runs=1, verdict=0.0`
+  → it **REFUTED** the over-specific quantitative form (only 6 cases were
+  late-decided, and the early-decided group actually failed *more*: 0.72 vs
+  0.50). An honest negative — the mechanism is real but the loop's first
+  thresholded operationalization was too sharp.
+- **run_fix validated a repair**: `fixed=True, recommendation=None`, best =
+  `describe_first_cot` (L2, 12 misses fixed / 0 broken / +20% / significant);
+  `upscale_describe_first` also validated (10/0). The L3b
+  `visual_embedding_boost` primitive was inert again (0/0). Zero OOM.
+
+This is the loop running every module to a decision on the fixable slice:
+detect → analyse → **verify** → **surgery experiment (honest refute)** →
+**validated fix**.
+
 ## 5. Files
 
 ```
