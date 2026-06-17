@@ -16,21 +16,21 @@ Pipeline:
     M4  SurgeryAgent         claude/agy writes + runs targeted fix script
                              (called separately AFTER the loop)
 
-Outputs written to --run-dir (default: ./outputs/):
-    logs/run_log.jsonl          ← one JSON line per event: run_start (config +
-                                  git commit), probe (M1), analysis (M2),
-                                  diagnosis (M3), surgery (M5), tool_codegen +
-                                  tool_registry (tool synthesis), experiment (M4),
-                                  loop_end (tokens + per-stage timings)
-    logs/artifacts/             ← per-cycle analyzer artifacts (.npy / .json)
-    logs/prompts/               ← verbatim prompt + raw response of every LLM
-                                  judge call (M1 selection / M2 / M3)
-    logs/tools/                 ← code the agent synthesised for new probes /
-                                  stats tools, with the prompt + agent thinking
-    logs/experiments/           ← M4 generated script(s), run stdout/stderr, the
-                                  agent's intermediate thinking, the verdict
-    logs/workspace/             ← snapshot of the sandbox working directory per
-                                  experiment run (changes + inputs + outputs)
+Outputs written to --run-dir (default: ./outputs/), see manifest.json + the
+auto-generated README.txt for the full index:
+    run_log.jsonl          ← one JSON line per event: run_start (config +
+                              git commit), probe (M1), analysis (M2),
+                              diagnosis (M3), surgery (M5), tool_codegen +
+                              tool_registry (tool synthesis), experiment (M4),
+                              loop_end (tokens + per-stage timings)
+    artifacts/              ← per-cycle analyzer artifacts (.npy / .json)
+    prompts/                ← verbatim prompt + raw response of every LLM
+                              judge call (M1 selection / M2 / M3)
+    tools/                  ← code the agent synthesised for new probes /
+                              stats tools, with the prompt + agent thinking
+    experiments/             ← M4 generated script(s), run stdout/stderr, the
+                              agent's intermediate thinking, the verdict
+    workspace/               ← sandbox working directory per experiment run
 
 Usage (via Docker — preferred):
     export CLAUDE_PATH=$(ls -d ~/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude | sort -V | tail -1)
@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import re
 import textwrap
 import urllib.request
@@ -491,7 +490,7 @@ def _run_smoke_test(args) -> None:
     from evalvitals.eval_agent import (
         CaseDiscoveryAgent,
         HypothesisTester,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         StatsToolAgent,
         SurgeryAgent,
@@ -514,9 +513,7 @@ def _run_smoke_test(args) -> None:
     if not discovery.has_m5_groups:
         raise SystemExit("Smoke test requires both PASS and FAIL cases.")
 
-    run_dir = Path(args.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
+    ctx = RunContext(args.run_dir, verbose=True, config={"smoke_test": True})
 
     loop = VLDiagnoseLoop(
         model=model,
@@ -527,10 +524,11 @@ def _run_smoke_test(args) -> None:
         hypothesis_tester=HypothesisTester(min_effect=0.05),
         surgery_agent=SurgeryAgent(),
         max_cycles=1,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases)
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
     print("\nSmoke test result:")
     print(f"  stopped_by={report.stopped_by} cycles={report.cycles}")
@@ -544,68 +542,6 @@ def _run_smoke_test(args) -> None:
 
     print("  m4_status=supported")
     print("Smoke test passed.")
-
-
-def _write_report_artifacts(run_dir: Path, report, cases) -> None:
-    """Write human-readable run artifacts alongside the JSONL event log."""
-    hypotheses = [
-        {
-            "statement": h.statement,
-            "failure_mode": h.predicted_failure_mode,
-            "status": h.status.value if h.status else None,
-        }
-        for h in getattr(report, "all_hypotheses", [])
-    ]
-    m5_results = [
-        {
-            "hypothesis": tr.hypothesis.statement,
-            "failure_mode": tr.hypothesis.predicted_failure_mode,
-            "status": tr.status.value,
-            "effect_size": tr.effect_size,
-            "confidence": tr.confidence,
-            "protocol_consistent": tr.is_consistent_with_protocol,
-            "verdict": tr.verdict,
-            "evidence": tr.evidence,
-        }
-        for tr in getattr(report, "all_test_results", [])
-    ]
-    summary = {
-        "cycles": report.cycles,
-        "stopped_by": report.stopped_by,
-        "n_cases": len(cases),
-        "n_hypotheses": len(hypotheses),
-        "n_m5_results": len(m5_results),
-        "n_verified": len(getattr(report, "verified_hypotheses", [])),
-    }
-    (run_dir / "hypotheses.json").write_text(
-        json.dumps(hypotheses, indent=2, default=str),
-        encoding="utf-8",
-    )
-    (run_dir / "m5_results.json").write_text(
-        json.dumps(m5_results, indent=2, default=str),
-        encoding="utf-8",
-    )
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, default=str),
-        encoding="utf-8",
-    )
-    lines = [
-        "# qwen_loop_agy Run Summary",
-        "",
-        f"- stopped_by: {report.stopped_by}",
-        f"- cycles: {report.cycles}",
-        f"- cases: {len(cases)}",
-        f"- hypotheses: {len(hypotheses)}",
-        f"- verified: {summary['n_verified']}",
-        "",
-        "## Hypotheses",
-    ]
-    if hypotheses:
-        for h in hypotheses:
-            lines.append(f"- [{h['status']}] {h['failure_mode']}: {h['statement']}")
-    else:
-        lines.append("- none")
-    (run_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -709,7 +645,7 @@ def main() -> None:
         ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
@@ -747,7 +683,19 @@ def main() -> None:
         print(f"\n  judge : {args.model} (no CLI judge — using evaluated model as fallback)")
 
     run_dir = Path(args.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    ctx = RunContext(
+        run_dir, verbose=True,
+        config={
+            "model": args.model,
+            "judge_provider": coder_provider,
+            "judge_model": coder_model,
+            "scenario": args.scenario,
+            "max_cycles": args.max_cycles,
+            "max_analyzers": args.max_analyzers,
+            "analysis_only": args.analysis_only,
+            "fix_tier": args.fix_tier,
+        },
+    )
 
     # ── Protocol + candidate cases (per scenario) ─────────────────────────────
     if args.scenario == "vqa-rad":
@@ -782,10 +730,6 @@ def main() -> None:
             f"    [{case.label.value.upper()}] {case.id}: "
             f"{textwrap.shorten(observed, width=110, placeholder='...')}"
         )
-    (run_dir / "discovery_cases.json").write_text(
-        json.dumps(discovery_rows, indent=2, default=str),
-        encoding="utf-8",
-    )
     if discovery.errors:
         print(f"  discovery errors: {len(discovery.errors)}")
     if not discovery.has_m5_groups:
@@ -836,7 +780,7 @@ def main() -> None:
     # those verdicts. Falls back to threshold rules when cases are unlabeled.
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
-        figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
+        figure_dir=str(ctx.figures_dir),
         # pope (5) + relative_attention (3) + prompt_contrast (5) per-case
         # signal keys — don't silently truncate any of them.
         max_signal_tools=16,
@@ -867,18 +811,16 @@ def main() -> None:
             cli_agent=CliAgentConfig(provider=coder_provider, timeout_sec=420, model=coder_model, extra_args=_coder_extra),
             exec_fix_timeout_sec=60,
         )
-        surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
+        surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg, run_context=ctx)
 
     # ── Run directory + verbose logger ────────────────────────────────────────
     print(f"\nOutput directory: {run_dir.resolve()}")
-    print("  logs/run_log.jsonl   ← one JSON line per event (run_start/M1/M2/M3/M5 + tool_codegen + experiment)")
-    print("  logs/artifacts/      ← per-cycle analyzer artifacts (.npy / .json)")
-    print("  logs/prompts/        ← verbatim judge prompt + raw response per LLM call")
-    print("  logs/tools/          ← agent-synthesised probe / stats-tool code + prompts")
-    print("  logs/experiments/    ← M4 generated script, output, thinking, verdict")
-    print("  logs/workspace/      ← per-experiment workspace snapshot")
-
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
+    print("  run_log.jsonl   ← one JSON line per event (run_start/M1/M2/M3/M5 + tool_codegen + experiment)")
+    print("  artifacts/      ← per-cycle analyzer artifacts (.npy / .json)")
+    print("  prompts/        ← verbatim judge prompt + raw response per LLM call")
+    print("  tools/          ← agent-synthesised probe / stats-tool code + prompts")
+    print("  experiments/    ← M4 generated script, output, thinking, verdict")
+    print("  workspace/      ← per-experiment workspace snapshot")
 
     # ── VLDiagnoseLoop (M1→M2→M3→M5) ─────────────────────────────────────────
     from evalvitals.eval_agent import FixAgent
@@ -894,7 +836,7 @@ def main() -> None:
         fix_agent=FixAgent(
             judge=judge,
             max_tier=args.fix_tier,
-            run_logger=logger,
+            run_logger=ctx.logger,
             # L2 coded pipelines: the coding agent writes a brand-new repair
             # pipeline (bridged model access); follows the judge's CLI.
             cli_config=(
@@ -903,9 +845,10 @@ def main() -> None:
                 if args.allow_codegen and not args.analysis_only else None
             ),
             allow_codegen=args.allow_codegen and not args.analysis_only,
+            run_context=ctx,
         ),
         max_cycles=args.max_cycles,
-        run_logger=logger,
+        run_logger=ctx.logger,
         analysis_only=args.analysis_only,
     )
 
@@ -914,7 +857,7 @@ def main() -> None:
     print(f"{'='*64}")
 
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases)
+    ctx.write_diagnose_report(report, cases, discovery=discovery_rows)
 
     # ── Print verified hypotheses ─────────────────────────────────────────────
     print(f"\n{'='*64}")
@@ -974,6 +917,8 @@ def main() -> None:
         else:
             print(f"  VERDICT    : not fixed; already at the highest tier ({args.fix_tier})")
 
+    ctx.finalize()
+    print(f"\n  Full guide -> {ctx.root / 'README.txt'}")
     print("\nDone.")
 
 

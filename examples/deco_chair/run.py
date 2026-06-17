@@ -241,7 +241,7 @@ def main() -> None:
         CliAgentConfig,
         ExperimentWriterConfig,
         FixAgent,
-        RunLogger,
+        RunContext,
         SurgeryAgent,
         VLDiagnoseLoop,
     )
@@ -264,6 +264,10 @@ def main() -> None:
           f"clean(PASS)={len(list(cases)) - n_fail}")
     drift_check(model, cases, syn)
 
+    ctx = RunContext(
+        OUT, verbose=True,
+        config={"model": args.model, "judge_model": args.judge_model, "max_cycles": args.max_cycles},
+    )
     codegen_effort = str(CFG.get("codegen_effort", "") or "")
     codegen = CliAgentConfig(
         provider="claude_code",
@@ -279,29 +283,30 @@ def main() -> None:
     # override map, so tier-(a) selection of `chair` actually runs.
     from evalvitals.analyzers.hallucination.chair import CHAIRAnalyzer
     chair_analyzer = CHAIRAnalyzer(object_vocab=list(syn))
-    run_logger = RunLogger(run_dir=OUT / "logs", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,
         probe_agent=ProbeAgent(judge=judge, max_analyzers=args.max_analyzers,
                                allow_codegen=True, codegen_config=codegen,
                                analyzer_overrides={"chair": chair_analyzer}),
         stats_agent=StatsAnalysisAgent(judge=judge, allow_codegen=True,
-                                       codegen_config=codegen),
+                                       codegen_config=codegen, figure_dir=str(ctx.figures_dir)),
         diagnosis_agent=DiagnosisAgent(judge=judge),
         surgery_agent=SurgeryAgent(
-            judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen)),
+            judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen),
+            run_context=ctx),
         # CHAIR scorer (recall-floored) replaces the yes/no rubric scorer so the
         # fix module can validate open-ended captions; feedback-driven repair
         # runs up to fix_repair_rounds rounds within the allowed tier.
         fix_agent=FixAgent(judge=judge, score_fn=chair_score,
                            max_tier=str(CFG.get("fix_max_tier", "L2")),
-                           cli_config=codegen, run_logger=run_logger,
+                           cli_config=codegen, run_logger=ctx.logger,
                            max_validation_cases=int(CFG.get("fix_validation_cases", 24)),
                            exec_timeout_sec=int(CFG.get("fix_exec_timeout_sec", 1200)),
-                           max_repair_rounds=int(CFG.get("fix_repair_rounds", 3))),
+                           max_repair_rounds=int(CFG.get("fix_repair_rounds", 3)),
+                           run_context=ctx),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
-        run_logger=run_logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
     print(f"cycles={report.cycles} stopped_by={report.stopped_by} "
@@ -315,6 +320,9 @@ def main() -> None:
         print("m4:", fix)
         outcome = loop.run_fix(report, cases)
         print("fix outcome:", getattr(outcome, "recommendation", None) or outcome)
+
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
 
 if __name__ == "__main__":

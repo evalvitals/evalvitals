@@ -104,6 +104,7 @@ from evalvitals.eval_agent.preregister import (
     Split,
 )
 from evalvitals.eval_agent.report import DiagnosticReport
+from evalvitals.eval_agent.run_context import RunContext
 from evalvitals.eval_agent.run_logger import RunLogger
 from evalvitals.eval_agent.sandbox import (
     ExperimentSandbox,
@@ -248,6 +249,7 @@ __all__ = [
     "PreregisteredHypothesis",
     "PreregistrationLog",
     "DiagnosticReport",
+    "RunContext",
     "RunLogger",
     # Experiment execution
     "ExperimentWriter",

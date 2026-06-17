@@ -393,10 +393,8 @@ class FeedbackDrivenJudge(Model):
         self.saw_feedback: list[bool] = []
 
     def generate(self, inputs, **kwargs) -> str:
-        from evalvitals.eval_agent.stages.fix_agent import _FEEDBACK_HEADER
-
         prompt = str(inputs)
-        has_fb = _FEEDBACK_HEADER in prompt and "broke" in prompt
+        has_fb = "PRIOR ATTEMPTS THAT DID NOT WORK" in prompt and "broke" in prompt
         self.saw_feedback.append(has_fb)
         if has_fb:  # round 2+: propose the template that actually works
             return json.dumps([{"name": "careful_v2",
