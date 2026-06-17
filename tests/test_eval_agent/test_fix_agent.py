@@ -866,11 +866,12 @@ class AttnCropVLM(Model):
 
 
 def test_attention_heatmap_backs_model_attend():
-    """attention_heatmap stays: it is the host-side helper the model_attend()
-    bridge is built on (the read capability the agent authors against)."""
+    """attention_heatmap is the host-side helper the model_attend() bridge is
+    built on; it now lives with the analyzers (shared with relative_attn), one
+    reduction for both the analyzer path and the fix read bridge."""
     import numpy as np
 
-    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap
+    from evalvitals.analyzers.attention.relative_attn import attention_heatmap
 
     case = FailureCase(id="x", inputs=Inputs(prompt="q", image=_bright_corner_img()))
     grid = attention_heatmap(AttnCropVLM(), case)
@@ -878,9 +879,26 @@ def test_attention_heatmap_backs_model_attend():
     assert np.unravel_index(grid.argmax(), grid.shape) == (0, 0)
 
 
+def test_attention_capture_shared_reduction_matches_inline():
+    """image_token_attention is the single reduction both consumers share —
+    head-mean of the last query row over image tokens."""
+    from evalvitals.analyzers.attention.relative_attn import image_token_attention
+    from evalvitals.core.capability import Capability
+
+    case = FailureCase(id="x", inputs=Inputs(prompt="q", image=_bright_corner_img()))
+    trace = AttnCropVLM().forward(case.inputs, capture={Capability.ATTENTION})
+    attns = trace.require(Capability.ATTENTION)
+    mask = trace.extras["image_token_mask"]
+    vec = image_token_attention(attns[-1], mask)
+    expected = attns[-1].float().mean(dim=0)[-1, mask]
+    assert vec.shape == expected.shape
+    assert bool((vec == expected).all())
+
+
 def test_attention_guided_crop_primitive_is_gone():
     """The canned L3a read primitive was removed — reads are not in the
-    pre-audited write registry, only the L3b write primitive remains."""
+    pre-audited write registry, only the L3b write primitive remains. The
+    attention capture itself moved out of the fix module to the analyzers."""
     from evalvitals.eval_agent.stages import fix_internals
     from evalvitals.eval_agent.stages.fix_internals import INTERNALS_PRIMITIVES
 
@@ -888,6 +906,7 @@ def test_attention_guided_crop_primitive_is_gone():
     assert all(p.tier is FixTier.L3B_INTERNALS_WRITE for p in INTERNALS_PRIMITIVES.values())
     assert not hasattr(fix_internals, "run_attention_guided_crop")
     assert not hasattr(fix_internals, "peak_box")
+    assert not hasattr(fix_internals, "attention_heatmap")  # moved to relative_attn
 
 
 def test_l3a_read_is_authored_not_a_canned_primitive():

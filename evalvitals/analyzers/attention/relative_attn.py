@@ -13,6 +13,7 @@ References:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,8 +26,10 @@ from evalvitals.core.registry import register_analyzer
 from evalvitals.core.result import Result
 
 if TYPE_CHECKING:
-    from evalvitals.core.case import CaseBatch
+    from evalvitals.core.case import CaseBatch, FailureCase
     from evalvitals.core.model import Model
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_attention_layer(layer: "int | float", n_layers: int) -> int:
@@ -47,6 +50,64 @@ def resolve_attention_layer(layer: "int | float", n_layers: int) -> int:
             raise ValueError(f"fractional layer must be in (0, 1), got {layer}")
         return int(round(layer * (n_layers - 1)))
     return int(layer)
+
+
+def image_token_attention(attn_layer, mask):
+    """Head-averaged attention from the last query position to image patches.
+
+    The single reduction every image-attention consumer shares: average one
+    decoder layer's attention over heads, take the last query row, and keep only
+    the image-token columns.
+
+    Args:
+        attn_layer: one layer's attention, shape ``(heads, seq, seq)``.
+        mask:       boolean image-token mask over the ``seq`` axis.
+
+    Returns:
+        1-D tensor of length ``n_image_tokens``.
+    """
+    return attn_layer.float().mean(dim=0)[-1][mask]
+
+
+def attention_heatmap(
+    model: "Model", case: "FailureCase", layer: "int | float" = 0.75
+) -> "np.ndarray | None":
+    """One ATTENTION forward → (H, W) image-patch heatmap, or ``None``.
+
+    Host-side capture used both by analyzers and by the fix module's read-only
+    ``model_attend()`` bridge (:mod:`evalvitals.eval_agent.stages.fix_pipeline`):
+    run one attention forward, reduce it with :func:`image_token_attention`, and
+    reshape to the backend's ``image_spatial_shape`` (near-square fallback).
+    ``layer`` is resolved by :func:`resolve_attention_layer` — a float is a
+    fractional depth (default 0.75, a spatially-grounded late-middle layer; the
+    last layer is sink-dominated and localizes poorly).
+    """
+    from evalvitals.core.capability import Capability
+
+    if Capability.ATTENTION not in getattr(model, "capabilities", frozenset()):
+        return None
+    try:
+        trace = model.forward(case.inputs, capture={Capability.ATTENTION})
+        attns = trace.require(Capability.ATTENTION)
+        mask = trace.extras.get("image_token_mask")
+        if mask is None:
+            return None
+        layer_idx = resolve_attention_layer(layer, len(attns))
+        heat = image_token_attention(attns[layer_idx], mask).cpu().numpy().astype(np.float64)
+        if heat.size == 0:
+            return None
+        shape = trace.extras.get("image_spatial_shape")
+        if shape is not None and int(shape[0]) * int(shape[1]) == heat.size:
+            h, w = int(shape[0]), int(shape[1])
+        else:  # near-square fallback
+            h = max(1, int(np.sqrt(heat.size)))
+            while heat.size % h:
+                h -= 1
+            w = heat.size // h
+        return heat.reshape(h, w)
+    except Exception as exc:
+        logger.debug("attention_heatmap failed for %s: %s", getattr(case, "id", "?"), exc)
+        return None
 
 
 @dataclass
@@ -289,8 +350,7 @@ class RelativeAttentionAnalyzer(Analyzer):
         def _img_attn(trace, mask):
             """Head-averaged attention from the last query position to image patches."""
             attns = trace.require(Capability.ATTENTION)
-            a = attns[layer_idx].float()  # (heads, seq, seq)
-            return a.mean(dim=0)[-1, mask]  # (n_img_tokens,)
+            return image_token_attention(attns[layer_idx], mask)  # (n_img_tokens,)
 
         specific_attn = _img_attn(specific_trace, specific_mask)
         general_attn = _img_attn(general_trace, general_mask)

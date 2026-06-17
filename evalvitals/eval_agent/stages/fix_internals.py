@@ -1,18 +1,18 @@
 """L3b fix executors — internals-**modifying** repairs (the sandbox boundary).
 
 This module holds only what genuinely cannot be handed to a sandboxed coding
-agent: pre-audited, parameterised primitives that **write** to the forward pass,
-plus the host-side :func:`attention_heatmap` helper that backs the **read**-only
-``model_attend()`` bridge.
+agent: pre-audited, parameterised primitives that **write** to the forward pass.
 
-* **L3a (internals, read)** is intentionally NOT a primitive.  Reading attention
+* **L3a (internals, read)** is intentionally NOT here at all.  Reading attention
   needs no privileged model handle, so the capability is exposed to sandboxed
-  coded pipelines via ``model_attend()`` (see :mod:`fix_pipeline`, built on
-  :func:`attention_heatmap`) and the agent writes its own peak-find → crop →
-  re-ask scaffold.  Anything the agent can author against the bridge does not
-  belong in this registry.  (An earlier ``attention_guided_crop`` primitive was
-  removed for exactly this reason — it duplicated what the coded path already
-  writes.)
+  coded pipelines via ``model_attend()`` (see :mod:`fix_pipeline`), and the
+  agent writes its own peak-find → crop → re-ask scaffold.  The host-side
+  capture that backs ``model_attend()`` is
+  :func:`~evalvitals.analyzers.attention.relative_attn.attention_heatmap` — a
+  generic attention reducer that lives with the analyzers (one reduction shared
+  with the white-box probe path), not in this fix module.  (An earlier
+  ``attention_guided_crop`` primitive was removed for the same reason — it
+  duplicated what the coded path already writes.)
 * **L3b (internals, write)**: pre-audited intervention primitives that modify the
   forward pass — **never** free codegen against the model handle, because
   arbitrary hook code with the raw model object cannot be sandboxed.  The judge
@@ -35,8 +35,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-import numpy as np
-
 from evalvitals.eval_agent.stages.fix_tiers import FixTier
 from evalvitals.eval_agent.stages.fix_tools import score_to_bool
 
@@ -47,60 +45,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ScoreFn = Callable[["FailureCase", str], Optional[bool]]
-
-
-# ---------------------------------------------------------------------------
-# L3a — attention heatmap (host-side helper that backs the bridged model_attend)
-#
-# There is deliberately NO canned attention-guided-crop primitive here: the read
-# capability is exposed to sandboxed coded pipelines through model_attend()
-# (implemented on top of this helper in fix_pipeline.py), and the agent writes
-# its own peak-find + crop_region + re-ask scaffold.  Reads need no privileged
-# model handle, so they belong on the agent side, not in this pre-audited
-# registry — which is reserved for interventions that cannot be sandboxed (L3b).
-# ---------------------------------------------------------------------------
-
-def attention_heatmap(
-    model: "Model", case: "FailureCase", layer: "int | float" = 0.75
-) -> "np.ndarray | None":
-    """One ATTENTION forward → (H, W) image-patch heatmap, or ``None``.
-
-    Reduction mirrors the white-box probe capture: head-averaged attention from
-    the last query position, restricted to image-token positions, reshaped via
-    the backend's ``image_spatial_shape`` (near-square fallback).  ``layer`` is
-    resolved by :func:`~evalvitals.analyzers.attention.relative_attn.resolve_attention_layer`
-    — a float is a fractional depth (default 0.75, a spatially-grounded
-    late-middle layer); the last layer is sink-dominated and localizes poorly.
-    """
-    from evalvitals.analyzers.attention.relative_attn import resolve_attention_layer
-    from evalvitals.core.capability import Capability
-
-    if Capability.ATTENTION not in getattr(model, "capabilities", frozenset()):
-        return None
-    try:
-        trace = model.forward(case.inputs, capture={Capability.ATTENTION})
-        attns = trace.require(Capability.ATTENTION)
-        layer_idx = resolve_attention_layer(layer, len(attns))
-        row = attns[layer_idx].float().mean(dim=0)[-1].cpu().numpy()  # (seq,)
-        mask = trace.extras.get("image_token_mask")
-        if mask is None:
-            return None
-        mask = np.asarray(mask.cpu().numpy() if hasattr(mask, "cpu") else mask, dtype=bool)
-        if not mask.any() or mask.size != row.size:
-            return None
-        heat = row[mask].astype(np.float64)
-        shape = trace.extras.get("image_spatial_shape")
-        if shape is not None and int(shape[0]) * int(shape[1]) == heat.size:
-            h, w = int(shape[0]), int(shape[1])
-        else:  # near-square fallback
-            h = max(1, int(np.sqrt(heat.size)))
-            while heat.size % h:
-                h -= 1
-            w = heat.size // h
-        return heat.reshape(h, w)
-    except Exception as exc:
-        logger.debug("attention_heatmap failed for %s: %s", getattr(case, "id", "?"), exc)
-        return None
 
 
 # ---------------------------------------------------------------------------
