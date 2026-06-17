@@ -175,112 +175,6 @@ def _build_protocol():
 
 
 # ---------------------------------------------------------------------------
-# Output helpers
-# ---------------------------------------------------------------------------
-
-def _write_report_artifacts(run_dir: Path, report: Any, cases: list) -> None:
-    hypotheses = [
-        {
-            "statement": h.statement,
-            "failure_mode": h.predicted_failure_mode,
-            "status": h.status.value if h.status else None,
-        }
-        for h in getattr(report, "all_hypotheses", [])
-    ]
-    m5_results = [
-        {
-            "hypothesis": tr.hypothesis.statement,
-            "failure_mode": tr.hypothesis.predicted_failure_mode,
-            "status": tr.status.value,
-            "effect_size": tr.effect_size,
-            "confidence": tr.confidence,
-            "protocol_consistent": tr.is_consistent_with_protocol,
-            "verdict": tr.verdict,
-            "evidence": tr.evidence,
-        }
-        for tr in getattr(report, "all_test_results", [])
-    ]
-    summary = {
-        "cycles": report.cycles,
-        "stopped_by": report.stopped_by,
-        "n_cases": len(cases),
-        "n_hypotheses": len(hypotheses),
-        "n_verified": len(getattr(report, "verified_hypotheses", [])),
-    }
-    (run_dir / "hypotheses.json").write_text(
-        json.dumps(hypotheses, indent=2, default=str), encoding="utf-8"
-    )
-    (run_dir / "m5_results.json").write_text(
-        json.dumps(m5_results, indent=2, default=str), encoding="utf-8"
-    )
-    lines = [
-        "# mllms_hallucination Run Summary",
-        "",
-        f"- stopped_by: {report.stopped_by}",
-        f"- cycles: {report.cycles}",
-        f"- cases: {len(cases)}",
-        f"- hypotheses: {len(hypotheses)}",
-        f"- verified: {summary['n_verified']}",
-        "",
-        "## Hypotheses",
-    ]
-    for h in hypotheses or [{"status": None, "failure_mode": "none", "statement": "none"}]:
-        lines.append(f"- [{h['status']}] {h['failure_mode']}: {h['statement']}")
-    (run_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _write_output_index(run_dir: Path) -> None:
-    sections: list[tuple[str, list[tuple[str, str]]]] = [
-        ("Start here", [
-            ("summary.md", "plain-text run summary: verified hypotheses, cycles, counts"),
-            ("discovery_cases.json", "what the model answered for each POPE case"),
-        ]),
-        ("Diagnosis detail", [
-            ("hypotheses.json", "all generated hypotheses with SUPPORTED / REFUTED / UNKNOWN"),
-            ("m5_results.json", "statistical test results for each hypothesis"),
-            ("logs/figures/m2_effects.png", "bar chart of effect sizes across analyzers"),
-        ]),
-        ("Per-cycle analyzer data", [
-            ("logs/artifacts/c*_relative_attention_diff_map_fail_minus_pass.png",
-             "attention heatmap: where FAIL cases attend differently from PASS cases"),
-            ("logs/prompts/c*_m1_selection.*", "which analyzers were chosen and why"),
-            ("logs/prompts/c*_m3_diagnosis.*", "the agent's diagnosis reasoning"),
-        ]),
-        ("M4 experiment", [
-            ("logs/experiments/post_m4_record.md", "mechanism-verification summary"),
-            ("logs/experiments/post_m4_experiment.py", "script the agent wrote to test the hypothesis"),
-            ("logs/experiments/post_m4_stdout.txt", "verdict from running that script"),
-        ]),
-        ("Fix attempts", [
-            ("logs/fixes/outcome.md", "did the fix work? table of all attempts"),
-            ("logs/fixes/*/record.md", "one self-contained record per repair attempt"),
-        ]),
-        ("Raw event log", [
-            ("logs/run_log.jsonl", "one JSON line per event"),
-        ]),
-    ]
-
-    readme_lines = ["outputs/  - file guide\n"]
-    for heading, entries in sections:
-        readme_lines.append(f"{heading}\n{'-' * len(heading)}")
-        for fname, desc in entries:
-            readme_lines.append(f"  {fname}")
-            readme_lines.append(f"      {desc}")
-        readme_lines.append("")
-    (run_dir / "README.txt").write_text("\n".join(readme_lines), encoding="utf-8")
-
-    print("\n-- OUTPUT FILES ---------------------------------------------")
-    for heading, entries in sections:
-        print(f"\n  {heading}")
-        for fname, desc in entries:
-            full = run_dir / fname.replace("*", "c0")
-            marker = "  " if full.exists() or "*" in fname else "  (not written)"
-            print(f"{marker}    {fname}")
-            print(f"          {desc}")
-    print(f"\n  Full guide -> {run_dir / 'README.txt'}")
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -333,7 +227,7 @@ def main() -> None:
         FixAgent,
         HypothesisTester,
         ProbeAgent,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
@@ -391,9 +285,6 @@ def main() -> None:
             "label": case.label.value,
             "metadata": getattr(case, "metadata", {}),
         })
-    (run_dir / "discovery_cases.json").write_text(
-        json.dumps(discovery_rows, indent=2, default=str), encoding="utf-8"
-    )
 
     _bar(f"CASES  {len(cases)} total / {discovery.n_fail} fail / {discovery.n_pass} pass")
     id_w = max((len(c.id) for c in cases), default=20)
@@ -411,11 +302,20 @@ def main() -> None:
             "Try --max-data-cases with a larger sample."
         )
 
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
+    ctx = RunContext(
+        run_dir,
+        verbose=True,
+        config={
+            "model": args.model,
+            "judge": judge_desc,
+            "max_cycles": args.max_cycles,
+            "max_analyzers": args.max_analyzers,
+        },
+    )
     probe_agent = ProbeAgent(judge=judge, max_analyzers=args.max_analyzers)
     stats_agent = StatsAnalysisAgent(
         judge=judge,
-        figure_dir=str(run_dir / "logs" / "figures"),
+        figure_dir=str(ctx.figures_dir),
     )
     diagnosis_agent = DiagnosisAgent(judge=judge)
     hypothesis_tester = HypothesisTester(judge=judge, min_effect=0.05)
@@ -425,16 +325,17 @@ def main() -> None:
         ),
         exec_fix_timeout_sec=90,
     )
-    surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
+    surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg, run_context=ctx)
     fix_agent = FixAgent(
         judge=judge,
         score_fn=_score_case,
-        run_logger=logger,
+        run_logger=ctx.logger,
         cli_config=CliAgentConfig(
             provider="antigravity", timeout_sec=300, model=args.judge_model
         ),
         allow_codegen=True,
         exec_timeout_sec=300,
+        run_context=ctx,
     )
 
     loop = VLDiagnoseLoop(
@@ -447,12 +348,12 @@ def main() -> None:
         surgery_agent=surgery_agent,
         fix_agent=fix_agent,
         max_cycles=args.max_cycles,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
 
     _bar(f"RUNNING  max {args.max_cycles} cycles / {args.max_analyzers} analyzers")
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases)
+    ctx.write_diagnose_report(report, cases, discovery=discovery_rows)
 
     n_verified = len(report.verified_hypotheses)
     _bar(f"DIAGNOSIS  {report.cycles} cycle(s) / stopped: {report.stopped_by}")
@@ -503,8 +404,8 @@ def main() -> None:
     else:
         print("  skipped: no verified hypotheses")
 
-    _write_output_index(run_dir)
-    logger.close()
+    ctx.finalize()
+    print(f"\n  Full guide -> {ctx.root / 'README.txt'}")
     print("\nDone.")
 
 

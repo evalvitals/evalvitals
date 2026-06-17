@@ -46,13 +46,14 @@ Pipeline (identical to qwen_loop_agy):
          │
     M4  SurgeryAgent         writes + runs targeted fix script (post-loop)
 
-Outputs (default: <project-root>/runs/<scenario>/):
-    logs/run_log.jsonl          ← one JSON line per M1/M2/M3/M5 event
-    logs/artifacts/             ← per-cycle analyzer artifacts
-    discovery_cases.json        ← labeled case set after model execution
-    hypotheses.json             ← all hypotheses generated
-    m5_results.json             ← hypothesis test results
-    summary.md                  ← human-readable summary
+Outputs (default: <project-root>/runs/<scenario>/), see manifest.json + the
+auto-generated README.txt for the full index:
+    run_log.jsonl                ← one JSON line per M1/M2/M3/M5 event
+    artifacts/                   ← per-cycle analyzer artifacts
+    report/discovery_cases.json  ← labeled case set after model execution
+    report/hypotheses.json       ← all hypotheses generated
+    report/m5_results.json       ← hypothesis test results
+    report/summary.md            ← human-readable summary
 
 Usage (via Docker — preferred):
     SCENARIO=spatial  docker compose up   # default
@@ -69,7 +70,6 @@ Usage (direct):
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import textwrap
 from pathlib import Path
@@ -642,7 +642,7 @@ def _run_smoke_test(args, scenario: str) -> None:
     from evalvitals.eval_agent import (
         CaseDiscoveryAgent,
         HypothesisTester,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         StatsToolAgent,
         SurgeryAgent,
@@ -673,8 +673,7 @@ def _run_smoke_test(args, scenario: str) -> None:
         raise SystemExit(f"Smoke test [{scenario}] requires both PASS and FAIL cases.")
 
     run_dir = Path(args.run_dir) / scenario if args.run_dir else _OUTPUTS_DIR / scenario
-    run_dir.mkdir(parents=True, exist_ok=True)
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
+    ctx = RunContext(run_dir, verbose=True, config={"smoke_test": True, "scenario": scenario})
 
     loop = VLDiagnoseLoop(
         model=model,
@@ -685,10 +684,11 @@ def _run_smoke_test(args, scenario: str) -> None:
         hypothesis_tester=HypothesisTester(min_effect=0.05),
         surgery_agent=SurgeryAgent(),
         max_cycles=1,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases, scenario)
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
     print(f"\nSmoke test [{scenario}] result:")
     print(f"  stopped_by={report.stopped_by}  cycles={report.cycles}")
@@ -700,72 +700,8 @@ def _run_smoke_test(args, scenario: str) -> None:
     if fix is None or fix.status.value != "supported":
         raise SystemExit(f"Smoke test [{scenario}] failed: M4 did not support hypothesis.")
 
-    print(f"  m4_status=supported")
+    print("  m4_status=supported")
     print(f"Smoke test [{scenario}] passed.")
-
-
-# ---------------------------------------------------------------------------
-# Artifacts
-# ---------------------------------------------------------------------------
-
-def _write_report_artifacts(run_dir: Path, report, cases, scenario: str) -> None:
-    hypotheses = [
-        {
-            "statement": h.statement,
-            "failure_mode": h.predicted_failure_mode,
-            "status": h.status.value if h.status else None,
-        }
-        for h in getattr(report, "all_hypotheses", [])
-    ]
-    m5_results = [
-        {
-            "hypothesis": tr.hypothesis.statement,
-            "failure_mode": tr.hypothesis.predicted_failure_mode,
-            "status": tr.status.value,
-            "effect_size": tr.effect_size,
-            "confidence": tr.confidence,
-            "protocol_consistent": tr.is_consistent_with_protocol,
-            "verdict": tr.verdict,
-            "evidence": tr.evidence,
-        }
-        for tr in getattr(report, "all_test_results", [])
-    ]
-    summary = {
-        "scenario": scenario,
-        "cycles": report.cycles,
-        "stopped_by": report.stopped_by,
-        "n_cases": len(cases),
-        "n_hypotheses": len(hypotheses),
-        "n_m5_results": len(m5_results),
-        "n_verified": len(getattr(report, "verified_hypotheses", [])),
-    }
-    (run_dir / "hypotheses.json").write_text(
-        json.dumps(hypotheses, indent=2, default=str), encoding="utf-8"
-    )
-    (run_dir / "m5_results.json").write_text(
-        json.dumps(m5_results, indent=2, default=str), encoding="utf-8"
-    )
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, default=str), encoding="utf-8"
-    )
-    lines = [
-        f"# vlm_research_topics [{scenario}] Run Summary",
-        "",
-        f"- scenario    : {scenario}",
-        f"- stopped_by  : {report.stopped_by}",
-        f"- cycles      : {report.cycles}",
-        f"- cases       : {len(cases)}",
-        f"- hypotheses  : {len(hypotheses)}",
-        f"- verified    : {summary['n_verified']}",
-        "",
-        "## Hypotheses",
-    ]
-    if hypotheses:
-        for h in hypotheses:
-            lines.append(f"- [{h['status']}] {h['failure_mode']}: {h['statement']}")
-    else:
-        lines.append("- none")
-    (run_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -825,7 +761,7 @@ def main() -> None:
         ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
@@ -836,7 +772,17 @@ def main() -> None:
     _proto_fns = {"spatial": _spatial_protocol, "counting": _counting_protocol, "binding": _binding_protocol}
 
     run_dir = (Path(args.run_dir) if args.run_dir else _OUTPUTS_DIR) / scenario
-    run_dir.mkdir(parents=True, exist_ok=True)
+    ctx = RunContext(
+        run_dir, verbose=True,
+        config={
+            "model": args.model,
+            "judge_model": args.judge_model,
+            "scenario": scenario,
+            "max_cycles": args.max_cycles,
+            "max_analyzers": args.max_analyzers,
+            "analysis_only": args.analysis_only,
+        },
+    )
 
     # ── Load model ────────────────────────────────────────────────────────────
     print(f"\nLoading {args.model!r} on {args.device} ({args.dtype}) …  [scenario={scenario}]")
@@ -895,9 +841,6 @@ def main() -> None:
             f"    [{case.label.value.upper()}] {case.id}: "
             f"{textwrap.shorten(observed, width=110, placeholder='...')}"
         )
-    (run_dir / "discovery_cases.json").write_text(
-        json.dumps(discovery_rows, indent=2, default=str), encoding="utf-8"
-    )
     if not discovery.has_m5_groups:
         print(
             "  WARNING: M5 needs both PASS and FAIL cases; "
@@ -917,7 +860,7 @@ def main() -> None:
     )
     stats_agent = StatsAnalysisAgent(
         judge=None if args.analysis_only else judge,
-        figure_dir=str(run_dir / "logs" / "figures"),
+        figure_dir=str(ctx.figures_dir),
         allow_codegen=args.allow_codegen and not args.analysis_only,
         codegen_config=(
             CliAgentConfig(provider="antigravity", timeout_sec=120, model=args.judge_model)
@@ -934,10 +877,9 @@ def main() -> None:
             ),
             exec_fix_timeout_sec=60,
         )
-        surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
+        surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg, run_context=ctx)
 
     # ── Loop ──────────────────────────────────────────────────────────────────
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,
         protocol=protocol,
@@ -947,7 +889,7 @@ def main() -> None:
         hypothesis_tester=hypothesis_tester,
         surgery_agent=surgery_agent,
         max_cycles=args.max_cycles,
-        run_logger=logger,
+        run_logger=ctx.logger,
         analysis_only=args.analysis_only,
     )
 
@@ -957,7 +899,7 @@ def main() -> None:
     print(f"{'='*64}")
 
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases, scenario)
+    ctx.write_diagnose_report(report, cases, discovery=discovery_rows)
 
     print(f"\n{'='*64}")
     print(f"LOOP RESULT  stopped_by={report.stopped_by}  cycles={report.cycles}")
@@ -988,7 +930,8 @@ def main() -> None:
         else:
             print("  No verified hypotheses — skipping M4.")
 
-    print(f"\nArtifacts written to: {run_dir.resolve()}")
+    ctx.finalize()
+    print(f"\n  Full guide -> {ctx.root / 'README.txt'}")
     print("Done.")
 
 

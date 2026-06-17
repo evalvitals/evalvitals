@@ -359,31 +359,52 @@ class RunLogger:
         *,
         verbose: bool = False,
         trace_id: str | None = None,
+        context: "Any | None" = None,
     ) -> None:
-        if run_dir is None:
-            run_dir = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_dir = Path(run_dir)
-        self.artifact_dir = self.run_dir / "artifacts"
-        # Dedicated, human-navigable sinks for the heavier event payloads.
-        #   experiments/  — M4 experiment scripts, run stdout/stderr, the agent's
-        #                   intermediate thinking (CLI narration / LLM phase log)
-        #   tools/        — code the agent synthesised for new probes / stats tools
-        #   workspace/    — per-event snapshots of the sandbox working directory
-        self.experiments_dir = self.run_dir / "experiments"
-        self.tools_dir = self.run_dir / "tools"
-        self.workspace_dir = self.run_dir / "workspace"
-        # fixes/ — one self-contained record per tiered-repair attempt, plus an
-        #          outcome.md summarising all candidates and the escalation
-        #          recommendation.  Written by log_fix().
-        self.fixes_dir = self.run_dir / "fixes"
-        # prompts/ — the verbatim prompt and raw response of every LLM judge
-        #            call (M1 analyzer selection, M2 analysis, M3 diagnosis), so
-        #            each conclusion can be traced back to exactly what the judge
-        #            was shown and what it returned.
-        self.prompts_dir = self.run_dir / "prompts"
+        # When a RunContext is supplied it owns the whole run directory and all
+        # of the subdirectory paths; RunLogger simply borrows them.  This keeps a
+        # single source of truth for layout while preserving the historical
+        # standalone constructor (``RunLogger("runs/exp_01")``) unchanged.
+        self._context = context
+        if context is not None:
+            self.run_dir = context.root
+            self.artifact_dir = context.artifacts_dir
+            self.experiments_dir = context.experiments_dir
+            self.tools_dir = context.tools_dir
+            self.workspace_dir = context.workspace_dir
+            self.fixes_dir = context.fixes_dir
+            self.prompts_dir = context.prompts_dir
+            self.log_path = context.log_path
+            # Heatmaps/line plots are consolidated under the context's figures/
+            # dir rather than living next to the .npy data in artifacts/.
+            self._figures_dir: Path | None = context.figures_dir
+        else:
+            if run_dir is None:
+                run_dir = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.run_dir = Path(run_dir)
+            self.artifact_dir = self.run_dir / "artifacts"
+            # Dedicated, human-navigable sinks for the heavier event payloads.
+            #   experiments/  — M4 experiment scripts, run stdout/stderr, the agent's
+            #                   intermediate thinking (CLI narration / LLM phase log)
+            #   tools/        — code the agent synthesised for new probes / stats tools
+            #   workspace/    — per-event snapshots of the sandbox working directory
+            self.experiments_dir = self.run_dir / "experiments"
+            self.tools_dir = self.run_dir / "tools"
+            self.workspace_dir = self.run_dir / "workspace"
+            # fixes/ — one self-contained record per tiered-repair attempt, plus an
+            #          outcome.md summarising all candidates and the escalation
+            #          recommendation.  Written by log_fix().
+            self.fixes_dir = self.run_dir / "fixes"
+            # prompts/ — the verbatim prompt and raw response of every LLM judge
+            #            call (M1 analyzer selection, M2 analysis, M3 diagnosis), so
+            #            each conclusion can be traced back to exactly what the judge
+            #            was shown and what it returned.
+            self.prompts_dir = self.run_dir / "prompts"
+            self.log_path = self.run_dir / "run_log.jsonl"
+            # Legacy standalone mode: figures land alongside their .npy in artifacts/.
+            self._figures_dir = None
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        self.artifact_dir.mkdir(exist_ok=True)
-        self.log_path = self.run_dir / "run_log.jsonl"
+        self.artifact_dir.mkdir(parents=True, exist_ok=True)
 
         # The loop stamps this at the top of every cycle so generator-level
         # events (which have no cycle of their own) can be correlated with the
@@ -514,12 +535,14 @@ class RunLogger:
             entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.m1")
 
-        # Collect PNG heatmap paths saved alongside the .npy arrays.
+        # Collect PNG heatmap paths saved for the .npy arrays.  In context mode
+        # figures live under figures/; in legacy mode next to the .npy data.
         png_figures: list[Path] = []
+        fig_dir = self._figures_dir or self.artifact_dir
         for rel_npy in artifact_paths.values():
             if not rel_npy.endswith(".npy"):
                 continue
-            png = (self.run_dir / rel_npy).with_suffix(".png")
+            png = fig_dir / (Path(rel_npy).name[: -len(".npy")] + ".png")
             if png.exists():
                 png_figures.append(png)
         return png_figures
@@ -1197,7 +1220,9 @@ class RunLogger:
             if arr is not None:
                 path = self.artifact_dir / f"{stem}.npy"
                 np.save(path, arr)
-                _save_artifact_figure(self.artifact_dir, stem, arr)
+                fig_dir = self._figures_dir or self.artifact_dir
+                fig_dir.mkdir(parents=True, exist_ok=True)
+                _save_artifact_figure(fig_dir, stem, arr)
                 return path
             if isinstance(artifact, (dict, list)):
                 path = self.artifact_dir / f"{stem}.json"

@@ -180,7 +180,7 @@ def main() -> None:
         CliAgentConfig,
         ExperimentWriterConfig,
         FixAgent,
-        RunLogger,
+        RunContext,
         SurgeryAgent,
         VLDiagnoseLoop,
     )
@@ -215,7 +215,10 @@ def main() -> None:
     )
     print(f"codegen: claude_code model={codegen.model} "
           f"effort={codegen_effort or 'default'}")
-    run_logger = RunLogger(run_dir=OUT / "logs", verbose=True)
+    ctx = RunContext(
+        OUT, verbose=True,
+        config={"model": args.model, "judge_model": args.judge_model, "max_cycles": args.max_cycles},
+    )
     loop = VLDiagnoseLoop(
         model=model,
         # judge => LLM-guided analyzer selection anchored on the protocol
@@ -229,22 +232,24 @@ def main() -> None:
             allow_codegen=True, codegen_config=codegen,
         ),
         stats_agent=StatsAnalysisAgent(judge=judge, allow_codegen=True,
-                                       codegen_config=codegen),
+                                       codegen_config=codegen, figure_dir=str(ctx.figures_dir)),
         diagnosis_agent=DiagnosisAgent(judge=judge),
         surgery_agent=SurgeryAgent(
-            judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen)),
+            judge=judge, writer_config=ExperimentWriterConfig(cli_agent=codegen),
+            run_context=ctx),
         # Bound fix validation: a coded pipeline calls the model ~k times PER
         # case, so validating on the full batch times out (run#2: 4418 calls,
         # 600s kill). Validate on a label-stratified subset and allow more wall
         # clock for the coded path.
         fix_agent=FixAgent(judge=judge,
                            max_tier=str(CFG.get("fix_max_tier", "L3b")),
-                           cli_config=codegen, run_logger=run_logger,
+                           cli_config=codegen, run_logger=ctx.logger,
                            max_validation_cases=int(CFG.get("fix_validation_cases", 60)),
-                           exec_timeout_sec=int(CFG.get("fix_exec_timeout_sec", 900))),
+                           exec_timeout_sec=int(CFG.get("fix_exec_timeout_sec", 900)),
+                           run_context=ctx),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
-        run_logger=run_logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
     print(f"cycles={report.cycles} stopped_by={report.stopped_by} "
@@ -262,6 +267,9 @@ def main() -> None:
         print("m4:", fix)
         outcome = loop.run_fix(report, cases)
         print("fix outcome:", getattr(outcome, "recommendation", None) or outcome)
+
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
 
 if __name__ == "__main__":

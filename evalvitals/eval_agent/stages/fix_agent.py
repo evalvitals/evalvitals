@@ -374,6 +374,7 @@ class FixAgent:
         max_validation_cases: int = 0,
         baseline_repeats: int = 1,
         alpha: float = 0.05,
+        run_context: "Any | None" = None,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -382,6 +383,10 @@ class FixAgent:
         self._cli_config = cli_config
         self._allow_codegen = allow_codegen
         self._sandbox = sandbox
+        # When set (directly, or via the RunLogger's bound RunContext), the
+        # sandbox workdir is allocated durably under workspace/ instead of an
+        # ephemeral tempfile.mkdtemp() that the sandbox deletes on success.
+        self._run_context = run_context or getattr(run_logger, "_context", None)
         self._exec_timeout_sec = exec_timeout_sec
         self.max_validation_cases = max_validation_cases
         self._baseline_repeats = max(1, int(baseline_repeats))
@@ -804,7 +809,12 @@ class FixAgent:
         if self._sandbox is None:
             from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
-            self._sandbox = ExperimentSandbox()
+            workdir = (
+                self._run_context.new_workdir("fix")
+                if self._run_context is not None
+                else None
+            )
+            self._sandbox = ExperimentSandbox(workdir=workdir)
         return str(self._sandbox.workdir)
 
     @staticmethod
