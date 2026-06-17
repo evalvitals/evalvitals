@@ -1,18 +1,26 @@
-"""L3a/L3b fix executors — internals-guided and internals-modifying repairs.
+"""L3b fix executors — internals-**modifying** repairs (the sandbox boundary).
 
-L3a (internals, **read**): the model's own attention locates the evidence; the
-scaffold acts on it.  The flagship primitive is *attention-guided crop*: one
-ATTENTION forward per case, reduce to an image-patch heatmap (the same
-head-averaged last-query reduction as the white-box probe path), crop around
-the peak, re-ask the original question.  Capture stays host-side — nothing
-white-box ever enters a sandbox.
+This module holds only what genuinely cannot be handed to a sandboxed coding
+agent: pre-audited, parameterised primitives that **write** to the forward pass,
+plus the host-side :func:`attention_heatmap` helper that backs the **read**-only
+``model_attend()`` bridge.
 
-L3b (internals, **write**): pre-audited, parameterised intervention primitives
-that modify the forward pass — never free codegen against the model handle.
-v1 ships *visual embedding boost*: a forward hook on the input-embedding layer
-scaling image-token embeddings by ``gamma`` (architecture-agnostic for HF VLMs
-whose image tokens are placeholder ids in ``input_ids``).  Attention-map
-editing needs per-architecture hooks and joins this registry later.
+* **L3a (internals, read)** is intentionally NOT a primitive.  Reading attention
+  needs no privileged model handle, so the capability is exposed to sandboxed
+  coded pipelines via ``model_attend()`` (see :mod:`fix_pipeline`, built on
+  :func:`attention_heatmap`) and the agent writes its own peak-find → crop →
+  re-ask scaffold.  Anything the agent can author against the bridge does not
+  belong in this registry.  (An earlier ``attention_guided_crop`` primitive was
+  removed for exactly this reason — it duplicated what the coded path already
+  writes.)
+* **L3b (internals, write)**: pre-audited intervention primitives that modify the
+  forward pass — **never** free codegen against the model handle, because
+  arbitrary hook code with the raw model object cannot be sandboxed.  The judge
+  selects and parameterises; it never authors these.  v1 ships *visual embedding
+  boost*: a forward hook on the input-embedding layer scaling image-token
+  embeddings by ``gamma`` (architecture-agnostic for HF VLMs whose image tokens
+  are placeholder ids in ``input_ids``).  Attention-map editing needs
+  per-architecture hooks and joins this registry later.
 
 L4 (parameter space) is **defined but TODO**: :class:`FinetuneSpec` captures a
 complete fine-tune recipe (dataset construction generalising the verified
@@ -30,7 +38,6 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 import numpy as np
 
 from evalvitals.eval_agent.stages.fix_tiers import FixTier
-from evalvitals.eval_agent.stages.fix_tools import apply_image_ops
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
@@ -42,7 +49,14 @@ ScoreFn = Callable[["FailureCase", str], Optional[bool]]
 
 
 # ---------------------------------------------------------------------------
-# L3a — attention heatmap + attention-guided crop
+# L3a — attention heatmap (host-side helper that backs the bridged model_attend)
+#
+# There is deliberately NO canned attention-guided-crop primitive here: the read
+# capability is exposed to sandboxed coded pipelines through model_attend()
+# (implemented on top of this helper in fix_pipeline.py), and the agent writes
+# its own peak-find + crop_region + re-ask scaffold.  Reads need no privileged
+# model handle, so they belong on the agent side, not in this pre-audited
+# registry — which is reserved for interventions that cannot be sandboxed (L3b).
 # ---------------------------------------------------------------------------
 
 def attention_heatmap(
@@ -81,50 +95,6 @@ def attention_heatmap(
     except Exception as exc:
         logger.debug("attention_heatmap failed for %s: %s", getattr(case, "id", "?"), exc)
         return None
-
-
-def peak_box(grid: "np.ndarray", crop_frac: float = 0.5) -> "tuple[float, float, float, float]":
-    """Normalized (l, t, r, b) crop box of side *crop_frac* centred on the peak cell."""
-    crop_frac = min(1.0, max(0.1, float(crop_frac)))
-    h, w = grid.shape
-    r, c = np.unravel_index(int(np.argmax(grid)), grid.shape)
-    cx, cy = (c + 0.5) / w, (r + 0.5) / h
-    left = min(max(cx - crop_frac / 2, 0.0), 1.0 - crop_frac)
-    top = min(max(cy - crop_frac / 2, 0.0), 1.0 - crop_frac)
-    return (left, top, left + crop_frac, top + crop_frac)
-
-
-def run_attention_guided_crop(
-    model: "Model",
-    cases: "CaseBatch",
-    score_fn: ScoreFn,
-    params: "dict[str, Any] | None" = None,
-) -> "dict[str, Optional[bool]]":
-    """Per case: heatmap → crop around the attention peak → re-ask → score."""
-    from evalvitals.core.case import Inputs
-
-    p = params or {}
-    layer = int(p.get("layer", -1))
-    crop_frac = float(p.get("crop_frac", 0.5))
-    scores: "dict[str, Optional[bool]]" = {}
-    for case in cases:
-        grid = attention_heatmap(model, case, layer=layer)
-        inp = getattr(case, "inputs", None)
-        image = getattr(inp, "image", None)
-        if grid is None or image is None:
-            scores[case.id] = None
-            continue
-        box = peak_box(grid, crop_frac=crop_frac)
-        cropped = apply_image_ops(image, [{"tool": "crop_region", "params": {"box": box}}])
-        try:
-            out = str(model.generate(Inputs(prompt=str(getattr(inp, "prompt", "")),
-                                            image=cropped)))
-        except Exception as exc:
-            logger.debug("attention_guided_crop generate failed on %s: %s", case.id, exc)
-            scores[case.id] = None
-            continue
-        scores[case.id] = score_fn(case, out)
-    return scores
 
 
 # ---------------------------------------------------------------------------
@@ -217,22 +187,9 @@ class InternalsPrimitive:
     run: "Callable[[Model, CaseBatch, ScoreFn, dict | None], dict[str, Optional[bool]]]"
 
 
-def _has_attention(model: "Model") -> bool:
-    from evalvitals.core.capability import Capability
-
-    return Capability.ATTENTION in getattr(model, "capabilities", frozenset())
-
-
+#: Pre-audited internals-WRITE primitives only.  Reads (L3a) are not here — the
+#: agent authors them against the ``model_attend()`` bridge (see module docstring).
 INTERNALS_PRIMITIVES: "dict[str, InternalsPrimitive]" = {
-    "attention_guided_crop": InternalsPrimitive(
-        name="attention_guided_crop",
-        tier=FixTier.L3A_INTERNALS_READ,
-        description="crop around the model's own attention peak, re-ask "
-                    "(uses internal attention to locate the evidence)",
-        params_hint='{"layer": int (default -1), "crop_frac": float 0.1-1.0 (default 0.5)}',
-        available=_has_attention,
-        run=run_attention_guided_crop,
-    ),
     "visual_embedding_boost": InternalsPrimitive(
         name="visual_embedding_boost",
         tier=FixTier.L3B_INTERNALS_WRITE,

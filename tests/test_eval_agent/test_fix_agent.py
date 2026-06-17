@@ -605,7 +605,7 @@ def test_never_executed_candidate_does_not_force_escalation(tmp_path):
     assert "never execute" in coded[0].summary.lower()
 
 
-# ── L3a: attention-guided crop ───────────────────────────────────────────────
+# ── L3a: attention read is agent-authored (no canned primitive) ──────────────
 
 
 def _bright_corner_img():
@@ -656,55 +656,58 @@ class AttnCropVLM(Model):
                              "image_spatial_shape": (h, w)})
 
 
-def test_attention_heatmap_and_peak_box():
+def test_attention_heatmap_backs_model_attend():
+    """attention_heatmap stays: it is the host-side helper the model_attend()
+    bridge is built on (the read capability the agent authors against)."""
     import numpy as np
 
-    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap, peak_box
+    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap
 
     case = FailureCase(id="x", inputs=Inputs(prompt="q", image=_bright_corner_img()))
     grid = attention_heatmap(AttnCropVLM(), case)
     assert grid is not None and grid.shape == (3, 4)
     assert np.unravel_index(grid.argmax(), grid.shape) == (0, 0)
-    box = peak_box(grid, crop_frac=0.5)
-    assert box[0] == 0.0 and box[1] == 0.0  # clamped to the top-left corner
-    assert box[2] == 0.5 and box[3] == 0.5
 
 
-def test_attention_guided_crop_repairs_peripheral_finding():
+def test_attention_guided_crop_primitive_is_gone():
+    """The canned L3a read primitive was removed — reads are not in the
+    pre-audited write registry, only the L3b write primitive remains."""
+    from evalvitals.eval_agent.stages import fix_internals
+    from evalvitals.eval_agent.stages.fix_internals import INTERNALS_PRIMITIVES
+
+    assert "attention_guided_crop" not in INTERNALS_PRIMITIVES
+    assert all(p.tier is FixTier.L3B_INTERNALS_WRITE for p in INTERNALS_PRIMITIVES.values())
+    assert not hasattr(fix_internals, "run_attention_guided_crop")
+    assert not hasattr(fix_internals, "peak_box")
+
+
+def test_l3a_read_is_authored_not_a_canned_primitive():
+    """At L3a the read lever is the coded pipeline's bridged model_attend(), not
+    a primitive: (a) no primitive candidate is proposed, and (b) the coded
+    candidate is tagged L3a with enable_attend=True."""
     pytest.importorskip("PIL")
-    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
-    from evalvitals.eval_agent.stages.fix_internals import run_attention_guided_crop
-
-    model = AttnCropVLM()
-    cases = CaseBatch([
-        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
-                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
-        for i in range(4)
-    ])
-    # Baseline fails: full image is mostly dark.
-    assert model.generate(cases[0].inputs) == "No."
-    scores = run_attention_guided_crop(model, cases, _default_score,
-                                       {"crop_frac": 0.5})
-    assert all(scores[c.id] is True for c in cases)  # crop at peak -> bright -> yes
-
-
-def test_l3a_candidate_fixes_via_fix_agent():
-    pytest.importorskip("PIL")
-    agent = FixAgent(judge=None, max_tier="L3a", allow_codegen=False)
-    # 8 cases: 6/6 repairs only reaches e=9.1 (< 20) — honest inconclusive;
-    # 8/8 clears the e-value threshold.
     cases = CaseBatch([
         FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
                     expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
         for i in range(8)
     ])
-    out = agent.propose_and_validate(AttnCropVLM(), cases,
-                                     [_hyp("attention is on the finding but the answer "
-                                           "ignores it", mode="attention_mislocalization")])
-    prim = [v for v in out.attempted if v.candidate.kind == "primitive"]
-    assert len(prim) == 1 and prim[0].candidate.name == "attention_guided_crop"
-    assert prim[0].fixed is True and out.fixed is True
-    assert out.recommendation is None
+    hyp = _hyp("attention is on the finding but the answer ignores it",
+               mode="attention_mislocalization")
+
+    # (a) no codegen at L3a: the only registered primitive is the L3b write one,
+    # which is out of tier -> NO primitive candidate is attempted.
+    bare = FixAgent(judge=None, max_tier="L3a", allow_codegen=False)
+    out = bare.propose_and_validate(AttnCropVLM(), cases, [hyp])
+    assert not any(v.candidate.kind == "primitive" for v in out.attempted)
+
+    # (b) the read lever still exists, but as agent-written code carrying the
+    # model_attend bridge (enable_attend), tagged at the L3a tier.
+    coded = FixAgent(judge=CodeWritingJudge(), max_tier="L3a", allow_codegen=True)
+    cands = coded._propose([hyp], cases, AttnCropVLM())
+    code_cands = [c for c in cands if c.kind == "code"]
+    assert code_cands and code_cands[0].tier is FixTier.L3A_INTERNALS_READ
+    assert code_cands[0].payload.get("enable_attend") is True
+    assert not any(c.kind == "primitive" for c in cands)
 
 
 # ── L3b: visual embedding boost ──────────────────────────────────────────────

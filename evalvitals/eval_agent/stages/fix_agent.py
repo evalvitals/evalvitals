@@ -746,8 +746,9 @@ class FixAgent:
                 tier=prim.tier, name=prim.name, kind="primitive",
                 payload={"primitive": prim.name, "params": dict(p.get("params") or {})}))
         if not out:
+            # Internals-WRITE defaults only; reads (L3a) are authored by the
+            # coded pipeline against model_attend(), not proposed as primitives.
             defaults = {
-                "attention_guided_crop": {"layer": -1, "crop_frac": 0.5},
                 "visual_embedding_boost": {"gamma": 1.5},
             }
             for name, params in defaults.items():
