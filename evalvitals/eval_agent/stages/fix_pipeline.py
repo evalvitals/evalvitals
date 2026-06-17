@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from evalvitals.eval_agent.stages.fix_tools import apply_image_ops
+from evalvitals.eval_agent.stages.fix_tools import apply_image_ops, score_to_bool
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
@@ -276,5 +276,5 @@ def score_outputs(
     scores: "dict[str, Optional[bool]]" = {}
     for case in cases:
         output = result.outputs.get(case.id)
-        scores[case.id] = None if output is None else score_fn(case, output)
+        scores[case.id] = None if output is None else score_to_bool(score_fn(case, output))
     return scores

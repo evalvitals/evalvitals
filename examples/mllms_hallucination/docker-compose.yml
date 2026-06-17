@@ -1,12 +1,10 @@
 services:
-  mllms_small_object:
+  mllms_hallucination:
     build:
       context: ../..
-      dockerfile: examples/mllms_small_object/Dockerfile
-    image: evalvitals-mllms-small-object
+      dockerfile: examples/mllms_hallucination/Dockerfile
+    image: evalvitals-mllms-hallucination
     environment:
-      # Use PCI-bus device ordering so CUDA_VISIBLE_DEVICES matches nvidia-smi.
-      # Pick a GPU with free memory: export CUDA_VISIBLE_DEVICES=2
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -18,7 +16,7 @@ services:
       - ${AGY_PATH:-~/.local/bin/agy}:/usr/local/bin/agy:ro
       - ~/.gemini:/home/user/.gemini
       - ~/.cache/antigravity:/home/user/.cache/antigravity
-      - /data/rjin02/evalvitals/textvqa_mllms_know:/data/rjin02/evalvitals/textvqa_mllms_know:ro
+      - /data/rjin02/evalvitals/pope_coco:/data/rjin02/evalvitals/pope_coco:ro
     deploy:
       resources:
         reservations:

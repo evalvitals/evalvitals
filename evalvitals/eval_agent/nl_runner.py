@@ -113,12 +113,12 @@ def main() -> None:
     parser.add_argument("--max-analyzers", type=int, default=2)
     parser.add_argument("--smoke-test", action="store_true",
                         help="Run with a tiny stand-in model (no GPU/API key needed)")
-    parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR / "logs"))
+    parser.add_argument("--run-dir", default=str(_OUTPUTS_DIR))
     args = parser.parse_args()
 
     import evalvitals  # noqa: F401 — registers all analyzers
 
-    from evalvitals.eval_agent import AgyModel, RunLogger, VLDiagnoseLoop
+    from evalvitals.eval_agent import AgyModel, RunContext, VLDiagnoseLoop
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
@@ -150,24 +150,27 @@ def main() -> None:
         judge = None
         print("[warn] agy binary not found — M3/M5 will be skipped")
 
-    logger = RunLogger(run_dir=args.run_dir)
-    print(f"Logging to: {{logger.run_dir}}")
+    ctx = RunContext(args.run_dir, verbose=True)
+    print(f"Logging to: {{ctx.root}}")
 
     loop = VLDiagnoseLoop(
         model=model,
         probe_agent=ProbeAgent(max_analyzers=args.max_analyzers),
-        stats_agent=StatsAnalysisAgent(judge=judge),
+        stats_agent=StatsAnalysisAgent(judge=judge, figure_dir=str(ctx.figures_dir)),
         diagnosis_agent=DiagnosisAgent(judge=judge),
         max_cycles=args.max_cycles,
         protocol=protocol,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
     print(f"\\n[VLDiagnoseLoop] cycles={{report.cycles}}  resolved={{report.resolved}}")
     for h in report.final_hypotheses:
         print(f"  hypothesis : {{h.statement}}")
         print(f"  status     : {{h.status}}")
+    print(f"\\nFull guide -> {{ctx.root / 'README.txt'}}")
 
 
 if __name__ == "__main__":
@@ -262,7 +265,8 @@ REQUIREMENTS
    when the agy binary is absent).
 6. Accept CLI flags: --model, --device, --dtype, --max-cycles,
    --max-analyzers, --smoke-test, --run-dir.
-7. Write outputs to `Path(__file__).parent / "outputs" / "logs"`.
+7. Write outputs via `RunContext(args.run_dir)` (from `evalvitals.eval_agent`),
+   defaulting `--run-dir` to `Path(__file__).parent / "outputs"`.
 8. Include a `--smoke-test` path with a `_SmokeModel` stand-in so the
    script can be verified without a GPU.
 

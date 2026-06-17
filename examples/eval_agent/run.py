@@ -41,7 +41,7 @@ from evalvitals.eval_agent import (
     EvalOrchestrator,
     InMemoryStore,
     PreregisteredHypothesis,
-    RunLogger,
+    RunContext,
     Split,
 )
 
@@ -168,12 +168,12 @@ def demo_auto_diagnose() -> None:
         for kind in ModelKind
     })
 
-    logger = RunLogger()
-    print(f"  logging to: {logger.run_dir}")
+    ctx = RunContext()
+    print(f"  logging to: {ctx.root}")
 
     # SurgeryAgent uses the same Gemini model as judge to write + execute
     # targeted diagnostic scripts via ExperimentWriter (M4 code-execution path).
-    surgery = SurgeryAgent(judge=model)
+    surgery = SurgeryAgent(judge=model, run_context=ctx)
 
     loop = AutoDiagnoseLoop(
         model=model,
@@ -181,7 +181,7 @@ def demo_auto_diagnose() -> None:
         diagnosis_agent=DiagnosisAgent(),
         surgery_agent=surgery,
         max_cycles=2,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
 

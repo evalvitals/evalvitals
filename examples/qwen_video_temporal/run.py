@@ -25,9 +25,10 @@ Key difference vs qwen_loop_agy:
                       know (exact pixel coords, exact movement in pixels,
                       exact fraction of width travelled)
 
-Outputs written to --run-dir (default: ./outputs/):
-    logs/run_log.jsonl          ← one JSON line per M1/M2/M3/M5 event
-    logs/artifacts/             ← per-cycle analyzer artifacts
+Outputs written to --run-dir (default: ./outputs/), see manifest.json + the
+auto-generated README.txt for the full index:
+    run_log.jsonl          ← one JSON line per M1/M2/M3/M5 event
+    artifacts/              ← per-cycle analyzer artifacts
 
 Usage (via Docker — preferred):
     docker compose up
@@ -41,7 +42,6 @@ Usage (direct):
 
 from __future__ import annotations
 
-import json
 import re
 import textwrap
 from pathlib import Path
@@ -323,7 +323,7 @@ def _run_smoke_test(args) -> None:
     from evalvitals.eval_agent import (
         CaseDiscoveryAgent,
         HypothesisTester,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         StatsToolAgent,
         SurgeryAgent,
@@ -348,9 +348,7 @@ def _run_smoke_test(args) -> None:
     if not discovery.has_m5_groups:
         raise SystemExit("Smoke test requires both PASS and FAIL cases.")
 
-    run_dir = Path(args.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
+    ctx = RunContext(args.run_dir, verbose=True, config={"smoke_test": True})
 
     loop = VLDiagnoseLoop(
         model=model,
@@ -361,10 +359,11 @@ def _run_smoke_test(args) -> None:
         hypothesis_tester=HypothesisTester(min_effect=0.05),
         surgery_agent=SurgeryAgent(),
         max_cycles=1,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases)
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
     print("\nSmoke test result:")
     print(f"  stopped_by={report.stopped_by}  cycles={report.cycles}")
@@ -378,65 +377,6 @@ def _run_smoke_test(args) -> None:
 
     print("  m4_status=supported")
     print("Smoke test passed.")
-
-
-# ---------------------------------------------------------------------------
-# Artifact writer (identical structure to qwen_loop_agy)
-# ---------------------------------------------------------------------------
-
-def _write_report_artifacts(run_dir: Path, report, cases) -> None:
-    hypotheses = [
-        {
-            "statement": h.statement,
-            "failure_mode": h.predicted_failure_mode,
-            "status": h.status.value if h.status else None,
-        }
-        for h in getattr(report, "all_hypotheses", [])
-    ]
-    m5_results = [
-        {
-            "hypothesis": tr.hypothesis.statement,
-            "failure_mode": tr.hypothesis.predicted_failure_mode,
-            "status": tr.status.value,
-            "effect_size": tr.effect_size,
-            "confidence": tr.confidence,
-            "protocol_consistent": tr.is_consistent_with_protocol,
-            "verdict": tr.verdict,
-            "evidence": tr.evidence,
-        }
-        for tr in getattr(report, "all_test_results", [])
-    ]
-    summary = {
-        "cycles": report.cycles,
-        "stopped_by": report.stopped_by,
-        "n_cases": len(cases),
-        "n_hypotheses": len(hypotheses),
-        "n_m5_results": len(m5_results),
-        "n_verified": len(getattr(report, "verified_hypotheses", [])),
-    }
-    (run_dir / "hypotheses.json").write_text(
-        json.dumps(hypotheses, indent=2, default=str), encoding="utf-8"
-    )
-    (run_dir / "m5_results.json").write_text(
-        json.dumps(m5_results, indent=2, default=str), encoding="utf-8"
-    )
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, default=str), encoding="utf-8"
-    )
-    lines = [
-        "# qwen_video_temporal Run Summary",
-        "",
-        f"- stopped_by: {report.stopped_by}",
-        f"- cycles: {report.cycles}",
-        f"- cases: {len(cases)}",
-        f"- hypotheses: {len(hypotheses)}",
-        f"- verified: {summary['n_verified']}",
-        "",
-        "## Hypotheses",
-    ]
-    for h in hypotheses or [{"status": None, "failure_mode": "none", "statement": "none"}]:
-        lines.append(f"- [{h['status']}] {h['failure_mode']}: {h['statement']}")
-    (run_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +418,7 @@ def main() -> None:
         ExperimentWriterConfig,
         HypothesisTester,
         ProbeAgent,
-        RunLogger,
+        RunContext,
         StatsAnalysisAgent,
         SurgeryAgent,
         VLDiagnoseLoop,
@@ -512,7 +452,15 @@ def main() -> None:
 
     protocol = _build_protocol()
     run_dir = Path(args.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    ctx = RunContext(
+        run_dir, verbose=True,
+        config={
+            "model": args.model,
+            "judge_model": args.judge_model,
+            "max_cycles": args.max_cycles,
+            "max_analyzers": args.max_analyzers,
+        },
+    )
 
     # ── Video frames + cases ──────────────────────────────────────────────
     print(f"\nGenerating {_N_FRAMES}-frame synthetic video clip …")
@@ -543,9 +491,6 @@ def main() -> None:
             f"    [{case.label.value.upper()}] {case.id}: "
             f"{textwrap.shorten(observed, width=110, placeholder='...')}"
         )
-    (run_dir / "discovery_cases.json").write_text(
-        json.dumps(discovery_rows, indent=2, default=str), encoding="utf-8"
-    )
     if not discovery.has_m5_groups:
         print(
             "  WARNING: M5 needs both PASS and FAIL cases; "
@@ -561,7 +506,7 @@ def main() -> None:
 
     stats_agent = StatsAnalysisAgent(
         judge=judge,
-        figure_dir=str(Path(args.run_dir) / "logs" / "figures"),
+        figure_dir=str(ctx.figures_dir),
     )
 
     diagnosis_agent = DiagnosisAgent(judge=judge)
@@ -574,14 +519,12 @@ def main() -> None:
         ),
         exec_fix_timeout_sec=60,
     )
-    surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg)
+    surgery_agent = SurgeryAgent(judge=judge, writer_config=writer_cfg, run_context=ctx)
 
     # ── Run ───────────────────────────────────────────────────────────────
     print(f"\nOutput directory: {run_dir.resolve()}")
-    print("  logs/run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
-    print("  logs/artifacts/      ← per-cycle analyzer artifacts")
-
-    logger = RunLogger(run_dir=run_dir / "logs", verbose=True)
+    print("  run_log.jsonl   ← one JSON line per M1/M2/M3/M5 event")
+    print("  artifacts/      ← per-cycle analyzer artifacts")
 
     loop = VLDiagnoseLoop(
         model=model,
@@ -592,7 +535,7 @@ def main() -> None:
         hypothesis_tester=hypothesis_tester,
         surgery_agent=surgery_agent,
         max_cycles=args.max_cycles,
-        run_logger=logger,
+        run_logger=ctx.logger,
     )
 
     print(f"\n{'='*64}")
@@ -600,7 +543,7 @@ def main() -> None:
     print(f"{'='*64}")
 
     report = loop.run(cases)
-    _write_report_artifacts(run_dir, report, cases)
+    ctx.write_diagnose_report(report, cases, discovery=discovery_rows)
 
     print(f"\n{'='*64}")
     print(f"LOOP RESULT  stopped_by={report.stopped_by}  cycles={report.cycles}")
@@ -629,6 +572,8 @@ def main() -> None:
     else:
         print("  No verified hypotheses — skipping M4.")
 
+    ctx.finalize()
+    print(f"\n  Full guide -> {ctx.root / 'README.txt'}")
     print("\nDone.")
 
 

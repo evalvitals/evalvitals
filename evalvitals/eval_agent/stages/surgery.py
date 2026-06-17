@@ -213,6 +213,7 @@ class SurgeryAgent:
         judge: "Model | None" = None,
         sandbox_dir: "str | None" = None,
         writer_config: "Any | None" = None,
+        run_context: "Any | None" = None,
     ) -> None:
         self.verify_fn = verify_fn
         self.analyzer_params = analyzer_params or {}
@@ -229,6 +230,11 @@ class SurgeryAgent:
             cfg = writer_config if isinstance(writer_config, ExperimentWriterConfig) \
                 else ExperimentWriterConfig()
             self._writer = ExperimentWriter(judge=judge, config=cfg)
+            # When a RunContext is supplied, allocate the sandbox workdir
+            # durably under workspace/ instead of an ephemeral temp dir that
+            # is deleted on success.
+            if sandbox_dir is None and run_context is not None:
+                sandbox_dir = str(run_context.new_workdir("m4"))
             self._sandbox = ExperimentSandbox(workdir=sandbox_dir)
 
     def operate(

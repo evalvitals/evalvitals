@@ -123,7 +123,7 @@ def main() -> None:
 
     from evalvitals import compose
     from evalvitals.core.capability import Capability
-    from evalvitals.eval_agent import RunLogger, VLDiagnoseLoop
+    from evalvitals.eval_agent import RunContext, VLDiagnoseLoop
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
@@ -137,16 +137,20 @@ def main() -> None:
     print(f"cases={len(list(cases))}")
     drift_check(model, cases, raw)
 
+    ctx = RunContext(
+        OUT, verbose=True,
+        config={"model": args.model, "judge_model": args.judge_model, "max_cycles": args.max_cycles},
+    )
     loop = VLDiagnoseLoop(
         model=model,
         # judge => LLM-guided analyzer selection anchored on the protocol
         # (static StrategyProbe picks generic attention analyzers, not chair)
         probe_agent=ProbeAgent(judge=judge, max_analyzers=args.max_analyzers),
-        stats_agent=StatsAnalysisAgent(judge=judge),
+        stats_agent=StatsAnalysisAgent(judge=judge, figure_dir=str(ctx.figures_dir)),
         diagnosis_agent=DiagnosisAgent(judge=judge),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),
-        run_logger=RunLogger(run_dir=OUT / "logs", verbose=True),
+        run_logger=ctx.logger,
     )
     report = loop.run(cases)
     print(f"cycles={report.cycles} stopped_by={report.stopped_by} "
@@ -162,6 +166,9 @@ def main() -> None:
         # CHAIR before/after + no-free-lunch guards).
         fix = loop.run_m4(report, cases)
         print("m4:", fix)
+
+    ctx.write_diagnose_report(report, cases)
+    ctx.finalize()
 
 
 if __name__ == "__main__":

@@ -999,35 +999,104 @@ class VLDiagnoseLoop:
         data: "CaseBatch",
         max_tier: "str | Any | None" = None,
         fix_agent: "Any | None" = None,
+        auto_escalate: bool = False,
     ) -> "Any":
         """Post-loop fix module: tiered, validated repair attempts.
 
-        The allowed intervention tier is an **input** (default L2 — prompt +
-        scaffold pipelines); there is no automatic escalation.  When nothing
-        within the allowed tier validates, the returned
+        By default the allowed tier is fixed (default L2) and there is no
+        automatic escalation — the returned
         :class:`~evalvitals.eval_agent.stages.fix_agent.FixOutcome` carries a
-        recommendation to raise the tier, routed from the verified
-        hypotheses' mechanisms.
+        recommendation when nothing validates.
+
+        When ``auto_escalate=True`` the agent steps through the intervention
+        ladder L2 → L3a → L3b, stopping as soon as a candidate validates.
+        Each escalation round receives the full history of prior failed
+        attempts so the judge can generate fundamentally different strategies
+        rather than repeating what already failed.
 
         Args:
-            report:    Returned by :meth:`run` (uses ``verified_hypotheses``,
-                       falling back to the last cycle's proposals).
-            data:      Original case batch (candidates are validated on it
-                       with paired McNemar against the unmodified baseline).
-            max_tier:  Optional override of the agent's allowed tier for this
-                       call: "L1", "L2", "L3a", "L3b", "L4".  ``None`` keeps
-                       the tier the agent was constructed with.
-            fix_agent: Per-call override of :attr:`fix_agent` (the loop-level
-                       agent injected via ``__init__``, like every other stage).
+            report:         Returned by :meth:`run` (uses ``verified_hypotheses``,
+                            falling back to the last cycle's proposals).
+            data:           Original case batch (validated with paired McNemar
+                            against the unmodified baseline).
+            max_tier:       Ceiling tier: "L1", "L2", "L3a", "L3b", "L4".
+                            Defaults to L3b when ``auto_escalate=True``, or the
+                            agent's configured tier otherwise.
+            fix_agent:      Per-call override of :attr:`fix_agent`.
+            auto_escalate:  When True, step through tiers automatically,
+                            feeding prior failure context to each round.
         """
-        from evalvitals.eval_agent.stages.fix_tiers import parse_tier
+        from evalvitals.eval_agent.stages.fix_tiers import FixTier, parse_tier
 
         agent = fix_agent or self.fix_agent
-        if max_tier is not None:
-            agent.max_tier = parse_tier(max_tier)
         hypotheses = [tr.hypothesis for tr in report.verified_hypotheses]
         if not hypotheses:
             hypotheses = list(report.all_hypotheses)[-3:]
+
+        if auto_escalate:
+            _LADDER = [
+                FixTier.L2_SCAFFOLD,
+                FixTier.L3A_INTERNALS_READ,
+                FixTier.L3B_INTERNALS_WRITE,
+            ]
+            ceiling = (
+                parse_tier(max_tier) if max_tier is not None
+                else FixTier.L3B_INTERNALS_WRITE
+            )
+            # Suppress per-round log_fix so we can emit one combined outcome.
+            agent_logger = getattr(agent, "run_logger", None)
+            agent.run_logger = None
+
+            all_attempted: "list" = []
+            all_prior: "list" = []
+            last_outcome = None
+
+            try:
+                for tier in _LADDER:
+                    if tier > ceiling:
+                        break
+                    agent.max_tier = tier
+                    logger.info("run_fix: trying tier %s (%d prior attempt(s))",
+                                tier.label, len(all_prior))
+                    outcome = agent.propose_and_validate(
+                        self.model, data, hypotheses,
+                        prior_attempts=all_prior if all_prior else None,
+                    )
+                    all_attempted.extend(outcome.attempted)
+                    all_prior.extend(v for v in outcome.attempted if not v.fixed)
+                    last_outcome = outcome
+                    if outcome.fixed:
+                        logger.info("run_fix: fixed at tier %s", tier.label)
+                        break
+                    logger.info("run_fix: tier %s exhausted — escalating", tier.label)
+            finally:
+                agent.run_logger = agent_logger
+
+            # Merge all rounds into one combined outcome and emit once.
+            if last_outcome is not None:
+                last_outcome.attempted = all_attempted
+                last_outcome.max_tier = ceiling
+                winners = [v for v in all_attempted if v.fixed]
+                if winners:
+                    last_outcome.best = max(
+                        winners, key=lambda v: (v.effect or 0.0, -v.n_broken)
+                    )
+                    last_outcome.fixed = True
+                else:
+                    last_outcome.best = None
+                    last_outcome.fixed = False
+                try:
+                    if agent_logger is not None:
+                        agent_logger.log_fix(last_outcome)
+                except Exception as exc:
+                    logger.debug("run_fix: combined log_fix failed: %s", exc)
+
+            report.fix_outcome = last_outcome
+            return last_outcome
+
+        # Non-escalating path: single shot at the requested tier.
+        if max_tier is not None:
+            agent.max_tier = parse_tier(max_tier)
         outcome = agent.propose_and_validate(self.model, data, hypotheses)
         report.fix_outcome = outcome
         return outcome
