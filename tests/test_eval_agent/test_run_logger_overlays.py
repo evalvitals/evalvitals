@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 @dataclass
 class _FakeResultWithOverlays:
@@ -83,6 +85,7 @@ def test_log_probe_without_image_overlays_hook_is_unaffected(tmp_path):
 def test_log_probe_combines_overlay_and_npy_heatmap_pngs(tmp_path):
     """Overlay PNGs and the existing bare-heatmap PNGs (from numeric artifacts)
     must both end up in the returned figure list — the judge should see both."""
+    pytest.importorskip("matplotlib")
     import numpy as np
 
     from evalvitals.eval_agent.run_logger import RunLogger

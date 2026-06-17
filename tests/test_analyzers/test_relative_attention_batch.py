@@ -7,6 +7,7 @@ group-mean / difference spatial maps for visual comparison.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from evalvitals.analyzers.attention.relative_attn import RelativeAttentionAnalyzer
@@ -123,6 +124,7 @@ def test_all_cases_failing_raises_actionable_error():
 
 def _labeled_batch_with_real_images() -> CaseBatch:
     """Same shape as _labeled_batch but with real PIL images (overlay needs .convert)."""
+    pytest.importorskip("PIL")
     from PIL import Image
 
     img = Image.new("RGB", (32, 32), color=(100, 110, 120))
@@ -135,6 +137,7 @@ def _labeled_batch_with_real_images() -> CaseBatch:
 
 
 def test_overlay_anchors_each_map_on_its_recorded_case():
+    pytest.importorskip("PIL")
     from PIL import Image
 
     res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch_with_real_images())
@@ -158,6 +161,8 @@ def test_overlay_resolves_a_real_file_path_string(tmp_path):
     """Inputs.image may be a lazy path the backend resolves (see Inputs'
     docstring — TextVQASizeDataset stores exactly this); overlay() must
     decode it the same way the model's own forward pass does."""
+    pytest.importorskip("PIL")
+    pytest.importorskip("transformers")
     from PIL import Image
 
     img_path = tmp_path / "case.png"
