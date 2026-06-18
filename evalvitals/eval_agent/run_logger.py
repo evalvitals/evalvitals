@@ -4,7 +4,10 @@ Writes a JSONL event log (one line per M1/M2/M3/M4 event) and saves heavy
 analyzer artifacts (attention tensors, hidden-state arrays) to a separate
 ``artifacts/`` directory, keyed by cycle number so they stay navigable.
 
-Each JSON record always contains a ``ts`` (ISO-8601) and an ``event`` field.
+Each JSON record always contains a ``ts`` (ISO-8601), an ``event`` field, and a
+``schema_version`` (int) — bumped whenever an event's fields are renamed,
+removed, or change meaning, so a parser can detect breaking changes without
+guessing from ``evalvitals_version``. See ``RUN_LOG_SCHEMA_VERSION`` below.
 The underlying file handler is a standard :class:`logging.FileHandler`, so
 callers can attach additional handlers (e.g. a ``StreamHandler`` for console
 output) by accessing :attr:`RunLogger.logger`.
@@ -63,6 +66,11 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.stages.analysis import AnalysisReport
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisResult
     from evalvitals.eval_agent.stages.surgery import InterventionResult
+
+# Bump when an existing event's fields are renamed, removed, or change meaning
+# (additive fields don't need a bump). Downstream parsers of run_log.jsonl can
+# branch on this instead of guessing from `evalvitals_version`.
+RUN_LOG_SCHEMA_VERSION = 1
 
 
 def _artifact_to_numpy(artifact: Any) -> "Any | None":
@@ -1154,6 +1162,7 @@ class RunLogger:
     # ------------------------------------------------------------------
 
     def _log(self, entry: dict[str, Any], *, span_id: str | None = None) -> None:
+        entry["schema_version"] = RUN_LOG_SCHEMA_VERSION
         entry["ts"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         entry["trace_id"] = self.trace_id
         if span_id is not None:
