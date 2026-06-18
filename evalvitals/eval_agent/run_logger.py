@@ -691,21 +691,40 @@ class RunLogger:
         self._log(entry, span_id="fix")
 
     def _write_fix_records(self, d: "dict[str, Any]") -> "str | None":
-        """Write per-candidate records + ``fixes/outcome.md``; return the outcome path."""
+        """Write per-candidate records + ``fixes/outcome.md``; return the outcome path.
+
+        Each attempt's ``record.md`` (human) + ``result.json`` (machine) land
+        in its own *trial* folder — ``Path(a["trial_root"])``, allocated by
+        :meth:`~evalvitals.eval_agent.run_context.RunContext.new_trial` — so
+        the validation record sits next to the code that candidate ran and the
+        sandbox it ran in, instead of a flat ``fixes/<slug>/`` re-correlated by
+        filename.  Falls back to recomputing that flat slug when a candidate
+        carries no trial (no ``RunContext`` in play — legacy standalone
+        ``RunLogger``).
+        """
         attempts = d.get("attempted") or []
 
         def _eff(v: "Any") -> "Any":
             return round(v, 4) if isinstance(v, float) else v
 
-        # One record per attempted candidate.
+        # One record + result per attempted candidate, in its own folder.
+        rows: "list[tuple[str, dict[str, Any]]]" = []
         for i, a in enumerate(attempts, start=1):
             tier = a.get("tier", "L?")
             name = a.get("name", "candidate")
-            slug = re.sub(r"[^a-zA-Z0-9]+", "_", f"{i:02d}_{tier}_{name}").strip("_")
+            trial_root = a.get("trial_root")
+            if trial_root:
+                dest_dir = Path(trial_root)
+                slug = dest_dir.name
+            else:
+                slug = re.sub(r"[^a-zA-Z0-9]+", "_", f"{i:02d}_{tier}_{name}").strip("_")
+                dest_dir = self.fixes_dir / slug
+            rows.append((slug, a))
+            num = slug.split("_", 1)[0]
             verdict = a.get("verdict") or ("FIXED" if a.get("fixed") else "did not fix")
             cov = a.get("coverage")
             lines = [
-                f"# Fix attempt {i:02d} — {name}  [{tier}]",
+                f"# Fix attempt {num} — {name}  [{tier}]",
                 "",
                 f"**Outcome:** {'FIXED' if a.get('fixed') else 'did not fix'} "
                 f"(verdict: {verdict})",
@@ -736,7 +755,8 @@ class RunLogger:
             lines.append("```json")
             lines.append(json.dumps(a.get("payload") or {}, indent=2, default=str))
             lines.append("```")
-            self._save_text(self.fixes_dir / slug, "record.md", "\n".join(lines))
+            self._save_text(dest_dir, "record.md", "\n".join(lines))
+            self._save_text(dest_dir, "result.json", json.dumps(a, indent=2, default=str))
 
         # Top-level summary across all attempts.
         fixed = d.get("fixed")
@@ -763,23 +783,23 @@ class RunLogger:
         if refine:
             head.append(f"**Re-diagnose:** {refine.get('message', '')}")
         head += ["", f"## Attempts ({len(attempts)})", ""]
-        if attempts:
+        if rows:
             head.append("| # | tier | candidate | verdict | n_fixed | n_broken "
                         "| coverage | effect | sig |")
             head.append("|---|------|-----------|---------|---------|----------"
                         "|----------|--------|-----|")
-            for i, a in enumerate(attempts, start=1):
+            for slug, a in rows:
                 cov = a.get("coverage")
                 cov_s = "—" if cov is None else f"{cov:.0%}"
                 head.append(
-                    f"| {i:02d} | {a.get('tier')} | {a.get('name')} | "
+                    f"| {slug.split('_', 1)[0]} | {a.get('tier')} | {a.get('name')} | "
                     f"{a.get('verdict') or ('fixed' if a.get('fixed') else 'no')} | "
                     f"{a.get('n_fixed')} | {a.get('n_broken')} | {cov_s} | "
                     f"{_eff(a.get('effect'))} | "
                     f"{'yes' if a.get('reject') else 'no'} |"
                 )
-            head += ["", "Each attempt's full record is in its own folder above "
-                     "(`NN_<tier>_<name>/record.md`)."]
+            head += ["", "Each attempt's full record.md + result.json is in its own "
+                     "folder above (`NN_<tier>_<name>/`)."]
         return self._save_text(self.fixes_dir, "outcome.md", "\n".join(head))
 
     def log_loop_end(
@@ -866,10 +886,16 @@ class RunLogger:
         :class:`~evalvitals.eval_agent.stages.surgery.SurgeryAgent` (the
         generated script(s), the run's stdout/stderr, the verdict, and the
         agent's intermediate thinking — the CLI agent's narration or the
-        multi-phase LLM ``validation_log``).  Heavy text is written under
-        ``experiments/`` and the sandbox working directory is snapshotted under
-        ``workspace/``; the JSONL event records the verdict, metrics and the
-        paths to those artifacts so ``run_log.jsonl`` stays lean.
+        multi-phase LLM ``validation_log``).
+
+        With a *trial* (``iv.experiment["trial_root"]``, a ``RunContext`` in
+        play), everything lands in that one self-contained folder — its live
+        ``workspace/`` already holds the sandbox the script ran in (kept on
+        success, see ``ExperimentSandbox(cleanup=False)``), so no separate
+        snapshot copy is made.  Without one (legacy / no ``RunContext``),
+        heavy text is written flat under ``experiments/`` with a ``{stem}_``
+        prefix and the sandbox is best-effort copied into
+        ``workspace/<stem>/`` — exactly as before.
 
         Falls back gracefully (logs only the scalar evidence) when
         ``iv.experiment`` is absent, so passive / label-correlation
@@ -878,6 +904,13 @@ class RunLogger:
         exp = getattr(iv, "experiment", None) or {}
         prefix = f"c{cycle}" if cycle >= 0 else "post"
         stem = f"{prefix}_{module}"
+        trial_root = exp.get("trial_root")
+        if trial_root:
+            dest_dir = Path(trial_root)
+            name_prefix = ""
+        else:
+            dest_dir = self.experiments_dir
+            name_prefix = f"{stem}_"
 
         # 1. Generated source files (the "changes").
         file_paths: dict[str, str] = {}
@@ -885,7 +918,7 @@ class RunLogger:
         if not files and exp.get("code"):
             files = {"main.py": exp["code"]}
         for fname, src in files.items():
-            p = self._save_text(self.experiments_dir, f"{stem}_{fname}", str(src))
+            p = self._save_text(dest_dir, f"{name_prefix}{fname}", str(src))
             if p is not None:
                 file_paths[fname] = p
 
@@ -899,22 +932,23 @@ class RunLogger:
         ):
             val = exp.get(key)
             if val:
-                p = self._save_text(self.experiments_dir, f"{stem}_{suffix}", str(val))
+                p = self._save_text(dest_dir, f"{name_prefix}{suffix}", str(val))
                 if p is not None:
                     text_paths[key] = p
         vlog = exp.get("validation_log")
         if vlog:
             p = self._save_text(
-                self.experiments_dir, f"{stem}_phase_log.txt",
+                dest_dir, f"{name_prefix}phase_log.txt",
                 "\n".join(str(x) for x in vlog),
             )
             if p is not None:
                 text_paths["validation_log"] = p
 
-        # 3. Snapshot the workspace the agent operated in (the "workspace snapshot").
+        # 3. Snapshot the workspace the agent operated in — skipped when it's
+        # already durable inside a trial (trial.workspace/ IS the live sandbox).
         workspace = None
         workdir = exp.get("workdir")
-        if workdir:
+        if workdir and not trial_root:
             workspace = self._snapshot_workspace(stem, workdir)
 
         entry: dict[str, Any] = {
@@ -936,18 +970,24 @@ class RunLogger:
             "code_paths": file_paths,
             "output_paths": text_paths,
             "workspace_snapshot": workspace,
+            "trial_root": trial_root,
         }
         # Human-readable, self-contained record: open this one file to
         # understand the whole experiment without parsing JSONL.
-        record = self._write_experiment_record(stem, entry)
+        record = self._write_experiment_record(entry, dest_dir, name_prefix)
         if record is not None:
             entry["record"] = record
         self._log(entry, span_id=f"{prefix}.{module}")
 
     def _write_experiment_record(
-        self, stem: str, entry: "dict[str, Any]"
+        self, entry: "dict[str, Any]", dest_dir: Path, name_prefix: str
     ) -> "str | None":
-        """Write a one-page Markdown summary of an M4 experiment to ``experiments/``."""
+        """Write a one-page Markdown summary of an M4 experiment.
+
+        Lands in *dest_dir* with *name_prefix* — the same trial folder (no
+        prefix) or the flat ``experiments/`` dir (``{stem}_`` prefix) the rest
+        of this experiment's files just went to.
+        """
         status = (entry.get("status") or "unknown").upper()
         lines = [
             f"# Experiment — {entry.get('module', 'm4').upper()}  ({status})",
@@ -980,7 +1020,7 @@ class RunLogger:
             for name, path in files.items():
                 lines.append(f"- `{path}`  — {name}")
             lines.append("")
-        return self._save_text(self.experiments_dir, f"{stem}_record.md", "\n".join(lines))
+        return self._save_text(dest_dir, f"{name_prefix}record.md", "\n".join(lines))
 
     # ------------------------------------------------------------------
     # Tool synthesis — agent generates new probes / stats tools on demand

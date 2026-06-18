@@ -197,9 +197,18 @@ class SurgeryAgent:
                          the writer is disabled and the agent falls back to label
                          correlation.
         sandbox_dir:     Directory for sandbox script files.  A temp dir is
-                         created automatically when ``None``.
+                         created automatically when ``None``.  Sets up ONE
+                         shared sandbox for the agent's lifetime — pass this
+                         (or omit ``run_context``) to keep that legacy
+                         behaviour even when a ``RunContext`` is given.
         writer_config:   :class:`~evalvitals.eval_agent.experiment_writer.ExperimentWriterConfig`
                          controlling phases and limits.
+        run_context:     Optional :class:`~evalvitals.eval_agent.run_context.RunContext`.
+                         When set (and *sandbox_dir* is not), each ``operate()``
+                         call allocates its own self-contained *trial* under
+                         ``experiments/`` (code + sandbox + record.md, see
+                         :meth:`RunContext.new_trial`) instead of every M4
+                         experiment sharing — and overwriting — one sandbox.
     """
 
     def __init__(
@@ -220,8 +229,8 @@ class SurgeryAgent:
 
         self._writer = None
         self._sandbox = None
+        self._run_context = run_context
         if judge is not None:
-            from evalvitals.eval_agent.sandbox import ExperimentSandbox
             from evalvitals.eval_agent.stages.experiment_writer import (
                 ExperimentWriter,
                 ExperimentWriterConfig,
@@ -230,12 +239,14 @@ class SurgeryAgent:
             cfg = writer_config if isinstance(writer_config, ExperimentWriterConfig) \
                 else ExperimentWriterConfig()
             self._writer = ExperimentWriter(judge=judge, config=cfg)
-            # When a RunContext is supplied, allocate the sandbox workdir
-            # durably under workspace/ instead of an ephemeral temp dir that
-            # is deleted on success.
-            if sandbox_dir is None and run_context is not None:
-                sandbox_dir = str(run_context.new_workdir("m4"))
-            self._sandbox = ExperimentSandbox(workdir=sandbox_dir)
+            if run_context is None or sandbox_dir is not None:
+                # No RunContext (or an explicit override): one shared sandbox
+                # for the agent's lifetime, exactly as before.
+                from evalvitals.eval_agent.sandbox import ExperimentSandbox
+
+                self._sandbox = ExperimentSandbox(workdir=sandbox_dir)
+            # Else: each operate() call allocates its own trial + durable,
+            # non-cleaned-up sandbox — see _execute_experiment.
 
     def operate(
         self,
@@ -361,16 +372,27 @@ class SurgeryAgent:
         """
         from evalvitals.eval_agent.stages.experiment_writer import build_model_context
 
+        sandbox = self._sandbox
+        trial = None
+        if sandbox is None and self._run_context is not None:
+            from evalvitals.eval_agent.sandbox import ExperimentSandbox
+
+            label = getattr(hypothesis, "predicted_failure_mode", "") or "experiment"
+            trial = self._run_context.new_trial("experiments", label)
+            # cleanup=False: a successful run's script must stay on disk —
+            # it's the whole point of giving this experiment its own folder.
+            sandbox = ExperimentSandbox(workdir=str(trial.workspace), cleanup=False)
+
         model_context = build_model_context(model)
         # Save images alongside cases.json so codex can load them
-        image_dir = getattr(self._sandbox, "workdir", None)
+        image_dir = getattr(sandbox, "workdir", None)
         cases_json = _serialize_cases(data, image_dir=image_dir)
 
         writer_result = self._writer.write_and_run(  # type: ignore[union-attr]
             hypothesis=hypothesis,
             model_context=model_context,
             cases_json=cases_json,
-            sandbox=self._sandbox,  # type: ignore[arg-type]
+            sandbox=sandbox,  # type: ignore[arg-type]
         )
 
         evidence: dict[str, Any] = {
@@ -402,6 +424,9 @@ class SurgeryAgent:
             "llm_calls": writer_result.total_llm_calls,
             "sandbox_runs": writer_result.total_sandbox_runs,
             "workdir": writer_result.workdir,
+            # Self-contained trial folder (see RunContext.new_trial) — None
+            # when no RunContext is in play (legacy flat layout).
+            "trial_root": str(trial.root) if trial is not None else None,
         }
 
         # Crashed or timed out with no metrics → inconclusive

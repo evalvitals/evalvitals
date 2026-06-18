@@ -18,10 +18,16 @@ Layout (single root, no ``logs/`` nesting)::
     ├── figures/          M1 heatmaps + M2 effect plots
     ├── artifacts/        M1 heavy numeric data (.npy / .json)
     ├── prompts/          judge prompt / response
-    ├── experiments/      M4 record.md + stdout/stderr + code copies
-    ├── tools/            synthesised probe / stats / fix tool code
-    ├── workspace/        live sandbox working dirs
-    └── fixes/            per-candidate repair records + outcome.md
+    ├── experiments/      one self-contained folder per M4 experiment (see new_trial)
+    ├── tools/            synthesised probe / stats tool code (M1/M2, run-global)
+    ├── workspace/         sandbox working dirs outside any trial
+    └── fixes/            one self-contained folder per repair attempt + outcome.md
+
+``fixes/`` and ``experiments/`` are further split into *trials*
+(:meth:`RunContext.new_trial`) — one numbered folder per attempt holding its
+generated code, the sandbox it ran in, judge prompt/output, and its
+record.md + result.json, so "what did attempt #14 do" is one folder, not a
+filename-slug hunt across ``tools/`` / ``workspace/`` / ``fixes/``.
 
 Usage::
 
@@ -55,10 +61,12 @@ _CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "figures": "plots: M1 attention/spatial heatmaps and M2 effect-size charts",
     "artifacts": "M1 heavy numeric data (.npy tensors, .json finding dumps)",
     "prompts": "verbatim judge prompt + response for each M1/M2/M3 call",
-    "experiments": "M4 mechanism-verification scripts, stdout, and record.md",
-    "tools": "code the agent synthesised for new probes / stats / fix tools",
-    "workspace": "live sandbox working directories the agent operated in",
-    "fixes": "one record per repair attempt + outcome.md summary table",
+    "experiments": "one self-contained folder per M4 mechanism-verification "
+                   "experiment (code + sandbox + record.md), see new_trial()",
+    "tools": "code the agent synthesised for new probes / stats tools (M1/M2)",
+    "workspace": "sandbox working directories outside any trial",
+    "fixes": "one self-contained folder per repair attempt (code + sandbox + "
+             "record.md + result.json), see new_trial(); outcome.md summarises all",
 }
 
 # Order categories appear in the README / manifest.
@@ -66,6 +74,53 @@ _CATEGORY_ORDER = [
     "report", "figures", "artifacts", "prompts",
     "experiments", "tools", "workspace", "fixes", "other",
 ]
+
+
+class Trial:
+    """One self-contained attempt — a fix candidate or an M4 experiment.
+
+    Returned by :meth:`RunContext.new_trial`.  Everything about this one
+    attempt (generated code, the sandbox it ran in, judge prompt/output, and
+    its result/record) is written under :attr:`root`, so reviewing "what did
+    attempt #14 do" never requires hopping across run-global category dirs.
+
+    Directory creation is lazy: nothing is written to disk until the first
+    call to :meth:`write` / :attr:`workspace`, so an attempt that is discarded
+    before producing anything leaves no empty folder behind.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._workspace: "Path | None" = None
+
+    @property
+    def workspace(self) -> Path:
+        """``<trial>/workspace/`` — where the sandbox for this attempt runs."""
+        if self._workspace is None:
+            self._workspace = self.root / "workspace"
+            self._workspace.mkdir(parents=True, exist_ok=True)
+        return self._workspace
+
+    def write(self, name: str, content: "str | bytes") -> Path:
+        """Write *content* to ``<trial>/<name>``; return the path."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / name
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
+        return path
+
+    def write_record(self, markdown: str) -> Path:
+        """Write the human-readable summary to ``<trial>/record.md``."""
+        return self.write("record.md", markdown)
+
+    def write_result(self, data: "dict[str, Any]") -> Path:
+        """Write the machine-readable outcome to ``<trial>/result.json``."""
+        return self.write("result.json", json.dumps(data, indent=2, default=str))
+
+    def __repr__(self) -> str:
+        return f"Trial(root={str(self.root)!r})"
 
 
 class RunContext:
@@ -91,13 +146,19 @@ class RunContext:
     ) -> None:
         if root is None:
             root = Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.root = Path(root)
+        # Resolved to absolute: sandbox subprocesses run with cwd=<some
+        # workdir under root> *and* a script path built from that same
+        # workdir (see ExperimentSandbox._run_script / run_coded_pipeline) —
+        # if root stayed relative, the child process would resolve that
+        # script path a second time relative to its new cwd, doubling it.
+        self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.run_id = run_id or self.root.name
         self.config = dict(config or {})
         self._verbose = verbose
         self._logger: "RunLogger | None" = None
         self._workdir_seq = 0
+        self._trial_seq: "dict[str, int]" = {}
 
     # ------------------------------------------------------------------
     # Directory properties — each lazily created on first access.
@@ -177,6 +238,36 @@ class RunContext:
         d = self.workspace_dir / f"{self._workdir_seq:02d}_{slug}"
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def new_trial(self, category: str, label: str) -> "Trial":
+        """Allocate one self-contained attempt folder under ``<category>/``.
+
+        A *trial* is one fix candidate or one M4 experiment: its generated
+        code, the sandbox it actually ran in, judge prompt/output, and its
+        result/record all live together under one numbered folder, instead of
+        being scattered across ``tools/`` / ``workspace/`` / ``fixes/`` and
+        re-correlated by filename slug. *category* is ``"fixes"`` or
+        ``"experiments"``; numbering is monotonic per category.
+
+        The trial's own folder (and its ``workspace/``) is created lazily on
+        first write — a candidate discarded before producing anything (e.g. a
+        deduped fix proposal) leaves no empty folder on disk; the numbering
+        still advances, so a gap in the sequence honestly means "proposed,
+        then discarded," not a missing record.
+        """
+        if category == "fixes":
+            parent = self.fixes_dir
+        elif category == "experiments":
+            parent = self.experiments_dir
+        else:
+            raise ValueError(
+                f"new_trial: unknown category {category!r} "
+                "(expected 'fixes' or 'experiments')"
+            )
+        seq = self._trial_seq.get(category, 0) + 1
+        self._trial_seq[category] = seq
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", label).strip("_") or "trial"
+        return Trial(parent / f"{seq:02d}_{slug}")
 
     def figure_path(self, name: str) -> Path:
         """Return ``figures/<name>`` (figures dir created if needed)."""
