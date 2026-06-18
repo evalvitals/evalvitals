@@ -378,6 +378,79 @@ def test_l1_judge_candidate_validates_and_fixes():
     assert out.recommendation is None
     # max_tier=L1 -> no L2 candidates were attempted
     assert all(v.candidate.tier is FixTier.L1_PROMPT for v in out.attempted)
+    assert out.repair_rounds == 1  # single-shot by default
+
+
+class FeedbackDrivenJudge(Model):
+    """Proposes a useless template first, the winning one only once it sees the
+    failure feedback — models the round-2 result-driven re-proposal."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text"})
+
+    def __init__(self) -> None:
+        self.rounds = 0
+        self.saw_feedback: list[bool] = []
+
+    def generate(self, inputs, **kwargs) -> str:
+        prompt = str(inputs)
+        has_fb = "PRIOR ATTEMPTS THAT DID NOT WORK" in prompt and "broke" in prompt
+        self.saw_feedback.append(has_fb)
+        if has_fb:  # round 2+: propose the template that actually works
+            return json.dumps([{"name": "careful_v2",
+                                 "prompt_template": "Look very carefully. {prompt}"}])
+        self.rounds += 1            # round 1: a template that fixes nothing
+        return json.dumps([{"name": "polite",
+                            "prompt_template": "Please answer. {prompt}"}])
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_feedback_round_one_fails_round_two_fixes():
+    """With max_repair_rounds>1, a failed round's results are fed back and the
+    judge's NEW proposal validates — no tier escalation."""
+    judge = FeedbackDrivenJudge()
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(),
+        [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is True
+    assert out.repair_rounds == 2            # stopped as soon as round 2 validated
+    assert out.recommendation is None
+    assert out.best is not None and out.best.candidate.name == "careful_v2"
+    # round 1's failed candidate is still recorded, and round 2 DID see feedback
+    assert any(v.candidate.name == "polite" and not v.fixed for v in out.attempted)
+    assert any(judge.saw_feedback)
+
+
+def test_single_round_does_not_retry_on_failure():
+    """max_repair_rounds=1 (default) keeps the original single-shot behaviour:
+    the useless round-1 proposal is never re-proposed, outcome recommends up."""
+    judge = FeedbackDrivenJudge()
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=1)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(),
+        [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is False
+    assert out.repair_rounds == 1
+    assert out.recommendation is not None   # nothing validated -> recommend raise
+    assert judge.saw_feedback == [False]    # judge consulted exactly once, no feedback
+
+
+def test_repair_round_stops_when_no_new_candidate():
+    """A judge that keeps proposing the SAME failing candidate is deduped, so
+    the round loop stops early instead of re-validating identical work."""
+    judge = ScriptedJudge(json.dumps([
+        {"name": "polite", "prompt_template": "Please answer. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(), [_hyp("x")])
+    assert out.fixed is False
+    # round 1 validated the one distinct candidate; round 2 re-proposed it,
+    # got deduped to zero new candidates, and the loop stopped at round 2.
+    assert out.repair_rounds == 1
+    assert sum(1 for v in out.attempted if v.candidate.name == "polite") == 1
 
 
 def test_fix_agent_accepts_label_returning_scorer():
@@ -741,7 +814,7 @@ def test_never_executed_candidate_does_not_force_escalation(tmp_path):
     assert "never execute" in coded[0].summary.lower()
 
 
-# ── L3a: attention-guided crop ───────────────────────────────────────────────
+# ── L3a: attention read is agent-authored (no canned primitive) ──────────────
 
 
 def _bright_corner_img():
@@ -792,55 +865,58 @@ class AttnCropVLM(Model):
                              "image_spatial_shape": (h, w)})
 
 
-def test_attention_heatmap_and_peak_box():
+def test_attention_heatmap_backs_model_attend():
+    """attention_heatmap stays: it is the host-side helper the model_attend()
+    bridge is built on (the read capability the agent authors against)."""
     import numpy as np
 
-    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap, peak_box
+    from evalvitals.eval_agent.stages.fix_internals import attention_heatmap
 
     case = FailureCase(id="x", inputs=Inputs(prompt="q", image=_bright_corner_img()))
     grid = attention_heatmap(AttnCropVLM(), case)
     assert grid is not None and grid.shape == (3, 4)
     assert np.unravel_index(grid.argmax(), grid.shape) == (0, 0)
-    box = peak_box(grid, crop_frac=0.5)
-    assert box[0] == 0.0 and box[1] == 0.0  # clamped to the top-left corner
-    assert box[2] == 0.5 and box[3] == 0.5
 
 
-def test_attention_guided_crop_repairs_peripheral_finding():
+def test_attention_guided_crop_primitive_is_gone():
+    """The canned L3a read primitive was removed — reads are not in the
+    pre-audited write registry, only the L3b write primitive remains."""
+    from evalvitals.eval_agent.stages import fix_internals
+    from evalvitals.eval_agent.stages.fix_internals import INTERNALS_PRIMITIVES
+
+    assert "attention_guided_crop" not in INTERNALS_PRIMITIVES
+    assert all(p.tier is FixTier.L3B_INTERNALS_WRITE for p in INTERNALS_PRIMITIVES.values())
+    assert not hasattr(fix_internals, "run_attention_guided_crop")
+    assert not hasattr(fix_internals, "peak_box")
+
+
+def test_l3a_read_is_authored_not_a_canned_primitive():
+    """At L3a the read lever is the coded pipeline's bridged model_attend(), not
+    a primitive: (a) no primitive candidate is proposed, and (b) the coded
+    candidate is tagged L3a with enable_attend=True."""
     pytest.importorskip("PIL")
-    from evalvitals.analyzers.perturbation.prompt_contrast import _default_score
-    from evalvitals.eval_agent.stages.fix_internals import run_attention_guided_crop
-
-    model = AttnCropVLM()
-    cases = CaseBatch([
-        FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
-                    expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
-        for i in range(4)
-    ])
-    # Baseline fails: full image is mostly dark.
-    assert model.generate(cases[0].inputs) == "No."
-    scores = run_attention_guided_crop(model, cases, _default_score,
-                                       {"crop_frac": 0.5})
-    assert all(scores[c.id] is True for c in cases)  # crop at peak -> bright -> yes
-
-
-def test_l3a_candidate_fixes_via_fix_agent():
-    pytest.importorskip("PIL")
-    agent = FixAgent(judge=None, max_tier="L3a", allow_codegen=False)
-    # 8 cases: 6/6 repairs only reaches e=9.1 (< 20) — honest inconclusive;
-    # 8/8 clears the e-value threshold.
     cases = CaseBatch([
         FailureCase(id=f"c{i}", inputs=Inputs(prompt="bright?", image=_bright_corner_img()),
                     expected={"all_of": ["yes"], "none_of": ["no"]}, label=Label.FAIL)
         for i in range(8)
     ])
-    out = agent.propose_and_validate(AttnCropVLM(), cases,
-                                     [_hyp("attention is on the finding but the answer "
-                                           "ignores it", mode="attention_mislocalization")])
-    prim = [v for v in out.attempted if v.candidate.kind == "primitive"]
-    assert len(prim) == 1 and prim[0].candidate.name == "attention_guided_crop"
-    assert prim[0].fixed is True and out.fixed is True
-    assert out.recommendation is None
+    hyp = _hyp("attention is on the finding but the answer ignores it",
+               mode="attention_mislocalization")
+
+    # (a) no codegen at L3a: the only registered primitive is the L3b write one,
+    # which is out of tier -> NO primitive candidate is attempted.
+    bare = FixAgent(judge=None, max_tier="L3a", allow_codegen=False)
+    out = bare.propose_and_validate(AttnCropVLM(), cases, [hyp])
+    assert not any(v.candidate.kind == "primitive" for v in out.attempted)
+
+    # (b) the read lever still exists, but as agent-written code carrying the
+    # model_attend bridge (enable_attend), tagged at the L3a tier.
+    coded = FixAgent(judge=CodeWritingJudge(), max_tier="L3a", allow_codegen=True)
+    cands = coded._propose([hyp], cases, AttnCropVLM())
+    code_cands = [c for c in cands if c.kind == "code"]
+    assert code_cands and code_cands[0].tier is FixTier.L3A_INTERNALS_READ
+    assert code_cands[0].payload.get("enable_attend") is True
+    assert not any(c.kind == "primitive" for c in cands)
 
 
 # ── L3b: visual embedding boost ──────────────────────────────────────────────
@@ -1095,3 +1171,151 @@ def test_bridged_attend_enables_coded_l3a(tmp_path):
                              workdir=tmp_path / "off", timeout_sec=30,
                              enable_attend=False)
     assert off.ok is False
+
+
+# ── per-trial output folders: fixes/<NN_tier_name>/ self-contained attempts ──
+#
+# With a RunContext, every attempt's code + sandbox + record.md + result.json
+# live together under one numbered folder instead of being scattered across
+# tools/ / workspace/ / fixes/ and re-correlated by filename slug.
+
+
+def test_declarative_candidate_gets_record_and_result_but_no_workspace(tmp_path):
+    """A template/spec candidate never touches a sandbox — its trial folder
+    should hold only record.md + result.json, no workspace/ subdir."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look very carefully. {prompt}"},
+    ]))
+    agent = FixAgent(judge=judge, max_tier="L1", run_logger=ctx.logger, run_context=ctx)
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(),
+                                     [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is True
+    trial = out.best.candidate.trial
+    assert trial is not None
+    assert trial.root.parent == ctx.fixes_dir
+
+    ctx.finalize()
+    assert (trial.root / "record.md").exists()
+    assert (trial.root / "result.json").exists()
+    assert not (trial.root / "workspace").exists()
+
+
+def test_deduped_candidate_in_round_two_leaves_no_trial_folder(tmp_path):
+    """A judge that keeps proposing the SAME failing candidate is deduped
+    before a trial is ever allocated for it — round 2 must not leave behind
+    an empty (or duplicate) folder."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    judge = ScriptedJudge(json.dumps([
+        {"name": "polite", "prompt_template": "Please answer. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3,
+                     run_logger=ctx.logger, run_context=ctx)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(), [_hyp("x")])
+    assert out.repair_rounds == 1
+    assert sum(1 for v in out.attempted if v.candidate.name == "polite") == 1
+
+    ctx.finalize()
+    trial_dirs = [p for p in ctx.fixes_dir.iterdir() if p.is_dir()]
+    assert len(trial_dirs) == 1  # exactly one — no orphan from the deduped re-proposal
+
+
+class TwoVersionCodeJudge(Model):
+    """Round 1's coded pipeline is a no-op (doesn't fix); round 2's (written
+    after seeing round 1's failure) inserts a marker the test model is
+    sensitive to (fixes) — exercises two coded fix attempts in one run, each
+    needing its own durable trial workspace (the bug this feature exists to
+    fix: both used to share — and overwrite — one sandbox)."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text"})
+
+    def __init__(self) -> None:
+        self.code_calls = 0
+
+    def generate(self, inputs, **kwargs) -> str:
+        if "EXECUTION CONTRACT" in str(inputs):
+            self.code_calls += 1
+            pipeline = _NOOP_CODE_PIPELINE if self.code_calls == 1 else _MARKER_CODE_PIPELINE
+            return f"```python\n{pipeline}\n```"
+        return "no json here"
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+class MarkerSensitiveModel(Model):
+    """Answers "yes" only when the prompt contains a literal marker — only a
+    custom-coded pipeline rewriting the prompt can trigger this, so none of
+    the default L1 templates / L2 image-op specs accidentally fix it (isolates
+    the coded-pipeline-only effect for the two-trial test below)."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        prompt = str(getattr(inputs, "prompt", ""))
+        return "Yes." if "SECRET_MARKER" in prompt else "No."
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+_NOOP_CODE_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    ans = model_generate(c["id"])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+_MARKER_CODE_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    ans = model_generate(c["id"], prompt="SECRET_MARKER " + c["prompt"])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+
+def test_two_coded_fix_attempts_get_separate_trial_workspaces(tmp_path):
+    pytest.importorskip("PIL")
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    agent = FixAgent(judge=TwoVersionCodeJudge(), max_tier="L2",
+                     run_logger=ctx.logger, run_context=ctx,
+                     exec_timeout_sec=30, max_repair_rounds=2)
+    out = agent.propose_and_validate(
+        MarkerSensitiveModel(), _gold_yes_batch(image=_img()),
+        [_hyp("the model never sees the marker it needs", mode="prompt_gap")])
+
+    coded = [v for v in out.attempted if v.candidate.kind == "code"]
+    assert len(coded) == 2
+    assert coded[0].fixed is False
+    assert coded[1].fixed is True
+    assert out.fixed is True
+    assert out.repair_rounds == 2
+
+    t1, t2 = coded[0].candidate.trial, coded[1].candidate.trial
+    assert t1 is not None and t2 is not None
+    assert t1.root != t2.root
+    code1 = (t1.workspace / "fix_pipeline_exec.py").read_text()
+    code2 = (t2.workspace / "fix_pipeline_exec.py").read_text()
+    assert "SECRET_MARKER" not in code1
+    assert "SECRET_MARKER" in code2
+
+    ctx.finalize()
+    # Each trial's own record + result — not a shared/overwritten one.
+    assert (t1.root / "record.md").exists()
+    assert (t2.root / "record.md").exists()
+    assert json.loads((t1.root / "result.json").read_text())["fixed"] is False
+    assert json.loads((t2.root / "result.json").read_text())["fixed"] is True

@@ -7,9 +7,19 @@ function, exactly :mod:`~evalvitals.eval_agent.ab_runner`'s *strategy*
 contract — and validates each against the unmodified baseline with the paired
 machinery from :mod:`evalvitals.stats` (McNemar + e-value, never a bare p).
 
-There is **no automatic escalation**: when no candidate within the allowed
+There is **no automatic tier escalation**: when no candidate within the allowed
 tier validates, the outcome carries a *recommendation* to raise the tier,
 routed from the verified hypotheses' mechanisms (:func:`route_min_tier`).
+
+What the agent *does* retry within the allowed tier is the **proposal** itself:
+``max_repair_rounds`` (default 1) lets it run up to N propose→validate rounds.
+After a round in which nothing validates, the per-candidate results (how many
+cases each fixed / broke, net effect, or an execution error — see
+:meth:`FixAgent._format_prior`) are summarised and fed back to the judge/coder,
+which then proposes *different* strategies — never re-running an identical
+candidate (:meth:`FixAgent._signature`), never raising the tier.  The loop
+stops as soon as a candidate validates, or when a round yields no new
+candidate.
 
 Executors by tier:
 
@@ -21,9 +31,10 @@ Executors by tier:
   intermediate outputs — only the model itself is unchanged.  The code runs
   sandboxed with bridged model access (:mod:`fix_pipeline`); labels and
   rubrics never reach it, so it cannot cheat by echoing gold answers.
-* **L3a** — internals read (:mod:`fix_internals`): attention-guided crop
-  (capture host-side, crop at the attention peak, re-ask); coded pipelines
-  additionally get a bridged ``model_attend()`` when the tier allows.
+* **L3a** — internals read (:mod:`fix_internals`): no canned primitive; the
+  L2 coded pipeline gets a bridged ``model_attend()`` (read-only attention
+  heatmap) and authors its own peak-find -> crop -> re-ask scaffold when the
+  tier allows.
 * **L3b** — internals write (:mod:`fix_internals`): pre-audited intervention
   primitives (v1: visual embedding boost via a forward hook) — the judge
   selects and parameterises; never free codegen against the model handle.
@@ -71,6 +82,7 @@ if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.eval_agent.cli_agent import CliAgentConfig
     from evalvitals.eval_agent.hypothesis import Hypothesis
+    from evalvitals.eval_agent.run_context import Trial
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +235,11 @@ class FixCandidate:
                      cases it returns True for — a *conditional* fix.  When
                      ``None``, applicability is inferred structurally (a spec
                      that does not change a case's input is a no-op there).
+        trial:       Optional :class:`~evalvitals.eval_agent.run_context.Trial`
+                     — when set (a ``RunContext`` is in play), this candidate's
+                     code, the sandbox it ran in, and its record/result all
+                     live under ``trial.root`` instead of being scattered
+                     across ``tools/`` / ``workspace/`` / ``fixes/``.
     """
 
     tier: FixTier
@@ -231,6 +248,7 @@ class FixCandidate:
     kind: str = "spec"
     source: str = "judge"
     predicate: "Callable[[FailureCase], bool] | None" = None
+    trial: "Trial | None" = None
 
 
 @dataclass
@@ -286,10 +304,13 @@ class FixOutcome:
     # one subset and hurts another — evidence the mechanism is subset-specific
     # and the hypothesis should be re-scoped, not that no fix exists.
     refine_signal: "dict[str, Any] | None" = None
+    # Number of feedback-driven propose->validate rounds actually run (>= 1).
+    repair_rounds: int = 0
 
     def to_dict(self) -> "dict[str, Any]":
         return {
             "max_tier": self.max_tier.label,
+            "repair_rounds": self.repair_rounds,
             "routed": self.routed,
             "attempted": [
                 {
@@ -298,6 +319,11 @@ class FixOutcome:
                     "kind": v.candidate.kind,
                     "source": v.candidate.source,
                     "payload": v.candidate.payload,
+                    # Self-contained attempt folder (see RunContext.new_trial) —
+                    # None when no RunContext is in play (legacy flat layout).
+                    "trial_root": (
+                        str(v.candidate.trial.root) if v.candidate.trial else None
+                    ),
                     "n_pairs": v.n_pairs,
                     "n_fixed": v.n_fixed,
                     "n_broken": v.n_broken,
@@ -359,6 +385,18 @@ class FixAgent:
         alpha:            Significance level for the e-value gate (default 0.05;
                           rejects when e >= 1/alpha).  Also sets the power
                           ceiling used to flag underpowered-by-design runs.
+        run_context:      Optional :class:`~evalvitals.eval_agent.run_context.RunContext`.
+                          When set (directly, or inherited from ``run_logger``),
+                          coded-pipeline sandbox workdirs are allocated durably
+                          under ``workspace/`` instead of an ephemeral temp dir.
+        max_repair_rounds: Number of feedback-driven propose->validate rounds
+                          (default 1 = single-shot).  When > 1 and a round
+                          validates nothing, the failed candidates' results are
+                          fed back to the judge/coder (see
+                          :meth:`_format_prior`), which proposes *different*
+                          strategies within the SAME tier (no tier escalation).
+                          Stops early on the first validated fix or when a
+                          round adds no new candidate.
     """
 
     def __init__(
@@ -375,6 +413,7 @@ class FixAgent:
         baseline_repeats: int = 1,
         alpha: float = 0.05,
         run_context: "Any | None" = None,
+        max_repair_rounds: int = 1,
     ) -> None:
         self._judge = judge
         self.max_tier = parse_tier(max_tier)
@@ -391,6 +430,7 @@ class FixAgent:
         self.max_validation_cases = max_validation_cases
         self._baseline_repeats = max(1, int(baseline_repeats))
         self._alpha = float(alpha)
+        self.max_repair_rounds = max(1, int(max_repair_rounds))
         self._last_repair_prompt = ""
         self._last_usage: dict | None = None
 
@@ -412,10 +452,6 @@ class FixAgent:
         prior_attempts: "list[FixValidation] | None" = None,
     ) -> FixOutcome:
         """Generate candidates within the allowed tiers, validate, recommend."""
-        prior_text = self._format_prior(prior_attempts) if prior_attempts else ""
-        prior_names: "frozenset[str]" = frozenset(
-            v.candidate.name for v in (prior_attempts or [])
-        )
         outcome = FixOutcome(max_tier=self.max_tier)
         routed_tiers: "list[FixTier]" = []
         for h in hypotheses:
@@ -437,9 +473,49 @@ class FixAgent:
             self._emit(outcome)
             return outcome
 
-        for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
-            validation = self._validate(candidate, model, data, baseline, unstable)
-            outcome.attempted.append(validation)
+        # Feedback-driven repair rounds: propose -> validate; if nothing
+        # validates, summarise the failures (this call's own attempts, PLUS
+        # any prior_attempts carried over from an earlier escalation tier) and
+        # ask for DIFFERENT candidates within the same tier (never escalating).
+        # Stop on first validated fix or when a round adds no new candidate.
+        seen: "set[tuple[str, str]]" = set()
+        for round_idx in range(self.max_repair_rounds):
+            combined_prior = list(prior_attempts or []) + outcome.attempted
+            prior_text = self._format_prior(combined_prior) if combined_prior else ""
+            prior_names: "frozenset[str]" = frozenset(
+                v.candidate.name for v in combined_prior
+            )
+            new_candidates: "list[FixCandidate]" = []
+            for candidate in self._propose(hypotheses, data, model, prior_text, prior_names):
+                sig = self._signature(candidate)
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                new_candidates.append(candidate)
+            if not new_candidates:
+                logger.info("FixAgent: repair round %d produced no NEW candidate; stopping",
+                            round_idx + 1)
+                break
+            round_fixed = False
+            for candidate in new_candidates:
+                # Coded candidates already have a trial (allocated at proposal
+                # time, since the CLI agent needs a workdir immediately).
+                # Declarative candidates (template/spec/primitive) get one
+                # here — AFTER dedup — so a repeated default proposal never
+                # burns a folder for nothing.
+                if candidate.trial is None and self._run_context is not None:
+                    candidate.trial = self._run_context.new_trial(
+                        "fixes", f"{candidate.tier.label}_{candidate.name}")
+                validation = self._validate(candidate, model, data, baseline, unstable)
+                outcome.attempted.append(validation)
+                round_fixed = round_fixed or validation.fixed
+            outcome.repair_rounds = round_idx + 1
+            if round_fixed:
+                break
+            if round_idx + 1 < self.max_repair_rounds:
+                logger.info("FixAgent: repair round %d validated no fix; feeding "
+                            "%d failed attempt(s) back for round %d",
+                            round_idx + 1, len(new_candidates), round_idx + 2)
 
         outcome.refine_signal = self._refine_signal(outcome.attempted, data)
         winners = [v for v in outcome.attempted if v.fixed]
@@ -604,6 +680,26 @@ class FixAgent:
             candidates += self._l4_candidates(hyp_lines)
         return candidates
 
+    @staticmethod
+    def _signature(candidate: FixCandidate) -> "tuple[str, str]":
+        """Identity of a candidate, to skip re-validating an identical one.
+
+        Coded pipelines carry fresh source each round, so they never collide;
+        templates / specs / primitives dedup on their defining payload.
+        """
+        p = candidate.payload
+        if candidate.kind == "template":
+            key = str(p.get("prompt_template", ""))
+        elif candidate.kind == "primitive":
+            key = json.dumps({"primitive": p.get("primitive"),
+                              "params": p.get("params")}, sort_keys=True, default=str)
+        elif candidate.kind == "code":
+            key = str(p.get("code", ""))
+        else:
+            key = json.dumps({k: v for k, v in p.items() if k != "exec_error"},
+                             sort_keys=True, default=str)
+        return (candidate.kind, key)
+
     def _l1_candidates(
         self,
         hyp_lines: str,
@@ -731,13 +827,24 @@ class FixAgent:
     def _l2_coded_candidate(
         self, hyp_lines: str, examples: str, model: "Model", prior_text: str = ""
     ) -> "list[FixCandidate]":
-        """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
+        """The coding agent writes a brand-new pipeline (CLI first, judge fallback).
+
+        Allocates its trial up front (not after dedup, unlike declarative
+        candidates) because the CLI agent needs a workdir *now* to write
+        ``pipeline.py`` into — coded candidates dedup on code text, which is
+        ~never identical run-to-run, so the orphan-folder risk this would
+        otherwise create is negligible.
+        """
         from evalvitals.core.capability import Capability
         from evalvitals.eval_agent.stages.fix_pipeline import (
             CASES_FILENAME,
             RESULT_MARKER,
         )
 
+        trial = (
+            self._run_context.new_trial("fixes", "coded_pipeline")
+            if self._run_context is not None else None
+        )
         enable_attend = (
             self.max_tier >= FixTier.L3A_INTERNALS_READ
             and Capability.ATTENTION in getattr(model, "capabilities", frozenset())
@@ -756,7 +863,7 @@ class FixAgent:
         if self._cli_config is not None and self._cli_config.provider != "llm":
             prompt = _L2_CODE_PROMPT.format(
                 fences_hint=", written to a file named pipeline.py", **base) + prior_text
-            code, raw = self._write_code_cli(prompt)
+            code, raw = self._write_code_cli(prompt, trial)
             source = f"cli:{self._cli_config.provider}"
         if not code.strip() and self._judge is not None:
             prompt = _L2_CODE_PROMPT.format(
@@ -779,21 +886,23 @@ class FixAgent:
                     code = ""
             source = "judge"
         self._emit_codegen("coded_pipeline", prompt, source, code, raw,
-                           ok=bool(code.strip()))
+                           ok=bool(code.strip()), trial=trial)
         if not code.strip():
             return []
         tier = FixTier.L3A_INTERNALS_READ if enable_attend else FixTier.L2_SCAFFOLD
         return [FixCandidate(tier=tier, name="coded_pipeline",
                              kind="code",
                              payload={"code": code, "enable_attend": enable_attend},
-                             source=source)]
+                             source=source, trial=trial)]
 
-    def _write_code_cli(self, prompt: str) -> "tuple[str, str]":
+    def _write_code_cli(
+        self, prompt: str, trial: "Trial | None" = None
+    ) -> "tuple[str, str]":
         from pathlib import Path
 
         from evalvitals.eval_agent.cli_agent import create_cli_agent
 
-        workdir = Path(self._workdir())
+        workdir = Path(self._workdir(trial))
         agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
         res = agent.run(prompt, workdir=workdir,
                         timeout_sec=self._cli_config.timeout_sec)  # type: ignore[union-attr]
@@ -805,7 +914,16 @@ class FixAgent:
             return py_files["pipeline.py"], res.raw_output
         return (max(py_files.values(), key=len) if py_files else ""), res.raw_output
 
-    def _workdir(self) -> str:
+    def _workdir(self, trial: "Trial | None" = None) -> str:
+        """Sandbox workdir for a coded run.
+
+        With a *trial* (a ``RunContext`` is in play), each candidate gets its
+        own durable ``<trial>/workspace/`` — no cross-attempt overwriting.
+        Without one (legacy / no ``RunContext``), falls back to a single
+        shared sandbox for the agent's lifetime, exactly as before.
+        """
+        if trial is not None:
+            return str(trial.workspace)
         if self._sandbox is None:
             from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
@@ -862,12 +980,29 @@ class FixAgent:
         return block
 
     def _emit_codegen(
-        self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool
+        self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool,
+        trial: "Trial | None" = None,
     ) -> None:
-        if self.run_logger is None:
-            return
+        """Log one codegen attempt; persist its prompt/code/thinking.
+
+        With a *trial*, the files live under ``trial.root`` (alongside the
+        rest of that attempt's record) instead of the run-global ``tools/`` —
+        only a lean event (paths via ``extra["trial_root"]``) goes through
+        :meth:`RunLogger.log_tool_codegen`, with no duplicate file copy.
+        """
         extra = ({"cli_usage": self._last_usage}
                  if source.startswith("cli:") and self._last_usage else None)
+        if trial is not None:
+            if prompt:
+                trial.write(f"{name}_prompt.txt", prompt)
+            if code:
+                trial.write(f"{name}_code.py", code)
+            if raw:
+                trial.write(f"{name}_agent_thinking.txt", raw)
+            extra = {**(extra or {}), "trial_root": str(trial.root)}
+            prompt, code, raw = "", "", ""
+        if self.run_logger is None:
+            return
         try:
             self.run_logger.log_tool_codegen(
                 module="fix_pipeline", name=name, need="L2 coded repair pipeline",
@@ -899,8 +1034,9 @@ class FixAgent:
                 tier=prim.tier, name=prim.name, kind="primitive",
                 payload={"primitive": prim.name, "params": dict(p.get("params") or {})}))
         if not out:
+            # Internals-WRITE defaults only; reads (L3a) are authored by the
+            # coded pipeline against model_attend(), not proposed as primitives.
             defaults = {
-                "attention_guided_crop": {"layer": 0.75, "crop_frac": 0.5},
                 "visual_embedding_boost": {"gamma": 1.5},
             }
             for name, params in defaults.items():
@@ -1088,9 +1224,10 @@ class FixAgent:
         of the candidate silently dying.  The final error, if any, is stashed
         in ``payload["exec_error"]`` for honest escalation accounting.
         """
+        workdir = self._workdir(candidate.trial)
         result = run_coded_pipeline(
             candidate.payload["code"], model, data,
-            workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+            workdir=workdir, timeout_sec=self._exec_timeout_sec,
             enable_attend=bool(candidate.payload.get("enable_attend")),
         )
         if not result.ok and self.codegen_available:
@@ -1098,12 +1235,13 @@ class FixAgent:
                            result.error)
             repaired, source, raw = self._repair_code(candidate, result.error)
             self._emit_codegen("coded_pipeline_repair", self._last_repair_prompt,
-                               source, repaired, raw, ok=bool(repaired.strip()))
+                               source, repaired, raw, ok=bool(repaired.strip()),
+                               trial=candidate.trial)
             if repaired.strip():
                 candidate.payload["code"] = repaired
                 result = run_coded_pipeline(
                     repaired, model, data,
-                    workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+                    workdir=workdir, timeout_sec=self._exec_timeout_sec,
                     enable_attend=bool(candidate.payload.get("enable_attend")),
                 )
         candidate.payload["exec_error"] = "" if result.ok else result.error
@@ -1136,7 +1274,7 @@ class FixAgent:
         code, source, raw = "", "", ""
         if self._cli_config is not None and self._cli_config.provider != "llm":
             self._last_repair_prompt = base + "\nWrite the corrected code to a file named pipeline.py."
-            code, raw = self._write_code_cli(self._last_repair_prompt)
+            code, raw = self._write_code_cli(self._last_repair_prompt, candidate.trial)
             source = f"cli:{self._cli_config.provider}"
         if not code.strip() and self._judge is not None:
             self._last_repair_prompt = base + "\nReturn ONLY the corrected Python code inside a ```python code block."

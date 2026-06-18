@@ -246,6 +246,7 @@ def main() -> None:
                            cli_config=codegen, run_logger=ctx.logger,
                            max_validation_cases=int(CFG.get("fix_validation_cases", 60)),
                            exec_timeout_sec=int(CFG.get("fix_exec_timeout_sec", 900)),
+                           max_repair_rounds=int(CFG.get("fix_repair_rounds", 1)),
                            run_context=ctx),
         max_cycles=args.max_cycles,
         protocol=build_protocol(),

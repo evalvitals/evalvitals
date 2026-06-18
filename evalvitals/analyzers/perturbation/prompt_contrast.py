@@ -110,7 +110,11 @@ class PromptContrastAnalyzer(Analyzer):
         self,
         strategies: dict[str, str] | None = None,
         score_fn: Callable[[Any, str], Optional[bool]] | None = None,
-        max_cases: int = 32,
+        # Sized for enriched batches: the per-strategy McNemar is powered by the
+        # scarce FAIL group (a strategy can only *flip* an already-failing case),
+        # so a small cap leaves too few discordant pairs for M5 to clear the
+        # e-value bar. 128 covers typical mined fail counts plus controls.
+        max_cases: int = 128,
     ) -> None:
         strategies = dict(strategies) if strategies else dict(_DEFAULT_STRATEGIES)
         if "baseline" not in strategies:
@@ -125,6 +129,11 @@ class PromptContrastAnalyzer(Analyzer):
         answers: dict[str, dict[str, str]] = {s: {} for s in self.strategies}
         n_unscored = 0
 
+        # Stratified cap: keep FAIL representation so the cases actually carry
+        # flippable failures (a plain head is mostly PASS on an enriched batch,
+        # or all-FAIL on a fail-first ordering — both lopsided). stratified_head
+        # mixes both, which the McNemar (flips) and the no-free-lunch check
+        # (breaks of correct answers) each need.
         selected = cases.stratified_head(self.max_cases)
         for case in selected:
             prompt = str(getattr(case.inputs, "prompt", ""))

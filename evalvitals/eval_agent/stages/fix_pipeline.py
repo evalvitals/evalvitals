@@ -126,7 +126,11 @@ def run_coded_pipeline(
     case_by_id = {c.id: c for c in cases}
     budget = max_calls if max_calls is not None else 6 * len(case_by_id) + 10
 
-    workdir = Path(workdir)
+    # Resolved to absolute: the subprocess below runs with cwd=workdir *and*
+    # a script path built from that same workdir — a relative workdir makes
+    # the child resolve the script path a second time relative to its new
+    # cwd, doubling it (FileNotFoundError instead of running the script).
+    workdir = Path(workdir).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / CASES_FILENAME).write_text(
         json.dumps(cases_payload(cases)), encoding="utf-8")

@@ -33,6 +33,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import warnings
@@ -416,12 +417,22 @@ class _CliAgentBase:
         start = time.monotonic()
         timed_out = False
 
+        # The agent writes + runs scripts that `import evalvitals`; its bash
+        # `python`/`python3` must be the SAME interpreter running this loop (the
+        # project venv), not whatever base `python` is on PATH. The loop is
+        # often started as `/path/.venv/bin/python run.py` WITHOUT activating
+        # the venv, so prepend the running interpreter's bin dir to PATH.
+        agent_env = {**os.environ}
+        bindir = os.path.dirname(sys.executable)
+        if bindir:
+            agent_env["PATH"] = bindir + os.pathsep + agent_env.get("PATH", "")
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=workdir,
-            env={**os.environ},
+            env=agent_env,
             start_new_session=True,  # own process group for clean kill
         )
 

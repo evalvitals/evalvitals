@@ -34,3 +34,6 @@ fix_max_tier: L3b      # allow decoding/internals-write interventions (DeCo-clas
 fix_validation_cases: 60   # stratified subset for candidate validation (coded
                            # pipelines call the model ~k×/case; full batch times out)
 fix_exec_timeout_sec: 900  # wall-clock per coded-pipeline session
+fix_repair_rounds: 1       # feedback-driven repair rounds: 1 = single-shot
+                           # (default). >1 feeds a failed round's results back to
+                           # the judge/coder for DIFFERENT candidates, same tier.

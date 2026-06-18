@@ -43,7 +43,10 @@ class LinearProbeAnalyzer(Analyzer):
     requires = frozenset({Capability.HIDDEN_STATES})
     applies_to_modalities = frozenset({"text", "image"})
 
-    def __init__(self, pos: int = -1, max_cases: int = 64, min_per_class: int = 4,
+    # max_cases sized for enriched batches (see LogitLensAnalyzer): the held-out
+    # probe needs enough of the scarce FAIL class for a trustworthy accuracy
+    # curve and a powered downstream contrast; one forward per case.
+    def __init__(self, pos: int = -1, max_cases: int = 128, min_per_class: int = 4,
                  l2: float = 1e-2, epochs: int = 200, seed: int = 0) -> None:
         super().__init__(pos=pos, max_cases=max_cases, min_per_class=min_per_class,
                          l2=l2, epochs=epochs, seed=seed)
