@@ -48,6 +48,12 @@ Guidelines:
 - Request only the internals needed for the analysis.
 - Keep heavy artifacts out of `findings`; put them in `artifacts`.
 - Make `summary()` useful for humans and `findings` useful for agents.
+- If an artifact is a 2-D spatial map over a case's image (e.g. an attention
+  heatmap), add `overlay()` / `image_overlays(fig_dir, stem_prefix)` methods to
+  your `Result` subclass (see `RelativeAttentionResult` in
+  `analyzers/attention/relative_attn.py`). `RunLogger` calls `image_overlays()`
+  on any `Result` that defines it — no per-analyzer wiring needed to get the
+  overlay PNGs into `figures/` alongside the bare heatmap.
 
 ## Use a Custom or Fine-Tuned Model
 
@@ -264,10 +270,28 @@ loop = AutoDiagnoseLoop(model=my_model, probe=probe, ...)
 
 ## Log and persist a diagnosis run
 
-Pass a `RunLogger` to `AutoDiagnoseLoop` to write a structured JSONL event log
-and save heavy analyzer artifacts (attention tensors, CKA matrices, …) to disk
-after each M1→M4 cycle.  The logger is entirely opt-in — omitting it leaves
-existing behaviour unchanged.
+The recommended way to persist a run is `RunContext` — it owns the whole
+output directory (`report/`, `figures/`, `artifacts/`, `experiments/`,
+`fixes/`, `manifest.json`, …) and hands every producer its subdirectory,
+including a bound `RunLogger`. See the "RunContext" section in
+[Architecture](architecture.md) for the full layout and the per-trial
+`fixes/` / `experiments/` folders.
+
+```python
+from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, RunContext
+
+with RunContext("runs/exp_01") as ctx:
+    loop = AutoDiagnoseLoop(
+        model=model,
+        diagnosis_agent=DiagnosisAgent(),
+        run_logger=ctx.logger,
+    )
+    report = loop.run(cases)
+# manifest.json + README.txt written, logger closed on exit.
+```
+
+If you only want the JSONL event log and artifact sink — without `RunContext`'s
+`report/`/`figures/`/manifest layout — construct `RunLogger` standalone:
 
 ```python
 from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, RunLogger
@@ -281,7 +305,7 @@ loop = AutoDiagnoseLoop(
 report = loop.run(cases)
 ```
 
-Output layout:
+Output layout (standalone `RunLogger`, no `RunContext`):
 
 ```text
 runs/exp_01/
@@ -293,8 +317,10 @@ runs/exp_01/
 ```
 
 Each line in `run_log.jsonl` contains `event` (one of `probe`, `analysis`,
-`diagnosis`, `surgery`, `loop_end`), `cycle`, `ts` (ISO-8601), and
-stage-specific fields:
+`diagnosis`, `surgery`, `loop_end`), `cycle`, `ts` (ISO-8601), a
+`schema_version` (int — bumps only on a breaking field rename/removal, so a
+parser doesn't need to guess from `evalvitals_version`), and stage-specific
+fields:
 
 | `event` | Key fields |
 |---|---|

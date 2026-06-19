@@ -30,6 +30,9 @@ surfaces and planned interfaces.
 | **JsonlStore** | **Durable JSONL-backed `Store`; hypotheses serialized via `hypothesis_to_dict`/`from_dict`; survives process restart.** |
 | **Run-directory infrastructure** | **Atomic checkpoints (`checkpoint.json`), heartbeat (`heartbeat.json`), `AutoDiagnoseLoop.resume()`, auto-created `EvolutionStore`.** |
 | **VLM image-attention rule** | **M2 derives `image_token_attention_ratio` from `top_attended_tokens`; fires medium-severity finding when VLM ignores image tokens.** |
+| **RunContext** | **Single owner of a run's output directory (`report/`, `figures/`, `artifacts/`, `experiments/`, `fixes/`, `manifest.json`, auto-generated `README.txt`); per-trial folders (`new_trial()`) for fix candidates and M4 experiments.** |
+| **FixAgent** | **Tiered post-loop repair (L1 prompt → L2 scaffold → L3a/b internals → L4 parameter space); paired McNemar + e-value validation; `max_repair_rounds` feedback-driven retry with candidate dedup; `loop.run_fix(auto_escalate=True)` steps the tier ladder.** |
+| **Result image overlays** | **`RelativeAttentionResult.overlay()`/`.image_overlays()` — CAM-style heatmap-on-source-image blending; duck-typed hook picked up by `RunLogger` into `figures/`.** |
 | Contract tests | Parametrized pyod-style suite covering all 26 registered analyzers (554 unit tests). |
 
 ## Stage 2 stubs (registered, `_run` raises `NotImplementedError`)
