@@ -60,6 +60,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
   silently dropped inside the example Docker images (which ship no git). The
   `eval_agent` compose file forwards `EVALVITALS_GIT_COMMIT`.
 
+- **`self_consistency` records its sampling config**: the analyzer's findings
+  now include `gen_kwargs` (the kwargs passed to `model.generate`, temperature
+  above all). The consistency score is uninterpretable without it — a low score
+  at temperature 0 is a real defect, the same score at 1.0 is expected — so the
+  parameter the measurement is conditioned on now travels with it into the
+  `probe` event. Empty dict means the model's own `generate()` defaults.
+
 - **`FixAgent.max_repair_rounds`** (`eval_agent/stages/fix_agent.py`, from the
   `jiaqiliu` merge): feedback-driven multi-round propose→validate within one
   fix tier. After a round where nothing validates, per-candidate results are
