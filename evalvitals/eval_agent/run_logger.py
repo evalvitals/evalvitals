@@ -53,6 +53,7 @@ import logging
 import re
 import sys
 import textwrap
+import threading
 import uuid
 import warnings
 from datetime import datetime, timezone
@@ -70,7 +71,11 @@ if TYPE_CHECKING:
 # Bump when an existing event's fields are renamed, removed, or change meaning
 # (additive fields don't need a bump). Downstream parsers of run_log.jsonl can
 # branch on this instead of guessing from `evalvitals_version`.
-RUN_LOG_SCHEMA_VERSION = 1
+# v2: `analysis`'s stats_tool_results/stats_results/stats_plan/
+#     corrected_rejections are now conditionally externalized (see
+#     _externalize_if_large) — a {path, n_items, bytes} summary instead of
+#     the raw value once it exceeds _INLINE_MAX_BYTES.
+RUN_LOG_SCHEMA_VERSION = 2
 
 
 def _artifact_to_numpy(artifact: Any) -> "Any | None":
@@ -419,8 +424,12 @@ class RunLogger:
         # M1→M5 events around them.  -1 means "outside any cycle" (e.g. post-loop M4).
         self.current_cycle: int = -1
         # Monotonic counter so codegen artifacts written in the same cycle never
-        # collide on filename.
+        # collide on filename. Lock guards the increment in case codegen calls
+        # are ever issued from parallel analyzer threads (currently they aren't:
+        # ProbeAgent's ThreadPoolExecutor parallelizes analyzer execution only,
+        # not codegen — see probe_agent.py).
         self._codegen_seq: int = 0
+        self._codegen_lock = threading.Lock()
 
         # trace_id ties all events from a single AutoDiagnoseLoop.run() call
         # together — including events from any recursive or nested sub-loops.
@@ -581,20 +590,26 @@ class RunLogger:
             entry["evidence_chain"] = list(evidence_chain)
         stats_tool_results = getattr(report, "stats_tool_results", None)
         if stats_tool_results:
-            entry["stats_tool_results"] = list(stats_tool_results)
+            entry["stats_tool_results"] = self._externalize_if_large(
+                cycle, "stats_tool_results", list(stats_tool_results)
+            )
         visualizations = getattr(report, "visualizations", None)
         if visualizations:
             entry["visualizations"] = list(visualizations)
         # Statistical-tool layer: which tools ran, their verdicts, FDR, figures.
         stats_plan = getattr(report, "stats_plan", None)
         if stats_plan:
-            entry["stats_plan"] = stats_plan
+            entry["stats_plan"] = self._externalize_if_large(cycle, "stats_plan", stats_plan)
         stats_results = getattr(report, "stats_results", None)
         if stats_results:
-            entry["stats_results"] = [r.to_dict() for r in stats_results]
+            entry["stats_results"] = self._externalize_if_large(
+                cycle, "stats_results", [r.to_dict() for r in stats_results]
+            )
         corrected = getattr(report, "corrected_rejections", None)
         if corrected:
-            entry["corrected_rejections"] = corrected
+            entry["corrected_rejections"] = self._externalize_if_large(
+                cycle, "corrected_rejections", corrected
+            )
         figures = getattr(report, "figures", None)
         if figures:
             entry["figures"] = list(figures)
@@ -1063,9 +1078,11 @@ class RunLogger:
         ``module`` is e.g. ``"m1_probe"``, ``"m1_whitebox"`` or ``"m2_stats"``.
         """
         cyc = self.current_cycle if cycle is None else cycle
-        self._codegen_seq += 1
+        with self._codegen_lock:
+            self._codegen_seq += 1
+            seq = self._codegen_seq
         prefix = f"c{cyc}" if cyc >= 0 else "post"
-        stem = f"{prefix}_{module}_{name}_{self._codegen_seq:02d}"
+        stem = f"{prefix}_{module}_{name}_{seq:02d}"
 
         paths: dict[str, str] = {}
         for key, content, suffix in (
@@ -1184,6 +1201,33 @@ class RunLogger:
         except Exception as exc:  # noqa: BLE001
             warnings.warn(f"RunLogger: could not save text artifact {stem!r}: {exc}")
             return None
+
+    # Above this size, M2 stats payloads are externalized like every other
+    # heavy field (judge I/O, M1 artifacts) instead of inlined in the JSONL
+    # line — typical runs stay well under this, so the common case is
+    # unaffected and still jq/tail -f friendly.
+    _INLINE_MAX_BYTES = 4096
+
+    def _externalize_if_large(
+        self, cycle: int, key: str, value: Any, *, threshold_bytes: int = _INLINE_MAX_BYTES,
+    ) -> Any:
+        """Inline *value* unless its JSON size exceeds *threshold_bytes*.
+
+        Oversized values are persisted under ``artifacts/`` and replaced with
+        ``{"path", "n_items", "bytes"}`` so the JSONL line stays lean.
+        """
+        serialized = json.dumps(value, default=str)
+        size = len(serialized.encode("utf-8"))
+        if size <= threshold_bytes:
+            return value
+        prefix = f"c{cycle}" if cycle >= 0 else "post"
+        path = self._save_text(self.artifact_dir, f"{prefix}_m2_{key}.json", serialized)
+        summary: dict[str, Any] = {"bytes": size}
+        if isinstance(value, (list, dict)):
+            summary["n_items"] = len(value)
+        if path is not None:
+            summary["path"] = path
+        return summary
 
     # Files worth keeping in a workspace snapshot — code, data, prose, logs.
     # Heavy binaries (weights, tensors, images) are skipped to keep snapshots

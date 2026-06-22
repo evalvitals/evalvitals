@@ -433,7 +433,12 @@ Each line in `run_log.jsonl` carries `event`, `cycle`, `ts` (ISO-8601), a
 renamed/removed/change meaning — additive fields don't bump it, so a
 downstream parser can detect breaking changes without guessing from
 `evalvitals_version`), and stage-specific fields (findings, narrative, raw LLM
-output, intervention status …). Standard shell tools work directly on it:
+output, intervention status …). The `analysis` event's stats fields
+(`stats_tool_results`, `stats_results`, `stats_plan`, `corrected_rejections`)
+are externalized to `artifacts/` the same way `probe`'s `artifact_paths` are
+once their JSON size exceeds 4 KB — the JSONL line then carries
+`{"path", "n_items", "bytes"}` instead of the raw value. Standard shell tools
+work directly on it:
 
 ```bash
 tail -f run_dir/run_log.jsonl                           # live stream

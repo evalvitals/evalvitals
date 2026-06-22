@@ -41,6 +41,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
   change meaning, so downstream parsers can detect breaking changes without
   guessing from `evalvitals_version`.
 
+- **`run_log.jsonl` schema_version 2 — M2 stats payloads externalized above
+  4 KB**: `analysis`'s `stats_tool_results`/`stats_results`/`stats_plan`/
+  `corrected_rejections` no longer inline unboundedly — once the serialized
+  value exceeds 4 KB it's written to `artifacts/c{cycle}_m2_{field}.json` and
+  the JSONL line carries `{"path", "n_items", "bytes"}` instead, matching how
+  every other heavy field (judge I/O, M1 artifacts) is already handled.
+  Typical small runs are unaffected. Also: `RunLogger._codegen_seq` (the
+  per-cycle codegen filename counter) now increments under a lock.
+
 - **`FixAgent.max_repair_rounds`** (`eval_agent/stages/fix_agent.py`, from the
   `jiaqiliu` merge): feedback-driven multi-round propose→validate within one
   fix tier. After a round where nothing validates, per-candidate results are

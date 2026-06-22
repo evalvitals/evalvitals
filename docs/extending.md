@@ -325,7 +325,7 @@ fields:
 | `event` | Key fields |
 |---|---|
 | `probe` | `analyzers`, `findings` (JSON), `artifact_paths` |
-| `analysis` | `severity`, `findings` (human-readable), `narrative` |
+| `analysis` | `severity`, `findings` (human-readable), `narrative`, `stats_tool_results`/`stats_results`/`stats_plan`/`corrected_rejections` (externalized to `artifacts/` above 4 KB) |
 | `diagnosis` | `hypotheses`, `raw_judge_output` (full LLM response) |
 | `surgery` | `hypothesis`, `status`, `fixed`, `evidence`, `n_refocused_cases` |
 | `loop_end` | `cycles`, `resolved`, `final_hypotheses` |
