@@ -35,14 +35,12 @@ from pathlib import Path
 import yaml
 
 from evalvitals.analyzers.agent.counterfactual import CounterfactualReplay
-from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label, Step, Trajectory, as_casebatch
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label, Step, Trajectory
 from evalvitals.eval_agent import (
     DataSplit,
     EvalOrchestrator,
-    InMemoryStore,
     PreregisteredHypothesis,
     RunContext,
-    Split,
 )
 
 CONFIG = Path(__file__).parent / "config.yaml"
@@ -60,12 +58,12 @@ def _make_synthetic_cases(n: int, seed: int = 42) -> list:
     ]
 
 
-def strategy_a(case: Case) -> bool:
+def strategy_a(case: FailureCase) -> bool:
     """Baseline strategy — direct answer, ~65% success."""
     return random.random() < 0.65
 
 
-def strategy_b(case: Case) -> bool:
+def strategy_b(case: FailureCase) -> bool:
     """Chain-of-thought prompt — ~78% success on multi-step questions."""
     return random.random() < 0.78
 
@@ -138,8 +136,8 @@ def demo_auto_diagnose() -> None:
     import evalvitals  # noqa: F401 — side-effect: registers all analyzers
 
     from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent, SurgeryAgent
-    from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
-    from evalvitals.eval_agent.probe_agent import ProbeAgent
+    from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
+    from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.models.blackbox.gemini import GeminiModel
 
     model = GeminiModel()
@@ -168,7 +166,9 @@ def demo_auto_diagnose() -> None:
         for kind in ModelKind
     })
 
-    ctx = RunContext()
+    # Rooted under outputs/ (mounted to the host by docker-compose.yml) so the
+    # run survives container teardown, like every other example's RunContext.
+    ctx = RunContext(Path(__file__).parent / "outputs", verbose=True)
     print(f"  logging to: {ctx.root}")
 
     # SurgeryAgent uses the same Gemini model as judge to write + execute
@@ -193,6 +193,8 @@ def demo_auto_diagnose() -> None:
         print(f"  hypothesis  : {h.statement}")
         print(f"    mode      : {h.predicted_failure_mode}  status: {h.status}")
 
+    ctx.finalize()
+
 
 def demo_cli_agent() -> None:
     """M4 using Claude Code (or another CLI agent) as the experiment writer.
@@ -216,8 +218,8 @@ def demo_cli_agent() -> None:
         ExperimentWriterConfig,
         SurgeryAgent,
     )
-    from evalvitals.eval_agent.probe import ModelKind, StrategyProbe
-    from evalvitals.eval_agent.probe_agent import ProbeAgent
+    from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
+    from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.models.blackbox.gemini import GeminiModel
 
     provider = os.getenv("EVALVITALS_CLI_PROVIDER", "claude_code")

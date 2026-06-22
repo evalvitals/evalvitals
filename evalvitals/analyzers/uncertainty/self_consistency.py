@@ -55,5 +55,10 @@ class SelfConsistencyAnalyzer(Analyzer):
                 "consistency": round(modal_n / max(len(samples), 1), 4),
                 "n_unique": len(counts),
                 "modal_answer": samples[norm.index(modal)],
+                # The consistency score is meaningless without the sampling
+                # config that produced it (temperature above all): a low score
+                # at temperature 0 is a real defect, the same score at 1.0 is
+                # expected. Empty dict == the model's own generate() defaults.
+                "gen_kwargs": dict(self.gen_kwargs),
             },
         )

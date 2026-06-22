@@ -308,6 +308,7 @@ It needs a **judge model** (any instruction-following model with `GENERATE`) and
 the model under evaluation.
 
 ```python
+from evalvitals import Capability
 from evalvitals.eval_agent import AutoDiagnoseLoop, DiagnosisAgent
 from evalvitals.models import compose
 from evalvitals.models.backends.base import RuntimeConfig
@@ -334,6 +335,10 @@ for h in report.final_hypotheses:
     print(h.statement, "→", h.status)        # SUPPORTED / REFUTED / INCONCLUSIVE
 print(report.final_results.keys())            # analyzers run in the last cycle
 ```
+
+To persist the run (event log, figures, report files, fix/experiment trial
+folders), wrap the loop in a `RunContext` — see "Log and persist a diagnosis
+run" in [Extending](extending.md).
 
 ### Analysis-only mode
 

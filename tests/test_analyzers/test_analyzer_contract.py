@@ -225,7 +225,7 @@ _EXPECTED_FINDING_KEYS: dict[str, set[str]] = {
     "logprob_entropy": {
         "n_tokens", "mean_logprob", "perplexity", "min_token_logprob", "mean_top_entropy",
     },
-    "self_consistency": {"n_samples", "consistency", "n_unique", "modal_answer"},
+    "self_consistency": {"n_samples", "consistency", "n_unique", "modal_answer", "gen_kwargs"},
     "verbalized_confidence": {"verbalized_confidence", "parsed", "raw_tail"},
     "cka": {"n_layers", "mean_offdiagonal_cka", "adjacent_layer_cka", "_caveat"},
     "mm_shap": {
@@ -301,6 +301,8 @@ def _check_self_consistency(f: dict[str, Any]) -> None:
     assert f["n_samples"] == 2
     assert _between(f["consistency"], 0, 1)
     assert f["n_unique"] >= 1
+    # Sampling provenance must travel with the score that depends on it.
+    assert isinstance(f["gen_kwargs"], dict)
 
 
 def _check_verbalized_confidence(f: dict[str, Any]) -> None:

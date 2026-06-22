@@ -271,6 +271,11 @@ print(report.final_hypotheses)   # list[Hypothesis] — status SUPPORTED/REFUTED
 fix = loop.run_m4(report, failure_cases)   # post-loop fix proposal
 ```
 
+`RunLogger()` above writes just the JSONL event log. For the full output
+directory — `report/`, `figures/`, `artifacts/`, per-trial `fixes/`/`experiments/`
+folders, `manifest.json` — construct a `RunContext` and pass `run_logger=ctx.logger`
+instead; see [docs/architecture.md](docs/architecture.md) for the layout.
+
 **`ExperimentProtocol`** is the human prior that anchors the loop.  M1 uses it
 to select analyzers relevant to the task; M5 uses it to reject hypotheses that
 drift from what the user was investigating:
@@ -567,48 +572,48 @@ pip install -e ".[dev]"
 ```
 evalvitals/
 │
-├── core/                          ← Foundational abstractions (no deps on other submodules)
-│   ├── case.py          Case      ← single failure record (input + expected + actual)
-│   ├── result.py        AnalysisResult
-│   ├── model.py         ModelBase
-│   ├── analyzer.py      AnalyzerBase
-│   ├── pipeline.py      Pipeline  ← Case → [Analyzer...] → AnalysisResult
-│   ├── experiment.py    Experiment
-│   ├── spec.py          ExperimentSpec
-│   ├── registry.py      Registry  ← global analyzer/model lookup
-│   ├── capability.py    Capability flags
-│   ├── tool.py          Tool
-│   └── tokentype.py     TokenType
+├── core/                          ← Foundational contracts (no deps on other submodules)
+│   ├── case.py          FailureCase, CaseBatch  ← central data unit; Inputs, Trajectory, Step
+│   ├── result.py        Result    ← findings (light) + artifacts (heavy)
+│   ├── model.py         Model (ABC)  ← generate(), forward(capture)->Trace; Trace, CaptureSpec
+│   ├── analyzer.py      Analyzer  ← sklearn-style estimator: Analyzer(**params).run(model, data)
+│   ├── pipeline.py       Pipeline  ← compose analyzers
+│   ├── experiment.py    Experiment, ExperimentRunner  ← content-fingerprint result cache
+│   ├── spec.py           ModelSpec  ← model identity facts (no capabilities); ModulePaths, VisionSpec
+│   ├── registry.py      Registry, AnalyzerRegistry  ← @register_model / @register_analyzer
+│   ├── capability.py    Capability flags + CapabilityError
+│   ├── tool.py           Tool, ToolCall, ChatTurn
+│   └── tokentype.py     TokenTypeMap  ← image/text token-type masks for VLM analyzers
 │
-├── config.py            RuntimeConfig   ← API keys, generate_fn injection
-├── specs.py             built-in ExperimentSpec presets
+├── config.py            ModelConfig, AnalysisConfig, load_config()  ← YAML-driven run()
+├── specs.py             ModelSpec registry (14 specs) — get_spec(), list_specs()
 │
-├── models/                        ← Model wrappers (implement core.ModelBase)
-│   ├── base.py          ModelBase (re-export)
-│   ├── compose.py       ComposedModel   ← fan-out over multiple models
-│   ├── inference.py     run_inference()
-│   ├── agent.py         AgentModel
-│   ├── toolcodec.py     tool call encode/decode
-│   ├── _discover.py     auto-register models
+├── models/                        ← Model construction (implements core.Model)
+│   ├── base.py          BaseAgent
+│   ├── compose.py       compose(spec, backend, runtime, want) -> Model  ← the one constructor
+│   ├── inference.py     infer_spec()  ← used by wrap() to infer a spec from a live model
+│   ├── agent.py         Agent, ToolExecutor, APIToolHandlerExecutor
+│   ├── toolcodec.py     ToolCallCodec, OpenAIToolCodec, QwenToolCodec
+│   ├── _discover.py     decoder-layer / unembed / final-norm resolution (drift-proof)
 │   ├── blackbox/        API-only (no weights)
-│   │   ├── base.py
+│   │   ├── base.py      BlackboxModel
 │   │   ├── llm_api.py   OpenAI-compat LLM
 │   │   ├── vlm_api.py   OpenAI-compat VLM
 │   │   ├── gemini.py    Gemini
 │   │   └── agent.py     BlackboxAgentModel
 │   ├── whitebox/        local weights + internals capture
-│   │   ├── base.py
+│   │   ├── base.py      WhiteboxModel
 │   │   ├── qwen.py      Qwen-2.5
 │   │   ├── qwen_vl.py   Qwen-VL
 │   │   ├── qwen_omni.py Qwen-Omni
 │   │   └── agent.py     WhiteboxAgentModel
-│   └── backends/        inference engines
-│       ├── base.py
+│   └── backends/        inference engines (own the capabilities)
+│       ├── base.py       Backend (ABC), RuntimeConfig
 │       ├── api.py        HTTP/OpenAI
-│       ├── hf_local.py   HuggingFace local
-│       └── vllm_offline.py vLLM offline
+│       ├── hf_local.py   HuggingFace local — HFLocalModel, HFLocalBackend
+│       └── vllm_offline.py vLLM offline (throughput stub)
 │
-├── analyzers/                     ← Analyzers (implement core.AnalyzerBase)
+├── analyzers/                     ← Analyzers (implement core.Analyzer)
 │   ├── base.py
 │   ├── agent/           agentic-trace analyzers       [Trajectory]
 │   │   ├── loop_detect.py
@@ -628,12 +633,12 @@ evalvitals/
 │   ├── patching/         causal tracing               [HIDDEN_STATES]
 │   │   └── causal_trace.py
 │   ├── perturbation/     input-perturbation           [GENERATE / LOGPROBS]
-│   │   ├── mm_shap.py, vl_shap.py, rise.py, _shapley.py
+│   │   ├── mm_shap.py, vl_shap.py, rise.py, prompt_contrast.py, _shapley.py
 │   └── uncertainty/      confidence / consistency     [LOGITS / GENERATE]
 │       ├── logprob_entropy.py, entropy.py
 │       ├── verbalized_conf.py, self_consistency.py
 │
-├── datasets/                      ← Dataset loaders (implement DatasetBase)
+├── datasets/                      ← Dataset loaders, produce FailureCase / CaseBatch
 │   ├── base.py
 │   ├── pure_qa.py, llm_qa.py, vlm_qa.py
 │   ├── gui_os.py
@@ -649,7 +654,8 @@ evalvitals/
 │   └── subset_sampling.py
 │
 └── eval_agent/                    ← Automated failure attribution (M1→M5)
-    ├── loop.py          AutoDiagnoseLoop (legacy M1→M4), VLDiagnoseLoop (M1→M5)
+    ├── loop.py          AutoDiagnoseLoop (legacy M1→M4), VLDiagnoseLoop (M1→M5); run_fix()
+    ├── run_context.py   RunContext, Trial — single owner of a run's output directory
     ├── nl_runner.py     NL → Docker scaffold (scaffold_from_description)
     ├── cli_agent.py     CLI coding-agent backends
     │                    (claude_code, codex, opencode, gemini_cli, kimi_cli, antigravity)
@@ -680,6 +686,11 @@ evalvitals/
         ├── diagnosis.py       M3 · DiagnosisAgent — hypothesis generation
         ├── surgery.py         M4 · SurgeryAgent — verify / correlate / ExperimentWriter
         ├── experiment_writer.py  M4 · multi-phase LLM/CLI agent writes + runs fix scripts
+        ├── fix_agent.py       M4 (post-loop) · FixAgent — tiered, validated repair attempts
+        ├── fix_tiers.py       FixTier ladder (L1 prompt → L4 parameter space)
+        ├── fix_tools.py       L2 declarative pipeline catalog
+        ├── fix_internals.py  L3a/L3b internals read/write primitives
+        ├── fix_pipeline.py   sandboxed execution of L2 coded pipelines
         ├── hypothesis_tester.py  M5 · HypothesisTester — stats test + protocol consistency
         └── case_discovery.py  Data · CaseDiscoveryAgent — run model + label PASS/FAIL
 ```
@@ -687,11 +698,11 @@ evalvitals/
 **Data flow:**
 
 ```
-Dataset  →  Model (blackbox | whitebox)  →  Case
+Dataset  →  Model (blackbox | whitebox)  →  FailureCase
                                               ↓
                                           Analyzer(s)
                                               ↓
-                                         AnalysisResult
+                                            Result
                                               ↓
                                   stats.compare() / eval_agent loop
 ```

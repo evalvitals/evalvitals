@@ -8,6 +8,7 @@ package, not the log format). See RUN_LOG_SCHEMA_VERSION in run_logger.py.
 from __future__ import annotations
 
 import json
+import threading
 
 
 def test_log_run_start_carries_schema_version(tmp_path):
@@ -40,3 +41,130 @@ def test_every_log_method_stamps_schema_version(tmp_path):
     entries = [json.loads(line) for line in lines]
     assert len(entries) == 2
     assert all(e["schema_version"] == RUN_LOG_SCHEMA_VERSION for e in entries)
+
+
+def _stats_report(stats_plan):
+    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
+
+    return StatsAnalysisReport(
+        model_name="vlm",
+        findings=[],
+        severity="none",
+        narrative="No anomalies detected.",
+        raw_results={},
+        stats_plan=stats_plan,
+    )
+
+
+def test_small_stats_payload_stays_inline(tmp_path):
+    """A typical small analysis cycle keeps stats_plan inline, not externalized."""
+    from evalvitals.eval_agent.run_logger import RunLogger
+
+    logger = RunLogger(run_dir=tmp_path / "run1")
+    small_plan = [{"tool": "signal_label_assoc", "rationale": "correlates with FAIL"}]
+    logger.log_analysis(0, _stats_report(small_plan))
+    logger.close()
+
+    lines = (tmp_path / "run1" / "run_log.jsonl").read_text().splitlines()
+    entry = json.loads(lines[0])
+    assert entry["stats_plan"] == small_plan
+    assert not (tmp_path / "run1" / "artifacts").exists() or not list(
+        (tmp_path / "run1" / "artifacts").glob("*m2_stats_plan*")
+    )
+
+
+def test_large_stats_payload_externalized(tmp_path):
+    """A stats_plan over the inline threshold is written to artifacts/ instead."""
+    from evalvitals.eval_agent.run_logger import RunLogger
+
+    logger = RunLogger(run_dir=tmp_path / "run1")
+    big_plan = [
+        {"tool": f"tool_{i}", "rationale": "x" * 200, "config": {"k": "v" * 50}}
+        for i in range(30)
+    ]
+    logger.log_analysis(2, _stats_report(big_plan))
+    logger.close()
+
+    lines = (tmp_path / "run1" / "run_log.jsonl").read_text().splitlines()
+    entry = json.loads(lines[0])
+    summary = entry["stats_plan"]
+    assert isinstance(summary, dict)
+    assert summary["n_items"] == len(big_plan)
+    assert summary["bytes"] > 4096
+    artifact_path = tmp_path / "run1" / summary["path"]
+    assert artifact_path.exists()
+    assert json.loads(artifact_path.read_text()) == big_plan
+
+
+def test_codegen_seq_increments_are_thread_safe(tmp_path):
+    """Concurrent log_tool_codegen() calls must never collide on filename."""
+    from evalvitals.eval_agent.run_logger import RunLogger
+
+    logger = RunLogger(run_dir=tmp_path / "run1")
+    n_threads = 20
+    barrier = threading.Barrier(n_threads)
+
+    def _call(i: int) -> None:
+        barrier.wait()
+        logger.log_tool_codegen(
+            module="m1_probe", name=f"tool_{i}", need="testing", source="llm",
+            ok=True, code="print(1)",
+        )
+
+    threads = [threading.Thread(target=_call, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    logger.close()
+
+    code_files = list((tmp_path / "run1" / "tools").glob("*_code.py"))
+    assert len(code_files) == n_threads, "filename collision dropped a codegen artifact"
+
+
+def test_git_commit_falls_back_to_env(tmp_path, monkeypatch):
+    """In Docker the image has no git; the commit must still come from the env.
+
+    Without this fallback the code-version provenance promised in run_start is
+    silently absent in exactly the containerised mode the examples run in.
+    """
+    import subprocess
+
+    from evalvitals.eval_agent import run_logger as rl
+
+    # Simulate "git unavailable" (raises like FileNotFoundError would). The
+    # method imports subprocess locally, so patch the real module function.
+    def _boom(*_a, **_k):
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    monkeypatch.setenv("EVALVITALS_GIT_COMMIT", "deadbee")
+
+    logger = rl.RunLogger(run_dir=tmp_path / "run1")
+    logger.log_run_start({"model": "fake-model"})
+    logger.close()
+
+    entry = json.loads((tmp_path / "run1" / "run_log.jsonl").read_text().splitlines()[0])
+    assert entry["git_commit"] == "deadbee"
+
+
+def test_run_config_records_data_fingerprint_and_labels():
+    """run_start must capture *which* cases ran + their label balance, not just count."""
+    from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
+    from evalvitals.eval_agent.loop import _data_provenance
+
+    cases = [
+        FailureCase(id="a", inputs=Inputs(prompt="p1"), label=Label.FAIL),
+        FailureCase(id="b", inputs=Inputs(prompt="p2"), label=Label.FAIL),
+        FailureCase(id="c", inputs=Inputs(prompt="p3"), label=Label.PASS),
+    ]
+    prov = _data_provenance(CaseBatch(cases))
+    assert prov["label_distribution"] == {"FAIL": 2, "PASS": 1}
+    fp = prov["data_fingerprint"]
+    assert isinstance(fp, str) and len(fp) == 12
+
+    # Order-independent: same cases shuffled → same fingerprint.
+    assert _data_provenance(CaseBatch(list(reversed(cases))))["data_fingerprint"] == fp
+    # Different batch (one id changed) → different fingerprint.
+    cases2 = cases[:-1] + [FailureCase(id="d", inputs=Inputs(prompt="p4"), label=Label.PASS)]
+    assert _data_provenance(CaseBatch(cases2))["data_fingerprint"] != fp
