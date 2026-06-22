@@ -433,7 +433,13 @@ Each line in `run_log.jsonl` carries `event`, `cycle`, `ts` (ISO-8601), a
 renamed/removed/change meaning — additive fields don't bump it, so a
 downstream parser can detect breaking changes without guessing from
 `evalvitals_version`), and stage-specific fields (findings, narrative, raw LLM
-output, intervention status …). The `analysis` event's stats fields
+output, intervention status …). The first `run_start` event records run
+provenance — `model`, `judge`, `git_commit` (falls back to the
+`EVALVITALS_GIT_COMMIT` env var when the `git` CLI is unavailable, e.g. inside
+the example Docker images), `data_fingerprint` (an order-independent hash of
+the case batch, so two runs can be confirmed to use the same data) and
+`label_distribution` (the base PASS/FAIL/UNKNOWN counts the diagnosis is
+conditioned on). The `analysis` event's stats fields
 (`stats_tool_results`, `stats_results`, `stats_plan`, `corrected_rejections`)
 are externalized to `artifacts/` the same way `probe`'s `artifact_paths` are
 once their JSON size exceeds 4 KB — the JSONL line then carries

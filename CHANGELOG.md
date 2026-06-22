@@ -50,6 +50,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Typical small runs are unaffected. Also: `RunLogger._codegen_seq` (the
   per-cycle codegen filename counter) now increments under a lock.
 
+- **`run_start` provenance — dataset + code version**: the first
+  `run_log.jsonl` event now also records `data_fingerprint` (an
+  order-independent SHA-1 over the case batch, so two runs can be confirmed to
+  use the same data) and `label_distribution` (the base PASS/FAIL/UNKNOWN
+  counts the whole diagnosis is conditioned on) alongside the existing
+  `n_cases`. `git_commit` now falls back to the `EVALVITALS_GIT_COMMIT` env var
+  when the `git` CLI is unavailable, so the code-version provenance is no longer
+  silently dropped inside the example Docker images (which ship no git). The
+  `eval_agent` compose file forwards `EVALVITALS_GIT_COMMIT`.
+
 - **`FixAgent.max_repair_rounds`** (`eval_agent/stages/fix_agent.py`, from the
   `jiaqiliu` merge): feedback-driven multi-round propose→validate within one
   fix tier. After a round where nothing validates, per-candidate results are

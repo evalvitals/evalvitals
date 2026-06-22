@@ -481,16 +481,27 @@ class RunLogger:
 
     @staticmethod
     def _git_commit() -> "str | None":
-        """Best-effort current git commit hash (short), or None outside a repo."""
+        """Best-effort current git commit hash (short), or None when unavailable.
+
+        Falls back to the ``EVALVITALS_GIT_COMMIT`` env var when the ``git`` CLI
+        can't be used — notably inside the example Docker images, which install
+        no ``git`` and carry no ``.git`` dir, so without this the code-version
+        provenance promised above would be silently absent in exactly the
+        (containerised) mode the examples are meant to run in.
+        """
+        import os
         import subprocess
         try:
             out = subprocess.run(
                 ["git", "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, timeout=3, check=False,
             )
-            return out.stdout.strip() or None
+            commit = out.stdout.strip()
+            if commit:
+                return commit
         except Exception:  # noqa: BLE001
-            return None
+            pass
+        return os.environ.get("EVALVITALS_GIT_COMMIT") or None
 
     def _save_judge_io(
         self, stem: str, prompt: "str | None", raw: "str | None"
