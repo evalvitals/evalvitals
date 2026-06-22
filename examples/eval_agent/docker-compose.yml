@@ -6,3 +6,5 @@ services:
     image: evalvitals-eval-agent
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./outputs:/app/example/outputs
