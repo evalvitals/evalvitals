@@ -60,6 +60,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
   silently dropped inside the example Docker images (which ship no git). The
   `eval_agent` compose file forwards `EVALVITALS_GIT_COMMIT`.
 
+- **Published JSON Schema for `run_log.jsonl`** (`eval_agent/log_schema.py` +
+  shipped `run_log.schema.json`): the log event format is now a machine-readable
+  contract (Draft 2020-12), not just a docstring + an opaque `schema_version`
+  int. `build_schema()` generates it from the stdlib (no new core dependency —
+  the light install is preserved); `load_schema()`, `validate_event()` and
+  `iter_log_errors()` validate logs (needing the optional `jsonschema` dev dep).
+  The schema is permissive (pins the envelope, per-event required fields and
+  core types; allows additive fields). A contract test drives every `RunLogger`
+  event type and asserts the real output conforms, so the schema can't silently
+  drift from the producer. Opt-in `EVALVITALS_VALIDATE_LOG=1` makes `RunLogger`
+  self-check each event and warn (never raise) on a violation.
+
 - **`self_consistency` records its sampling config**: the analyzer's findings
   now include `gen_kwargs` (the kwargs passed to `model.generate`, temperature
   above all). The consistency score is uninterpretable without it — a low score

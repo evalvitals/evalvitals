@@ -437,6 +437,11 @@ class RunLogger:
         # pipeline) or let RunLogger generate a fresh UUID.
         self.trace_id: str = trace_id or str(uuid.uuid4())
 
+        # Opt-in, warn-only schema self-check (see _validate_event). Off by
+        # default so the common path stays dependency-free and never raises.
+        import os
+        self._validate_events: bool = bool(os.environ.get("EVALVITALS_VALIDATE_LOG"))
+
         self.logger = logging.getLogger(f"evalvitals.run.{self.run_dir.name}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.propagate = False
@@ -1195,7 +1200,28 @@ class RunLogger:
         entry["trace_id"] = self.trace_id
         if span_id is not None:
             entry["span_id"] = span_id
+        if self._validate_events:
+            self._validate_event(entry)
         self.logger.info("run_event", extra={"_payload": entry})
+
+    def _validate_event(self, entry: dict[str, Any]) -> None:
+        """Opt-in self-check: warn (never raise) when an event violates the schema.
+
+        Enabled by ``EVALVITALS_VALIDATE_LOG`` (see ``__init__``).  Kept warn-only
+        and fully guarded so turning it on can never break a run — it's a
+        developer/CI aid to catch a producer drifting from the published schema,
+        not a runtime gate.  Needs the optional ``jsonschema`` dep; a missing dep
+        or any other hiccup degrades silently to "not validated".
+        """
+        try:
+            from evalvitals.eval_agent.log_schema import validate_event
+            validate_event(entry)
+        except ImportError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — never let validation break logging
+            warnings.warn(
+                f"RunLogger: event {entry.get('event')!r} violates run_log schema: {exc}"
+            )
 
     def _save_text(self, directory: Path, stem: str, text: str) -> "str | None":
         """Write *text* to ``directory/stem`` (creating *directory*); return rel path.

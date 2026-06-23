@@ -330,6 +330,11 @@ fields:
 | `surgery` | `hypothesis`, `status`, `fixed`, `evidence`, `n_refocused_cases` |
 | `loop_end` | `cycles`, `resolved`, `final_hypotheses` |
 
+The full, authoritative field contract is the published JSON Schema
+(`evalvitals/eval_agent/run_log.schema.json`, from `log_schema.py`); validate a
+log with `from evalvitals.eval_agent import iter_log_errors` (needs the optional
+`jsonschema` dep). See `docs/architecture.md` for details.
+
 Standard shell tools work directly on the log:
 
 ```bash

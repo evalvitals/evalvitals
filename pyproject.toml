@@ -67,6 +67,8 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.4",
     "mypy>=1.8",
+    # Validate run_log.jsonl against the published schema (log_schema.py).
+    "jsonschema>=4.0",
 ]
 
 [project.urls]
@@ -82,6 +84,11 @@ version = {attr = "evalvitals.__version__"}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["evalvitals*"]
+
+[tool.setuptools.package-data]
+# Ship the published run_log.jsonl JSON Schema so non-Python consumers can
+# validate the log without installing evalvitals.
+"evalvitals.eval_agent" = ["run_log.schema.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

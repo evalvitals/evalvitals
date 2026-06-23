@@ -453,6 +453,26 @@ jq 'select(.event=="probe") | .findings' run_log.jsonl  # M1 findings
 jq 'select(.event=="surgery") | .evidence' run_log.jsonl
 ```
 
+The event format is a **published JSON Schema** (Draft 2020-12), shipped as
+package data at `evalvitals/eval_agent/run_log.schema.json` and built from
+`evalvitals/eval_agent/log_schema.py` — so downstream parsers (in any language)
+can validate `run_log.jsonl` instead of guessing field shapes. It's permissive
+by design: it pins the common envelope (`event`, `schema_version`, `ts`,
+`trace_id`), the per-event required fields and core types, but allows additive
+fields (matching the `schema_version` rule above).
+
+```python
+from evalvitals.eval_agent import iter_log_errors, validate_event
+
+for line_no, msg in iter_log_errors("run_dir/run_log.jsonl"):  # empty == conforms
+    print(line_no, msg)
+```
+
+Set `EVALVITALS_VALIDATE_LOG=1` to have `RunLogger` self-check every event it
+writes against the schema and warn (never raise) on a violation — a CI/dev aid
+to catch a producer drifting from the contract. Both paths need the optional
+`jsonschema` dependency (`pip install evalvitals[dev]`).
+
 ```python
 from evalvitals.eval_agent import RunContext, VLDiagnoseLoop
 
