@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -30,6 +30,74 @@ if TYPE_CHECKING:
     from evalvitals.core.model import Model
 
 logger = logging.getLogger(__name__)
+
+
+def _blend_heatmap_on_image(
+    image: "Any", heatmap: np.ndarray, *, alpha: float = 0.6, cmap: str = "jet",
+    diverging: bool = False,
+) -> "Any":
+    """Alpha-blend a 2-D heatmap onto *image*, weighted by per-pixel intensity.
+
+    Background (near-zero) regions stay close to the original photo; the
+    colour-mapped heatmap shows through more strongly where the signal is
+    high (CAM-style overlay) — this is what lets a human or a multimodal
+    judge sanity-check whether attention lands on something that makes sense,
+    rather than reading an abstract colour grid with no spatial reference.
+
+    *diverging*: when True (signed maps like a FAIL-minus-PASS difference),
+    normalises symmetrically around zero and uses ``cmap``'s full range for
+    sign; the alpha weight is driven by ``|heatmap|`` magnitude either way.
+    """
+    from matplotlib import colormaps
+    from PIL import Image
+
+    base = image.convert("RGB")
+    h = heatmap.astype(np.float64)
+    if diverging:
+        bound = float(max(abs(h.min()), abs(h.max()))) or 1.0
+        norm = (h + bound) / (2 * bound)       # -bound..bound -> 0..1
+        intensity = np.abs(h) / bound          # 0..1 magnitude
+    else:
+        lo, hi = float(h.min()), float(h.max())
+        norm = (h - lo) / (hi - lo + 1e-8)
+        intensity = norm
+
+    def _upsample(mat: np.ndarray) -> np.ndarray:
+        img = Image.fromarray((np.clip(mat, 0.0, 1.0) * 255).astype(np.uint8), mode="L")
+        return np.asarray(img.resize(base.size, Image.BILINEAR), dtype=np.float64) / 255.0
+
+    norm_up = _upsample(norm)
+    intensity_up = _upsample(intensity)
+
+    cmap_fn = colormaps[cmap]
+    heat_rgb = (cmap_fn(norm_up)[:, :, :3] * 255).astype(np.uint8)
+
+    base_arr = np.asarray(base, dtype=np.float64)
+    a = (intensity_up * alpha)[:, :, None]
+    out = base_arr * (1 - a) + heat_rgb.astype(np.float64) * a
+    return Image.fromarray(out.astype(np.uint8), mode="RGB")
+
+
+def _resolve_image(image: "Any") -> "Any | None":
+    """Decode ``Inputs.image`` to a PIL Image when it's a path/URL the backend
+    resolves rather than an already-decoded object (see ``Inputs`` docstring
+    in :mod:`evalvitals.core.case` — datasets like ``TextVQASizeDataset``
+    store a lazy file path, only opened when the model actually forwards).
+
+    Delegates to ``transformers.image_utils.load_image`` — the exact helper
+    ``hf_local``'s processor call resolves images through — so the overlay
+    sees the same image the model's forward pass did.  Returns ``None``
+    (never raises) when *image* is already unusable or can't be resolved.
+    """
+    if image is None or hasattr(image, "convert"):
+        return image
+    if not isinstance(image, str):
+        return None
+    try:
+        from transformers.image_utils import load_image
+        return load_image(image)
+    except Exception:
+        return None
 
 
 def resolve_attention_layer(layer: "int | float", n_layers: int) -> int:
@@ -110,14 +178,24 @@ def attention_heatmap(
         return None
 
 
+#: Spatial-map artifact keys that can be overlaid on a representative case
+#: image; each has a matching ``findings["<key>_case_id"]`` recorded by
+#: ``RelativeAttentionAnalyzer._run`` naming which case to anchor it on.
+_OVERLAYABLE_KEYS = ("spatial_map", "fail_mean_map", "pass_mean_map",
+                    "diff_map_fail_minus_pass")
+
+
 @dataclass
 class RelativeAttentionResult(Result):
     """Result of relative attention analysis.
 
     Artifacts:
-        attn_map    — 1-D float32 array of relative weights over image-patch tokens.
-        spatial_map — 2-D array (H, W) reshaped from attn_map; same as attn_map when
-                      the grid shape cannot be inferred.
+        attn_map         — 1-D float32 array of relative weights over image-patch tokens.
+        spatial_map       — 2-D array (H, W) reshaped from attn_map; same as attn_map
+                            when the grid shape cannot be inferred.
+        fail_mean_map     — mean spatial_map over FAIL-labelled cases (when present).
+        pass_mean_map     — mean spatial_map over PASS-labelled cases (when present).
+        diff_map_fail_minus_pass — fail_mean_map - pass_mean_map (when both present).
     """
 
     @property
@@ -127,6 +205,79 @@ class RelativeAttentionResult(Result):
     @property
     def spatial_map(self) -> np.ndarray:
         return self.artifacts.get("spatial_map", self.artifacts["attn_map"])
+
+    def _representative_image(self, key: str) -> "Any | None":
+        """The PIL image of the case backing ``artifacts[key]``, or ``None``.
+
+        Looked up via ``findings[f"{key}_case_id"]`` — the case whose forward
+        pass produced ``spatial_map``, or one representative case from the
+        FAIL/PASS group for the mean/diff maps (see :meth:`overlay`).
+        """
+        case_id = (self.findings or {}).get(f"{key}_case_id")
+        if case_id is None or self.cases is None:
+            return None
+        for c in self.cases:
+            if c.id == case_id:
+                return _resolve_image(getattr(c.inputs, "image", None))
+        return None
+
+    def overlay(self, key: str = "spatial_map", *, alpha: float = 0.6, cmap: str = "jet"):
+        """Alpha-blend ``artifacts[key]`` onto its representative case image.
+
+        Lets a human (or a multimodal judge) sanity-check whether the
+        highlighted patches correspond to something sensible in the actual
+        photo, instead of reading an abstract heatmap with no spatial
+        reference — see :func:`_blend_heatmap_on_image`.
+
+        ``fail_mean_map`` / ``pass_mean_map`` / ``diff_map_fail_minus_pass``
+        are averages that can span *different* source images; the overlay
+        anchors them on ONE representative case from that group purely to
+        give the heatmap a spatial anchor, not a literal per-pixel
+        correspondence — the image is genuinely illustrative there, not the
+        exact image each contributing forward pass saw.
+
+        Returns ``None`` (does not raise) when the map, its representative
+        image, or matplotlib is unavailable — overlays are best-effort.
+        """
+        mat = self.artifacts.get(key)
+        image = self._representative_image(key)
+        if mat is None or mat.ndim != 2 or not hasattr(image, "convert"):
+            return None
+        try:
+            return _blend_heatmap_on_image(
+                image, mat, alpha=alpha, cmap=cmap, diverging="diff" in key)
+        except ImportError:
+            return None
+
+    def save_overlay(self, key: str, path: "Any", **kwargs) -> bool:
+        """Render :meth:`overlay` and save it to *path*; ``True`` on success."""
+        img = self.overlay(key, **kwargs)
+        if img is None:
+            return False
+        img.save(path)
+        return True
+
+    def image_overlays(self, fig_dir: "Any", stem_prefix: str) -> "list[Any]":
+        """Save every available overlay under ``fig_dir``; return the paths.
+
+        Hook called by :class:`~evalvitals.eval_agent.run_logger.RunLogger`
+        (duck-typed — any :class:`Result` subclass may define this) so the
+        overlay PNGs land in ``figures/`` alongside the bare heatmaps and get
+        forwarded to a multimodal judge the same way.
+        """
+        from pathlib import Path
+
+        out = []
+        for key in _OVERLAYABLE_KEYS:
+            if key not in self.artifacts:
+                continue
+            path = Path(fig_dir) / f"{stem_prefix}_{key}_overlay.png"
+            try:
+                if self.save_overlay(key, path):
+                    out.append(path)
+            except Exception:  # noqa: BLE001 - best-effort visualisation
+                pass
+        return out
 
     def plot(self, ax=None, figsize=(6, 6), cmap="hot"):
         """Heatmap of the relative attention spatial map (requires matplotlib)."""
@@ -220,8 +371,11 @@ class RelativeAttentionAnalyzer(Analyzer):
         errors: list[str] = []
         first_exc: Exception | None = None
         first: tuple | None = None  # (rel_np, spatial_map, n_img, n_layers)
+        first_case_id: str | None = None
         maps_fail: list[np.ndarray] = []
         maps_pass: list[np.ndarray] = []
+        fail_rep_id: str | None = None
+        pass_rep_id: str | None = None
 
         for case in cases.stratified_head(self.max_cases):
             try:
@@ -233,6 +387,7 @@ class RelativeAttentionAnalyzer(Analyzer):
                 continue
             if first is None:
                 first = (rel_np, spatial_map, n_img, n_layers)
+                first_case_id = case.id
 
             k = min(self.top_k, rel_np.size)
             topk_share = float(np.sort(rel_np)[::-1][:k].sum() / (rel_np.sum() + 1e-8))
@@ -246,8 +401,12 @@ class RelativeAttentionAnalyzer(Analyzer):
             label = getattr(getattr(case, "label", None), "value", None)
             if label == "fail":
                 maps_fail.append(spatial_map)
+                if fail_rep_id is None:
+                    fail_rep_id = case.id
             elif label == "pass":
                 maps_pass.append(spatial_map)
+                if pass_rep_id is None:
+                    pass_rep_id = case.id
 
         if first is None:
             # Whole batch failed — preserve the original single-case semantics
@@ -285,7 +444,16 @@ class RelativeAttentionAnalyzer(Analyzer):
             "n_errors": len(errors),
             "mean_max_relative_weight": round(float(np.mean(maxes)), 4),
             "per_case": per_case,
+            # Anchors RelativeAttentionResult.overlay(): which case's image each
+            # spatial-map-shaped artifact should be alpha-blended onto.
+            "spatial_map_case_id": first_case_id,
         }
+        if "fail_mean_map" in artifacts:
+            findings["fail_mean_map_case_id"] = fail_rep_id
+        if "pass_mean_map" in artifacts:
+            findings["pass_mean_map_case_id"] = pass_rep_id
+        if "diff_map_fail_minus_pass" in artifacts:
+            findings["diff_map_fail_minus_pass_case_id"] = fail_rep_id
         if maps_fail and maps_pass:
             label_by_id = {
                 c.id: getattr(getattr(c, "label", None), "value", None) for c in cases

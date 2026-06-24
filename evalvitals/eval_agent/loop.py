@@ -1123,6 +1123,43 @@ def _attach_run_logger(run_logger: Any, *agents: Any) -> None:
                 pass
 
 
+def _data_provenance(data: Any) -> dict[str, Any]:
+    """Fingerprint the case batch + tally its labels for the ``run_start`` record.
+
+    Returns ``{"data_fingerprint": <12-hex>, "label_distribution": {...}}`` — the
+    fingerprint is a SHA-1 over each case's ``id`` (or its prompt when no id),
+    order-independent, so the same batch always hashes the same regardless of
+    iteration order, and a different batch (even same size) hashes differently.
+    Best-effort: returns ``{}`` if *data* isn't iterable.
+    """
+    import hashlib
+    from collections import Counter
+
+    try:
+        cases = list(data)
+    except Exception:  # noqa: BLE001
+        return {}
+
+    keys: list[str] = []
+    labels: Counter = Counter()
+    for c in cases:
+        cid = getattr(c, "id", None)
+        if not cid:
+            prompt = getattr(getattr(c, "inputs", None), "prompt", None)
+            cid = str(prompt) if prompt is not None else repr(c)
+        keys.append(str(cid))
+        label = getattr(c, "label", None)
+        labels[getattr(label, "name", "UNKNOWN")] += 1
+
+    out: dict[str, Any] = {}
+    if keys:
+        digest = hashlib.sha1("\n".join(sorted(keys)).encode("utf-8")).hexdigest()
+        out["data_fingerprint"] = digest[:12]
+    if labels:
+        out["label_distribution"] = dict(labels)
+    return out
+
+
 def _run_config(loop: Any, data: Any, *, loop_name: str) -> dict[str, Any]:
     """Build the ``run_start`` provenance dict from a loop instance + its data.
 
@@ -1141,6 +1178,13 @@ def _run_config(loop: Any, data: Any, *, loop_name: str) -> dict[str, Any]:
         cfg["n_cases"] = len(data)
     except Exception:  # noqa: BLE001
         pass
+    # Dataset provenance: a stable fingerprint over the cases plus their label
+    # breakdown.  n_cases alone says how many; this says *which* (so two runs
+    # can be confirmed to use the same batch) and the base failure rate the
+    # whole diagnosis is conditioned on — both essential to interpret the run.
+    _data_prov = _data_provenance(data)
+    if _data_prov:
+        cfg.update(_data_prov)
 
     protocol = getattr(loop, "protocol", None)
     if protocol is not None:

@@ -257,6 +257,12 @@ class ExperimentSandbox:
         max_cpu_seconds:  CPU-time cap applied via ``RLIMIT_CPU`` (Linux/macOS).
                           ``None`` means no CPU limit.  This complements the
                           wall-clock *timeout_sec* argument to ``run()``.
+        cleanup:          When ``True`` (default), a successful run's script/
+                          project is deleted (see ``_should_cleanup``) — the
+                          original behaviour for an ephemeral *workdir*. Pass
+                          ``False`` when *workdir* is a durable, self-contained
+                          location (e.g. one fix/M4 trial's ``workspace/``)
+                          whose code should stay on disk even on success.
     """
 
     def __init__(
@@ -266,15 +272,22 @@ class ExperimentSandbox:
         python_path: str | None = None,
         max_memory_bytes: int | None = None,
         max_cpu_seconds: int | None = None,
+        cleanup: bool = True,
     ) -> None:
         if workdir is None:
             workdir = Path(tempfile.mkdtemp(prefix="evalvitals_sandbox_"))
-        self.workdir = Path(workdir)
+        # Resolved to absolute: _run_script passes this same path as both the
+        # subprocess cwd and (via script_path) part of the command argv — a
+        # relative workdir makes the child resolve the script path a second
+        # time relative to its new cwd, doubling it and raising
+        # FileNotFoundError instead of running the script.
+        self.workdir = Path(workdir).resolve()
         self.workdir.mkdir(parents=True, exist_ok=True)
         self._python_path: str = python_path or sys.executable
         self._run_counter: int = 0
         self._counter_lock = threading.Lock()
         self._preexec_fn = _make_resource_preexec(max_memory_bytes, max_cpu_seconds)
+        self._cleanup = cleanup
 
     # ------------------------------------------------------------------
     # Public interface
@@ -490,9 +503,8 @@ class ExperimentSandbox:
             metrics={},
         )
 
-    @staticmethod
-    def _should_cleanup(result: SandboxResult) -> bool:
-        return result.returncode == 0 and not result.timed_out
+    def _should_cleanup(self, result: SandboxResult) -> bool:
+        return self._cleanup and result.returncode == 0 and not result.timed_out
 
     @staticmethod
     def _cleanup_path(path: Path) -> None:

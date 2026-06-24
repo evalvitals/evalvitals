@@ -6,6 +6,109 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — run output ownership & tiered repair
+
+- **`RunContext`** (`eval_agent/run_context.py`): single owner of a diagnosis
+  run's output directory, replacing the old per-example pattern of
+  hand-written report files, `RunLogger` buried under a `logs/` subdir, and
+  M4 sandboxes living in ephemeral temp dirs deleted on success. Owns
+  `report/`, `figures/`, `artifacts/`, `prompts/`, `experiments/`, `tools/`,
+  `workspace/`, `fixes/`, plus `manifest.json` and an auto-generated
+  `README.txt`. `write_diagnose_report(report, cases, discovery=...)` writes
+  the standard `report/` deliverables, duck-typed across `VLDiagnoseReport`
+  and `AutoDiagnoseReport`. Migrated all 11 VL examples + `nl_runner`'s
+  codegen template off the old `RunLogger(run_dir / "logs")` convention.
+
+- **Per-trial output folders** (`RunContext.new_trial()` / `Trial`): each
+  `FixAgent` candidate and M4 `ExperimentWriter` experiment now gets its own
+  lazily-created, numbered folder (`fixes/03_widen_crop/`,
+  `experiments/01_...`) holding its generated code, the sandbox it ran in,
+  judge prompt/output, `record.md`, and `result.json` — instead of scattering
+  those across `tools/` / `workspace/` / `fixes/` and re-correlating by
+  filename slug. A discarded/deduped candidate leaves no folder on disk; a
+  gap in the numbering means "proposed, then discarded."
+
+- **`relative_attention` overlay heatmaps** (`analyzers/attention/relative_attn.py`):
+  `RelativeAttentionResult.overlay()` / `.save_overlay()` / `.image_overlays()`
+  alpha-blend each spatial map onto its representative case image (CAM-style),
+  resolving lazy `Inputs.image` paths/URLs the same way the model's forward
+  pass did. `RunLogger` picks this up via a duck-typed `image_overlays()` hook
+  on `Result`, so overlay PNGs land in `figures/` alongside the bare heatmaps
+  and reach the multimodal judge the same way.
+
+- **`run_log.jsonl` schema_version**: every event now carries a `schema_version`
+  (int), bumped only when an existing event's fields are renamed, removed, or
+  change meaning, so downstream parsers can detect breaking changes without
+  guessing from `evalvitals_version`.
+
+- **`run_log.jsonl` schema_version 2 — M2 stats payloads externalized above
+  4 KB**: `analysis`'s `stats_tool_results`/`stats_results`/`stats_plan`/
+  `corrected_rejections` no longer inline unboundedly — once the serialized
+  value exceeds 4 KB it's written to `artifacts/c{cycle}_m2_{field}.json` and
+  the JSONL line carries `{"path", "n_items", "bytes"}` instead, matching how
+  every other heavy field (judge I/O, M1 artifacts) is already handled.
+  Typical small runs are unaffected. Also: `RunLogger._codegen_seq` (the
+  per-cycle codegen filename counter) now increments under a lock.
+
+- **`run_start` provenance — dataset + code version**: the first
+  `run_log.jsonl` event now also records `data_fingerprint` (an
+  order-independent SHA-1 over the case batch, so two runs can be confirmed to
+  use the same data) and `label_distribution` (the base PASS/FAIL/UNKNOWN
+  counts the whole diagnosis is conditioned on) alongside the existing
+  `n_cases`. `git_commit` now falls back to the `EVALVITALS_GIT_COMMIT` env var
+  when the `git` CLI is unavailable, so the code-version provenance is no longer
+  silently dropped inside the example Docker images (which ship no git). The
+  `eval_agent` compose file forwards `EVALVITALS_GIT_COMMIT`.
+
+- **Published JSON Schema for `run_log.jsonl`** (`eval_agent/log_schema.py` +
+  shipped `run_log.schema.json`): the log event format is now a machine-readable
+  contract (Draft 2020-12), not just a docstring + an opaque `schema_version`
+  int. `build_schema()` generates it from the stdlib (no new core dependency —
+  the light install is preserved); `load_schema()`, `validate_event()` and
+  `iter_log_errors()` validate logs (needing the optional `jsonschema` dev dep).
+  The schema is permissive (pins the envelope, per-event required fields and
+  core types; allows additive fields). A contract test drives every `RunLogger`
+  event type and asserts the real output conforms, so the schema can't silently
+  drift from the producer. Opt-in `EVALVITALS_VALIDATE_LOG=1` makes `RunLogger`
+  self-check each event and warn (never raise) on a violation.
+
+- **`self_consistency` records its sampling config**: the analyzer's findings
+  now include `gen_kwargs` (the kwargs passed to `model.generate`, temperature
+  above all). The consistency score is uninterpretable without it — a low score
+  at temperature 0 is a real defect, the same score at 1.0 is expected — so the
+  parameter the measurement is conditioned on now travels with it into the
+  `probe` event. Empty dict means the model's own `generate()` defaults.
+
+- **`FixAgent.max_repair_rounds`** (`eval_agent/stages/fix_agent.py`, from the
+  `jiaqiliu` merge): feedback-driven multi-round propose→validate within one
+  fix tier. After a round where nothing validates, per-candidate results are
+  summarised and fed back to the judge/coder, which proposes a *different*
+  strategy — never re-running an identical candidate (candidate dedup via
+  `FixAgent._signature`), never raising the tier automatically.
+
+- **`examples/deco_hallu/`** (from the `jiaqiliu` merge): POPE hallucination
+  slice example with a no-free-lunch guard.
+
+### Fixed
+
+- **Path-doubling in coded fix/M4 sandboxes**: `RunContext.root`,
+  `ExperimentSandbox.workdir`, and `run_coded_pipeline`'s workdir are now
+  resolved to absolute paths. A relative `run_dir` (the common case for
+  examples) previously made every coded fix/M4 subprocess resolve its own
+  script path a second time relative to its new cwd and fail with
+  `FileNotFoundError`.
+- **`cli_agent.py` venv-PATH fix** (from the `jiaqiliu` merge): spawned CLI
+  coding agents now use the same Python interpreter as the loop.
+
+### Changed
+
+- Default `max_cases` raised (32→128) on several white-box analyzers, sized
+  for enriched/stratified batches (from the `jiaqiliu` merge).
+- Removed the canned `attention_guided_crop` L3a primitive — superseded by
+  the L2 coded pipeline's `model_attend()` bridge, since reads need no
+  privileged model handle and now go through the agent-authored sandboxed
+  path instead.
+
 ### Added — experiment infrastructure (ported from AutoResearchClaw)
 
 - **`ExperimentGitManager`** (`eval_agent/git_manager.py`): git-native run versioning.

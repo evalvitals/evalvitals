@@ -209,6 +209,35 @@ def test_sandbox_keeps_script_on_failure(tmp_path):
     assert len(py_files) == 1, "Script should be kept on failure"
 
 
+def test_sandbox_runs_correctly_with_relative_workdir(tmp_path, monkeypatch):
+    """Found via Docker E2E verification: _run_script passes the same workdir
+    as both the subprocess cwd and (via script_path) part of the command
+    argv. If workdir stayed relative, the child process resolved the script
+    path a second time relative to its new cwd, doubling it and failing with
+    'python: can't open file <workdir>/<workdir>/exp_0001.py'. Every coded
+    fix/M4 attempt hit this in practice since example run.py scripts pass a
+    relative --run-dir straight into RunContext."""
+    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+
+    monkeypatch.chdir(tmp_path)
+    sandbox = ExperimentSandbox(workdir=Path("nested/workdir"))
+    result = sandbox.run("print('verdict: 1.0')")
+    assert result.returncode == 0
+    assert result.metrics.get("verdict") == 1.0
+
+
+def test_sandbox_cleanup_false_keeps_script_on_success(tmp_path):
+    """A durable, self-contained workdir (e.g. one fix/M4 trial's workspace/)
+    must keep its code even on success — cleanup=True is the legacy/ephemeral
+    default; the trial-backed path opts out."""
+    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+
+    sandbox = ExperimentSandbox(workdir=tmp_path, cleanup=False)
+    sandbox.run("print('verdict: 1.0')")
+    py_files = list(tmp_path.glob("exp_*.py"))
+    assert len(py_files) == 1, f"Expected the script to be kept, found: {py_files}"
+
+
 def test_run_project_harness_not_overwritable(tmp_path):
     from evalvitals.eval_agent.sandbox import ExperimentSandbox
 

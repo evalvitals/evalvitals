@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from evalvitals.core.model import Model
     from evalvitals.eval_agent.cli_agent import CliAgentConfig
     from evalvitals.eval_agent.hypothesis import Hypothesis
+    from evalvitals.eval_agent.run_context import Trial
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,11 @@ class FixCandidate:
                      cases it returns True for — a *conditional* fix.  When
                      ``None``, applicability is inferred structurally (a spec
                      that does not change a case's input is a no-op there).
+        trial:       Optional :class:`~evalvitals.eval_agent.run_context.Trial`
+                     — when set (a ``RunContext`` is in play), this candidate's
+                     code, the sandbox it ran in, and its record/result all
+                     live under ``trial.root`` instead of being scattered
+                     across ``tools/`` / ``workspace/`` / ``fixes/``.
     """
 
     tier: FixTier
@@ -242,6 +248,7 @@ class FixCandidate:
     kind: str = "spec"
     source: str = "judge"
     predicate: "Callable[[FailureCase], bool] | None" = None
+    trial: "Trial | None" = None
 
 
 @dataclass
@@ -312,6 +319,11 @@ class FixOutcome:
                     "kind": v.candidate.kind,
                     "source": v.candidate.source,
                     "payload": v.candidate.payload,
+                    # Self-contained attempt folder (see RunContext.new_trial) —
+                    # None when no RunContext is in play (legacy flat layout).
+                    "trial_root": (
+                        str(v.candidate.trial.root) if v.candidate.trial else None
+                    ),
                     "n_pairs": v.n_pairs,
                     "n_fixed": v.n_fixed,
                     "n_broken": v.n_broken,
@@ -486,6 +498,14 @@ class FixAgent:
                 break
             round_fixed = False
             for candidate in new_candidates:
+                # Coded candidates already have a trial (allocated at proposal
+                # time, since the CLI agent needs a workdir immediately).
+                # Declarative candidates (template/spec/primitive) get one
+                # here — AFTER dedup — so a repeated default proposal never
+                # burns a folder for nothing.
+                if candidate.trial is None and self._run_context is not None:
+                    candidate.trial = self._run_context.new_trial(
+                        "fixes", f"{candidate.tier.label}_{candidate.name}")
                 validation = self._validate(candidate, model, data, baseline, unstable)
                 outcome.attempted.append(validation)
                 round_fixed = round_fixed or validation.fixed
@@ -807,13 +827,24 @@ class FixAgent:
     def _l2_coded_candidate(
         self, hyp_lines: str, examples: str, model: "Model", prior_text: str = ""
     ) -> "list[FixCandidate]":
-        """The coding agent writes a brand-new pipeline (CLI first, judge fallback)."""
+        """The coding agent writes a brand-new pipeline (CLI first, judge fallback).
+
+        Allocates its trial up front (not after dedup, unlike declarative
+        candidates) because the CLI agent needs a workdir *now* to write
+        ``pipeline.py`` into — coded candidates dedup on code text, which is
+        ~never identical run-to-run, so the orphan-folder risk this would
+        otherwise create is negligible.
+        """
         from evalvitals.core.capability import Capability
         from evalvitals.eval_agent.stages.fix_pipeline import (
             CASES_FILENAME,
             RESULT_MARKER,
         )
 
+        trial = (
+            self._run_context.new_trial("fixes", "coded_pipeline")
+            if self._run_context is not None else None
+        )
         enable_attend = (
             self.max_tier >= FixTier.L3A_INTERNALS_READ
             and Capability.ATTENTION in getattr(model, "capabilities", frozenset())
@@ -832,7 +863,7 @@ class FixAgent:
         if self._cli_config is not None and self._cli_config.provider != "llm":
             prompt = _L2_CODE_PROMPT.format(
                 fences_hint=", written to a file named pipeline.py", **base) + prior_text
-            code, raw = self._write_code_cli(prompt)
+            code, raw = self._write_code_cli(prompt, trial)
             source = f"cli:{self._cli_config.provider}"
         if not code.strip() and self._judge is not None:
             prompt = _L2_CODE_PROMPT.format(
@@ -855,21 +886,23 @@ class FixAgent:
                     code = ""
             source = "judge"
         self._emit_codegen("coded_pipeline", prompt, source, code, raw,
-                           ok=bool(code.strip()))
+                           ok=bool(code.strip()), trial=trial)
         if not code.strip():
             return []
         tier = FixTier.L3A_INTERNALS_READ if enable_attend else FixTier.L2_SCAFFOLD
         return [FixCandidate(tier=tier, name="coded_pipeline",
                              kind="code",
                              payload={"code": code, "enable_attend": enable_attend},
-                             source=source)]
+                             source=source, trial=trial)]
 
-    def _write_code_cli(self, prompt: str) -> "tuple[str, str]":
+    def _write_code_cli(
+        self, prompt: str, trial: "Trial | None" = None
+    ) -> "tuple[str, str]":
         from pathlib import Path
 
         from evalvitals.eval_agent.cli_agent import create_cli_agent
 
-        workdir = Path(self._workdir())
+        workdir = Path(self._workdir(trial))
         agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
         res = agent.run(prompt, workdir=workdir,
                         timeout_sec=self._cli_config.timeout_sec)  # type: ignore[union-attr]
@@ -881,7 +914,16 @@ class FixAgent:
             return py_files["pipeline.py"], res.raw_output
         return (max(py_files.values(), key=len) if py_files else ""), res.raw_output
 
-    def _workdir(self) -> str:
+    def _workdir(self, trial: "Trial | None" = None) -> str:
+        """Sandbox workdir for a coded run.
+
+        With a *trial* (a ``RunContext`` is in play), each candidate gets its
+        own durable ``<trial>/workspace/`` — no cross-attempt overwriting.
+        Without one (legacy / no ``RunContext``), falls back to a single
+        shared sandbox for the agent's lifetime, exactly as before.
+        """
+        if trial is not None:
+            return str(trial.workspace)
         if self._sandbox is None:
             from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
@@ -938,12 +980,29 @@ class FixAgent:
         return block
 
     def _emit_codegen(
-        self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool
+        self, name: str, prompt: str, source: str, code: str, raw: str, *, ok: bool,
+        trial: "Trial | None" = None,
     ) -> None:
-        if self.run_logger is None:
-            return
+        """Log one codegen attempt; persist its prompt/code/thinking.
+
+        With a *trial*, the files live under ``trial.root`` (alongside the
+        rest of that attempt's record) instead of the run-global ``tools/`` —
+        only a lean event (paths via ``extra["trial_root"]``) goes through
+        :meth:`RunLogger.log_tool_codegen`, with no duplicate file copy.
+        """
         extra = ({"cli_usage": self._last_usage}
                  if source.startswith("cli:") and self._last_usage else None)
+        if trial is not None:
+            if prompt:
+                trial.write(f"{name}_prompt.txt", prompt)
+            if code:
+                trial.write(f"{name}_code.py", code)
+            if raw:
+                trial.write(f"{name}_agent_thinking.txt", raw)
+            extra = {**(extra or {}), "trial_root": str(trial.root)}
+            prompt, code, raw = "", "", ""
+        if self.run_logger is None:
+            return
         try:
             self.run_logger.log_tool_codegen(
                 module="fix_pipeline", name=name, need="L2 coded repair pipeline",
@@ -1165,9 +1224,10 @@ class FixAgent:
         of the candidate silently dying.  The final error, if any, is stashed
         in ``payload["exec_error"]`` for honest escalation accounting.
         """
+        workdir = self._workdir(candidate.trial)
         result = run_coded_pipeline(
             candidate.payload["code"], model, data,
-            workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+            workdir=workdir, timeout_sec=self._exec_timeout_sec,
             enable_attend=bool(candidate.payload.get("enable_attend")),
         )
         if not result.ok and self.codegen_available:
@@ -1175,12 +1235,13 @@ class FixAgent:
                            result.error)
             repaired, source, raw = self._repair_code(candidate, result.error)
             self._emit_codegen("coded_pipeline_repair", self._last_repair_prompt,
-                               source, repaired, raw, ok=bool(repaired.strip()))
+                               source, repaired, raw, ok=bool(repaired.strip()),
+                               trial=candidate.trial)
             if repaired.strip():
                 candidate.payload["code"] = repaired
                 result = run_coded_pipeline(
                     repaired, model, data,
-                    workdir=self._workdir(), timeout_sec=self._exec_timeout_sec,
+                    workdir=workdir, timeout_sec=self._exec_timeout_sec,
                     enable_attend=bool(candidate.payload.get("enable_attend")),
                 )
         candidate.payload["exec_error"] = "" if result.ok else result.error
@@ -1213,7 +1274,7 @@ class FixAgent:
         code, source, raw = "", "", ""
         if self._cli_config is not None and self._cli_config.provider != "llm":
             self._last_repair_prompt = base + "\nWrite the corrected code to a file named pipeline.py."
-            code, raw = self._write_code_cli(self._last_repair_prompt)
+            code, raw = self._write_code_cli(self._last_repair_prompt, candidate.trial)
             source = f"cli:{self._cli_config.provider}"
         if not code.strip() and self._judge is not None:
             self._last_repair_prompt = base + "\nReturn ONLY the corrected Python code inside a ```python code block."

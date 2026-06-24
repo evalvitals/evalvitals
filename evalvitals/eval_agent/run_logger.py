@@ -4,7 +4,10 @@ Writes a JSONL event log (one line per M1/M2/M3/M4 event) and saves heavy
 analyzer artifacts (attention tensors, hidden-state arrays) to a separate
 ``artifacts/`` directory, keyed by cycle number so they stay navigable.
 
-Each JSON record always contains a ``ts`` (ISO-8601) and an ``event`` field.
+Each JSON record always contains a ``ts`` (ISO-8601), an ``event`` field, and a
+``schema_version`` (int) — bumped whenever an event's fields are renamed,
+removed, or change meaning, so a parser can detect breaking changes without
+guessing from ``evalvitals_version``. See ``RUN_LOG_SCHEMA_VERSION`` below.
 The underlying file handler is a standard :class:`logging.FileHandler`, so
 callers can attach additional handlers (e.g. a ``StreamHandler`` for console
 output) by accessing :attr:`RunLogger.logger`.
@@ -50,6 +53,7 @@ import logging
 import re
 import sys
 import textwrap
+import threading
 import uuid
 import warnings
 from datetime import datetime, timezone
@@ -63,6 +67,15 @@ if TYPE_CHECKING:
     from evalvitals.eval_agent.stages.analysis import AnalysisReport
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisResult
     from evalvitals.eval_agent.stages.surgery import InterventionResult
+
+# Bump when an existing event's fields are renamed, removed, or change meaning
+# (additive fields don't need a bump). Downstream parsers of run_log.jsonl can
+# branch on this instead of guessing from `evalvitals_version`.
+# v2: `analysis`'s stats_tool_results/stats_results/stats_plan/
+#     corrected_rejections are now conditionally externalized (see
+#     _externalize_if_large) — a {path, n_items, bytes} summary instead of
+#     the raw value once it exceeds _INLINE_MAX_BYTES.
+RUN_LOG_SCHEMA_VERSION = 2
 
 
 def _artifact_to_numpy(artifact: Any) -> "Any | None":
@@ -411,14 +424,23 @@ class RunLogger:
         # M1→M5 events around them.  -1 means "outside any cycle" (e.g. post-loop M4).
         self.current_cycle: int = -1
         # Monotonic counter so codegen artifacts written in the same cycle never
-        # collide on filename.
+        # collide on filename. Lock guards the increment in case codegen calls
+        # are ever issued from parallel analyzer threads (currently they aren't:
+        # ProbeAgent's ThreadPoolExecutor parallelizes analyzer execution only,
+        # not codegen — see probe_agent.py).
         self._codegen_seq: int = 0
+        self._codegen_lock = threading.Lock()
 
         # trace_id ties all events from a single AutoDiagnoseLoop.run() call
         # together — including events from any recursive or nested sub-loops.
         # Callers may supply their own ID (e.g. to correlate with an outer
         # pipeline) or let RunLogger generate a fresh UUID.
         self.trace_id: str = trace_id or str(uuid.uuid4())
+
+        # Opt-in, warn-only schema self-check (see _validate_event). Off by
+        # default so the common path stays dependency-free and never raises.
+        import os
+        self._validate_events: bool = bool(os.environ.get("EVALVITALS_VALIDATE_LOG"))
 
         self.logger = logging.getLogger(f"evalvitals.run.{self.run_dir.name}")
         self.logger.setLevel(logging.DEBUG)
@@ -464,16 +486,27 @@ class RunLogger:
 
     @staticmethod
     def _git_commit() -> "str | None":
-        """Best-effort current git commit hash (short), or None outside a repo."""
+        """Best-effort current git commit hash (short), or None when unavailable.
+
+        Falls back to the ``EVALVITALS_GIT_COMMIT`` env var when the ``git`` CLI
+        can't be used — notably inside the example Docker images, which install
+        no ``git`` and carry no ``.git`` dir, so without this the code-version
+        provenance promised above would be silently absent in exactly the
+        (containerised) mode the examples are meant to run in.
+        """
+        import os
         import subprocess
         try:
             out = subprocess.run(
                 ["git", "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, timeout=3, check=False,
             )
-            return out.stdout.strip() or None
+            commit = out.stdout.strip()
+            if commit:
+                return commit
         except Exception:  # noqa: BLE001
-            return None
+            pass
+        return os.environ.get("EVALVITALS_GIT_COMMIT") or None
 
     def _save_judge_io(
         self, stem: str, prompt: "str | None", raw: "str | None"
@@ -515,10 +548,10 @@ class RunLogger:
         """M1: log findings (JSON) and persist heavy artifacts to disk.
 
         Returns a list of PNG figure paths that were saved for this cycle
-        (attention heatmaps, spatial maps, etc.) so callers can forward them
-        to the judge as visual context.
+        (attention heatmaps, spatial maps, heatmap-on-image overlays, etc.)
+        so callers can forward them to the judge as visual context.
         """
-        artifact_paths = self._save_probe_artifacts(cycle, results)
+        artifact_paths, overlay_pngs = self._save_probe_artifacts(cycle, results)
         entry: dict[str, Any] = {
             "event": "probe",
             "cycle": cycle,
@@ -535,9 +568,10 @@ class RunLogger:
             entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.m1")
 
-        # Collect PNG heatmap paths saved for the .npy arrays.  In context mode
-        # figures live under figures/; in legacy mode next to the .npy data.
-        png_figures: list[Path] = []
+        # Collect PNG heatmap paths saved for the .npy arrays, plus any
+        # heatmap-on-image overlays.  In context mode figures live under
+        # figures/; in legacy mode next to the .npy data.
+        png_figures: list[Path] = list(overlay_pngs)
         fig_dir = self._figures_dir or self.artifact_dir
         for rel_npy in artifact_paths.values():
             if not rel_npy.endswith(".npy"):
@@ -572,20 +606,26 @@ class RunLogger:
             entry["evidence_chain"] = list(evidence_chain)
         stats_tool_results = getattr(report, "stats_tool_results", None)
         if stats_tool_results:
-            entry["stats_tool_results"] = list(stats_tool_results)
+            entry["stats_tool_results"] = self._externalize_if_large(
+                cycle, "stats_tool_results", list(stats_tool_results)
+            )
         visualizations = getattr(report, "visualizations", None)
         if visualizations:
             entry["visualizations"] = list(visualizations)
         # Statistical-tool layer: which tools ran, their verdicts, FDR, figures.
         stats_plan = getattr(report, "stats_plan", None)
         if stats_plan:
-            entry["stats_plan"] = stats_plan
+            entry["stats_plan"] = self._externalize_if_large(cycle, "stats_plan", stats_plan)
         stats_results = getattr(report, "stats_results", None)
         if stats_results:
-            entry["stats_results"] = [r.to_dict() for r in stats_results]
+            entry["stats_results"] = self._externalize_if_large(
+                cycle, "stats_results", [r.to_dict() for r in stats_results]
+            )
         corrected = getattr(report, "corrected_rejections", None)
         if corrected:
-            entry["corrected_rejections"] = corrected
+            entry["corrected_rejections"] = self._externalize_if_large(
+                cycle, "corrected_rejections", corrected
+            )
         figures = getattr(report, "figures", None)
         if figures:
             entry["figures"] = list(figures)
@@ -690,21 +730,40 @@ class RunLogger:
         self._log(entry, span_id="fix")
 
     def _write_fix_records(self, d: "dict[str, Any]") -> "str | None":
-        """Write per-candidate records + ``fixes/outcome.md``; return the outcome path."""
+        """Write per-candidate records + ``fixes/outcome.md``; return the outcome path.
+
+        Each attempt's ``record.md`` (human) + ``result.json`` (machine) land
+        in its own *trial* folder — ``Path(a["trial_root"])``, allocated by
+        :meth:`~evalvitals.eval_agent.run_context.RunContext.new_trial` — so
+        the validation record sits next to the code that candidate ran and the
+        sandbox it ran in, instead of a flat ``fixes/<slug>/`` re-correlated by
+        filename.  Falls back to recomputing that flat slug when a candidate
+        carries no trial (no ``RunContext`` in play — legacy standalone
+        ``RunLogger``).
+        """
         attempts = d.get("attempted") or []
 
         def _eff(v: "Any") -> "Any":
             return round(v, 4) if isinstance(v, float) else v
 
-        # One record per attempted candidate.
+        # One record + result per attempted candidate, in its own folder.
+        rows: "list[tuple[str, dict[str, Any]]]" = []
         for i, a in enumerate(attempts, start=1):
             tier = a.get("tier", "L?")
             name = a.get("name", "candidate")
-            slug = re.sub(r"[^a-zA-Z0-9]+", "_", f"{i:02d}_{tier}_{name}").strip("_")
+            trial_root = a.get("trial_root")
+            if trial_root:
+                dest_dir = Path(trial_root)
+                slug = dest_dir.name
+            else:
+                slug = re.sub(r"[^a-zA-Z0-9]+", "_", f"{i:02d}_{tier}_{name}").strip("_")
+                dest_dir = self.fixes_dir / slug
+            rows.append((slug, a))
+            num = slug.split("_", 1)[0]
             verdict = a.get("verdict") or ("FIXED" if a.get("fixed") else "did not fix")
             cov = a.get("coverage")
             lines = [
-                f"# Fix attempt {i:02d} — {name}  [{tier}]",
+                f"# Fix attempt {num} — {name}  [{tier}]",
                 "",
                 f"**Outcome:** {'FIXED' if a.get('fixed') else 'did not fix'} "
                 f"(verdict: {verdict})",
@@ -735,7 +794,8 @@ class RunLogger:
             lines.append("```json")
             lines.append(json.dumps(a.get("payload") or {}, indent=2, default=str))
             lines.append("```")
-            self._save_text(self.fixes_dir / slug, "record.md", "\n".join(lines))
+            self._save_text(dest_dir, "record.md", "\n".join(lines))
+            self._save_text(dest_dir, "result.json", json.dumps(a, indent=2, default=str))
 
         # Top-level summary across all attempts.
         fixed = d.get("fixed")
@@ -762,23 +822,23 @@ class RunLogger:
         if refine:
             head.append(f"**Re-diagnose:** {refine.get('message', '')}")
         head += ["", f"## Attempts ({len(attempts)})", ""]
-        if attempts:
+        if rows:
             head.append("| # | tier | candidate | verdict | n_fixed | n_broken "
                         "| coverage | effect | sig |")
             head.append("|---|------|-----------|---------|---------|----------"
                         "|----------|--------|-----|")
-            for i, a in enumerate(attempts, start=1):
+            for slug, a in rows:
                 cov = a.get("coverage")
                 cov_s = "—" if cov is None else f"{cov:.0%}"
                 head.append(
-                    f"| {i:02d} | {a.get('tier')} | {a.get('name')} | "
+                    f"| {slug.split('_', 1)[0]} | {a.get('tier')} | {a.get('name')} | "
                     f"{a.get('verdict') or ('fixed' if a.get('fixed') else 'no')} | "
                     f"{a.get('n_fixed')} | {a.get('n_broken')} | {cov_s} | "
                     f"{_eff(a.get('effect'))} | "
                     f"{'yes' if a.get('reject') else 'no'} |"
                 )
-            head += ["", "Each attempt's full record is in its own folder above "
-                     "(`NN_<tier>_<name>/record.md`)."]
+            head += ["", "Each attempt's full record.md + result.json is in its own "
+                     "folder above (`NN_<tier>_<name>/`)."]
         return self._save_text(self.fixes_dir, "outcome.md", "\n".join(head))
 
     def log_loop_end(
@@ -865,10 +925,16 @@ class RunLogger:
         :class:`~evalvitals.eval_agent.stages.surgery.SurgeryAgent` (the
         generated script(s), the run's stdout/stderr, the verdict, and the
         agent's intermediate thinking — the CLI agent's narration or the
-        multi-phase LLM ``validation_log``).  Heavy text is written under
-        ``experiments/`` and the sandbox working directory is snapshotted under
-        ``workspace/``; the JSONL event records the verdict, metrics and the
-        paths to those artifacts so ``run_log.jsonl`` stays lean.
+        multi-phase LLM ``validation_log``).
+
+        With a *trial* (``iv.experiment["trial_root"]``, a ``RunContext`` in
+        play), everything lands in that one self-contained folder — its live
+        ``workspace/`` already holds the sandbox the script ran in (kept on
+        success, see ``ExperimentSandbox(cleanup=False)``), so no separate
+        snapshot copy is made.  Without one (legacy / no ``RunContext``),
+        heavy text is written flat under ``experiments/`` with a ``{stem}_``
+        prefix and the sandbox is best-effort copied into
+        ``workspace/<stem>/`` — exactly as before.
 
         Falls back gracefully (logs only the scalar evidence) when
         ``iv.experiment`` is absent, so passive / label-correlation
@@ -877,6 +943,13 @@ class RunLogger:
         exp = getattr(iv, "experiment", None) or {}
         prefix = f"c{cycle}" if cycle >= 0 else "post"
         stem = f"{prefix}_{module}"
+        trial_root = exp.get("trial_root")
+        if trial_root:
+            dest_dir = Path(trial_root)
+            name_prefix = ""
+        else:
+            dest_dir = self.experiments_dir
+            name_prefix = f"{stem}_"
 
         # 1. Generated source files (the "changes").
         file_paths: dict[str, str] = {}
@@ -884,7 +957,7 @@ class RunLogger:
         if not files and exp.get("code"):
             files = {"main.py": exp["code"]}
         for fname, src in files.items():
-            p = self._save_text(self.experiments_dir, f"{stem}_{fname}", str(src))
+            p = self._save_text(dest_dir, f"{name_prefix}{fname}", str(src))
             if p is not None:
                 file_paths[fname] = p
 
@@ -898,22 +971,23 @@ class RunLogger:
         ):
             val = exp.get(key)
             if val:
-                p = self._save_text(self.experiments_dir, f"{stem}_{suffix}", str(val))
+                p = self._save_text(dest_dir, f"{name_prefix}{suffix}", str(val))
                 if p is not None:
                     text_paths[key] = p
         vlog = exp.get("validation_log")
         if vlog:
             p = self._save_text(
-                self.experiments_dir, f"{stem}_phase_log.txt",
+                dest_dir, f"{name_prefix}phase_log.txt",
                 "\n".join(str(x) for x in vlog),
             )
             if p is not None:
                 text_paths["validation_log"] = p
 
-        # 3. Snapshot the workspace the agent operated in (the "workspace snapshot").
+        # 3. Snapshot the workspace the agent operated in — skipped when it's
+        # already durable inside a trial (trial.workspace/ IS the live sandbox).
         workspace = None
         workdir = exp.get("workdir")
-        if workdir:
+        if workdir and not trial_root:
             workspace = self._snapshot_workspace(stem, workdir)
 
         entry: dict[str, Any] = {
@@ -935,18 +1009,24 @@ class RunLogger:
             "code_paths": file_paths,
             "output_paths": text_paths,
             "workspace_snapshot": workspace,
+            "trial_root": trial_root,
         }
         # Human-readable, self-contained record: open this one file to
         # understand the whole experiment without parsing JSONL.
-        record = self._write_experiment_record(stem, entry)
+        record = self._write_experiment_record(entry, dest_dir, name_prefix)
         if record is not None:
             entry["record"] = record
         self._log(entry, span_id=f"{prefix}.{module}")
 
     def _write_experiment_record(
-        self, stem: str, entry: "dict[str, Any]"
+        self, entry: "dict[str, Any]", dest_dir: Path, name_prefix: str
     ) -> "str | None":
-        """Write a one-page Markdown summary of an M4 experiment to ``experiments/``."""
+        """Write a one-page Markdown summary of an M4 experiment.
+
+        Lands in *dest_dir* with *name_prefix* — the same trial folder (no
+        prefix) or the flat ``experiments/`` dir (``{stem}_`` prefix) the rest
+        of this experiment's files just went to.
+        """
         status = (entry.get("status") or "unknown").upper()
         lines = [
             f"# Experiment — {entry.get('module', 'm4').upper()}  ({status})",
@@ -979,7 +1059,7 @@ class RunLogger:
             for name, path in files.items():
                 lines.append(f"- `{path}`  — {name}")
             lines.append("")
-        return self._save_text(self.experiments_dir, f"{stem}_record.md", "\n".join(lines))
+        return self._save_text(dest_dir, f"{name_prefix}record.md", "\n".join(lines))
 
     # ------------------------------------------------------------------
     # Tool synthesis — agent generates new probes / stats tools on demand
@@ -1014,9 +1094,11 @@ class RunLogger:
         ``module`` is e.g. ``"m1_probe"``, ``"m1_whitebox"`` or ``"m2_stats"``.
         """
         cyc = self.current_cycle if cycle is None else cycle
-        self._codegen_seq += 1
+        with self._codegen_lock:
+            self._codegen_seq += 1
+            seq = self._codegen_seq
         prefix = f"c{cyc}" if cyc >= 0 else "post"
-        stem = f"{prefix}_{module}_{name}_{self._codegen_seq:02d}"
+        stem = f"{prefix}_{module}_{name}_{seq:02d}"
 
         paths: dict[str, str] = {}
         for key, content, suffix in (
@@ -1113,11 +1195,33 @@ class RunLogger:
     # ------------------------------------------------------------------
 
     def _log(self, entry: dict[str, Any], *, span_id: str | None = None) -> None:
+        entry["schema_version"] = RUN_LOG_SCHEMA_VERSION
         entry["ts"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         entry["trace_id"] = self.trace_id
         if span_id is not None:
             entry["span_id"] = span_id
+        if self._validate_events:
+            self._validate_event(entry)
         self.logger.info("run_event", extra={"_payload": entry})
+
+    def _validate_event(self, entry: dict[str, Any]) -> None:
+        """Opt-in self-check: warn (never raise) when an event violates the schema.
+
+        Enabled by ``EVALVITALS_VALIDATE_LOG`` (see ``__init__``).  Kept warn-only
+        and fully guarded so turning it on can never break a run — it's a
+        developer/CI aid to catch a producer drifting from the published schema,
+        not a runtime gate.  Needs the optional ``jsonschema`` dep; a missing dep
+        or any other hiccup degrades silently to "not validated".
+        """
+        try:
+            from evalvitals.eval_agent.log_schema import validate_event
+            validate_event(entry)
+        except ImportError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — never let validation break logging
+            warnings.warn(
+                f"RunLogger: event {entry.get('event')!r} violates run_log schema: {exc}"
+            )
 
     def _save_text(self, directory: Path, stem: str, text: str) -> "str | None":
         """Write *text* to ``directory/stem`` (creating *directory*); return rel path.
@@ -1134,6 +1238,33 @@ class RunLogger:
         except Exception as exc:  # noqa: BLE001
             warnings.warn(f"RunLogger: could not save text artifact {stem!r}: {exc}")
             return None
+
+    # Above this size, M2 stats payloads are externalized like every other
+    # heavy field (judge I/O, M1 artifacts) instead of inlined in the JSONL
+    # line — typical runs stay well under this, so the common case is
+    # unaffected and still jq/tail -f friendly.
+    _INLINE_MAX_BYTES = 4096
+
+    def _externalize_if_large(
+        self, cycle: int, key: str, value: Any, *, threshold_bytes: int = _INLINE_MAX_BYTES,
+    ) -> Any:
+        """Inline *value* unless its JSON size exceeds *threshold_bytes*.
+
+        Oversized values are persisted under ``artifacts/`` and replaced with
+        ``{"path", "n_items", "bytes"}`` so the JSONL line stays lean.
+        """
+        serialized = json.dumps(value, default=str)
+        size = len(serialized.encode("utf-8"))
+        if size <= threshold_bytes:
+            return value
+        prefix = f"c{cycle}" if cycle >= 0 else "post"
+        path = self._save_text(self.artifact_dir, f"{prefix}_m2_{key}.json", serialized)
+        summary: dict[str, Any] = {"bytes": size}
+        if isinstance(value, (list, dict)):
+            summary["n_items"] = len(value)
+        if path is not None:
+            summary["path"] = path
+        return summary
 
     # Files worth keeping in a workspace snapshot — code, data, prose, logs.
     # Heavy binaries (weights, tensors, images) are skipped to keep snapshots
@@ -1191,16 +1322,31 @@ class RunLogger:
         self,
         cycle: int,
         results: dict[str, "Result"],
-    ) -> dict[str, str]:
-        """Persist heavy artifacts from all M1 results; return {key: path} map."""
+    ) -> "tuple[dict[str, str], list[Path]]":
+        """Persist heavy artifacts from all M1 results.
+
+        Returns ``({key: path}, overlay_pngs)``. *overlay_pngs* are heatmap-on-
+        image visualisations from ``Result`` subclasses defining an
+        ``image_overlays()`` hook (duck-typed — e.g. ``RelativeAttentionResult``),
+        saved alongside the bare heatmaps so a multimodal judge sees the actual
+        photo under the highlighted patches instead of an abstract colour grid.
+        """
         paths: dict[str, str] = {}
+        overlay_pngs: list[Path] = []
+        fig_dir = self._figures_dir or self.artifact_dir
         for analyzer_name, result in results.items():
             for art_name, artifact in result.artifacts.items():
                 stem = f"c{cycle}_{analyzer_name}_{art_name}"
                 path = self._save_artifact(stem, artifact)
                 if path is not None:
                     paths[f"{analyzer_name}/{art_name}"] = str(path.relative_to(self.run_dir))
-        return paths
+            image_overlays = getattr(result, "image_overlays", None)
+            if image_overlays is not None:
+                try:
+                    overlay_pngs.extend(image_overlays(fig_dir, f"c{cycle}_{analyzer_name}"))
+                except Exception as exc:  # noqa: BLE001 - viz must never break the probe
+                    warnings.warn(f"RunLogger: image_overlays failed for {analyzer_name}: {exc}")
+        return paths, overlay_pngs
 
     def _save_artifact(self, stem: str, artifact: Any) -> Path | None:
         """Write one artifact to ``artifacts/<stem>.<ext>``; return path or None.

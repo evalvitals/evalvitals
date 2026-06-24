@@ -371,6 +371,67 @@ def test_surgery_param_sweep():
     assert "attention" in iv.evidence["param_sweep"]
 
 
+# ── M4 per-trial output: each operate() call gets its own self-contained
+# experiments/NN_.../ folder (code + a kept, non-overwritten sandbox) ────────
+
+
+class _FakeExperimentWriter:
+    """Stands in for ExperimentWriter — actually runs code in the sandbox it's
+    given (like the real writer does) so cleanup=False can be verified, but
+    skips the LLM/CLI machinery entirely."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def write_and_run(self, *, hypothesis, model_context, cases_json, sandbox):
+        from evalvitals.eval_agent.stages.experiment_writer import ExperimentWriterResult
+
+        self.calls += 1
+        sandbox.run(f"print('verdict: 1.0')  # call {self.calls}")
+        return ExperimentWriterResult(
+            files={"main.py": f"# experiment for {hypothesis.predicted_failure_mode}"},
+            verdict=1.0, metrics={"confidence": 0.95},
+            returncode=0, timed_out=False, workdir=str(sandbox.workdir),
+        )
+
+
+def test_m4_experiment_gets_its_own_trial_with_kept_sandbox(tmp_path):
+    """The bug this feature exists to fix: M4 experiments used to share (and
+    overwrite) one sandbox, and ExperimentSandbox deleted it on success —
+    so a *successful* experiment left no runnable code behind at all."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    agent = SurgeryAgent(judge=FakeModel(), run_context=ctx)
+    agent._writer = _FakeExperimentWriter()  # bypass the real LLM-driven writer
+
+    hyp1 = _hypothesis("attention_sink")
+    hyp2 = _hypothesis("modality_gap")
+    data = CaseBatch([FailureCase(inputs=Inputs(prompt="x"))])
+
+    iv1 = agent.operate(hyp1, FakeModel(), {}, data)
+    iv2 = agent.operate(hyp2, FakeModel(), {}, data)
+
+    t1, t2 = iv1.experiment["trial_root"], iv2.experiment["trial_root"]
+    assert t1 is not None and t2 is not None and t1 != t2
+
+    ctx.logger.log_experiment(0, hyp1, iv1)
+    ctx.logger.log_experiment(0, hyp2, iv2)
+    ctx.finalize()
+
+    from pathlib import Path
+
+    p1, p2 = Path(t1), Path(t2)
+    for p in (p1, p2):
+        assert (p / "main.py").exists()
+        assert (p / "record.md").exists()
+        # cleanup=False: the script the fake writer ran via sandbox.run()
+        # stays on disk even though it "succeeded" (verdict line, rc=0) —
+        # the whole point of giving the experiment its own durable folder.
+        assert list((p / "workspace").glob("exp_*.py")), \
+            f"sandbox script should be kept in {p / 'workspace'}"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # AutoDiagnoseLoop — full M1→M2→M3→M4
 # ══════════════════════════════════════════════════════════════════════════════

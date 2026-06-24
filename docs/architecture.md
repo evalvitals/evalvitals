@@ -168,6 +168,7 @@ evidence in a `Store`.
 ```text
 eval_agent/
 ├── loop.py               AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
+├── run_context.py        RunContext, Trial — single owner of a run's output directory
 ├── run_logger.py         RunLogger — per-cycle JSONL log + artifact sink
 ├── hypothesis.py         Hypothesis, HypothesisStatus — shared across M3/M4/M5
 ├── cli_agent.py          CliAgentConfig, create_cli_agent — shared CLI coding agent
@@ -190,6 +191,8 @@ eval_agent/
     ├── diagnosis.py      M3  DiagnosisAgent, DiagnosisResult
     ├── surgery.py        M4  SurgeryAgent, InterventionResult
     ├── experiment_writer.py  M4  ExperimentWriter
+    ├── fix_agent.py       M4 (post-loop)  FixAgent, FixCandidate, FixOutcome
+    ├── fix_tiers.py       FixTier ladder (L1 prompt → L4 parameter space)
     └── hypothesis_tester.py  M5  HypothesisTester, HypothesisTestResult
 ```
 
@@ -217,11 +220,12 @@ loop = AutoDiagnoseLoop(
     diagnosis_agent=DiagnosisAgent(judge=judge),
     surgery_agent=SurgeryAgent(judge=judge),
     store=JsonlStore(run_dir / "store"),
-    run_logger=RunLogger(run_dir / "logs"),
+    run_logger=RunLogger(run_dir),
     run_dir=run_dir,
 )
 
-# VLDiagnoseLoop
+# VLDiagnoseLoop — ctx is a RunContext; see "RunContext" below for what it owns
+ctx = RunContext(run_dir)
 protocol = ExperimentProtocol(
     description="VLM suspected to ignore visual tokens ...",
     failure_patterns="spatial confusion, hallucinated objects",
@@ -229,15 +233,16 @@ protocol = ExperimentProtocol(
 loop = VLDiagnoseLoop(
     model=model,
     protocol=protocol,
-    stats_agent=StatsAnalysisAgent(judge=model),
+    stats_agent=StatsAnalysisAgent(judge=model, figure_dir=str(ctx.figures_dir)),
     diagnosis_agent=DiagnosisAgent(judge=model),
     hypothesis_tester=HypothesisTester(judge=model, min_effect=0.05),
-    surgery_agent=SurgeryAgent(judge=model),
+    surgery_agent=SurgeryAgent(judge=model, run_context=ctx),
     max_cycles=5,
-    run_logger=RunLogger(run_dir / "logs"),
+    run_logger=ctx.logger,
 )
 report = loop.run(cases)
-fix    = loop.run_m4(report, cases)   # M4 called post-loop on best hypothesis
+ctx.write_diagnose_report(report, cases)
+fix = loop.run_m4(report, cases)   # M4 called post-loop on best hypothesis
 ```
 
 ### M4 SurgeryAgent — four strategies
@@ -377,32 +382,163 @@ VLM nearly ignores image tokens — attention dominated by text/structural token
 This finding propagates to M3 DiagnosisAgent and M4 SurgeryAgent, closing the loop from
 attention measurement to codex-generated diagnostic code.
 
-### Logging and artifact persistence
+### Result image overlays
 
-`RunLogger` captures every M1→M4 event as a JSON line in `run_log.jsonl` and
-saves heavy artifacts (attention tensors, CKA matrices, hidden-state arrays) to
-an `artifacts/` subdirectory keyed by cycle number.  It is entirely opt-in —
-the default `run_logger=None` leaves existing behaviour unchanged.
+A bare heatmap (`spatial_map`, `fail_mean_map`, …) carries no spatial reference
+to the photo it was computed from, so neither a human nor a multimodal judge
+can tell whether a highlighted patch corresponds to anything sensible.
+`RelativeAttentionResult` (and any `Result` subclass that wants the same
+treatment) exposes:
 
-```text
-run_dir/logs/<run_id>/
-├── run_log.jsonl                         ← one JSON line per event
-└── artifacts/
-    ├── c0_attention_attentions.json      ← top-attended tokens, cycle 0
-    ├── c0_attention_rollout_rollout.npy  ← rollout tensor
-    └── c1_cka_layer_similarities.npy     ← after data refocus, cycle 1
+```python
+result.overlay(key="spatial_map", alpha=0.6, cmap="jet")  # -> PIL.Image | None
+result.save_overlay(key, path)                             # -> bool
+result.image_overlays(fig_dir, stem_prefix)                 # -> list[Path]
 ```
 
-Each log line carries `event`, `cycle`, `ts` (ISO-8601), and stage-specific
-fields (findings, narrative, raw LLM output, intervention status …).
-This makes the full diagnosis trail inspectable offline with standard tools:
+`overlay()` alpha-blends the map onto its representative case image
+(CAM-style, intensity-weighted so the background stays visible); it resolves
+lazy `Inputs.image` paths/URLs the same way the model's forward pass did
+(`transformers.image_utils.load_image`), so the overlay matches what was
+actually fed to the model. `image_overlays()` is a duck-typed hook: `RunLogger`
+calls it on any `Result` that defines it and saves the PNGs into `figures/`
+alongside the bare heatmaps, so overlays flow into the same artifact list a
+multimodal judge already receives — no per-analyzer wiring required.
+
+### RunContext — single owner of a run's output directory
+
+`RunContext` replaces the old per-example pattern of hand-written report
+files, `RunLogger` buried under a `logs/` subdir, hand-built figure-dir paths,
+and M4 sandboxes living in ephemeral temp dirs deleted on success.  One
+`RunContext` owns the whole run root and hands every producer its
+subdirectory:
+
+```text
+<root>/
+├── manifest.json     run config + index of every produced file
+├── run_log.jsonl     structured event stream (RunLogger)
+├── README.txt        auto-generated file guide (from manifest)
+├── report/           human deliverables (summary.md, hypotheses.json, m5_results.json, …)
+├── figures/          M1 heatmaps (+ overlay PNGs) and M2 effect plots
+├── artifacts/        M1 heavy numeric data (.npy / .json)
+├── prompts/          judge prompt / response
+├── experiments/      one self-contained folder per M4 ExperimentWriter trial
+├── tools/            synthesised probe / stats tool code (M1/M2, run-global)
+├── workspace/        sandbox working dirs outside any trial
+└── fixes/            one self-contained folder per FixAgent repair attempt
+```
+
+Each line in `run_log.jsonl` carries `event`, `cycle`, `ts` (ISO-8601), a
+`schema_version` (int, bumped only when an existing event's fields are
+renamed/removed/change meaning — additive fields don't bump it, so a
+downstream parser can detect breaking changes without guessing from
+`evalvitals_version`), and stage-specific fields (findings, narrative, raw LLM
+output, intervention status …). The first `run_start` event records run
+provenance — `model`, `judge`, `git_commit` (falls back to the
+`EVALVITALS_GIT_COMMIT` env var when the `git` CLI is unavailable, e.g. inside
+the example Docker images), `data_fingerprint` (an order-independent hash of
+the case batch, so two runs can be confirmed to use the same data) and
+`label_distribution` (the base PASS/FAIL/UNKNOWN counts the diagnosis is
+conditioned on). The `analysis` event's stats fields
+(`stats_tool_results`, `stats_results`, `stats_plan`, `corrected_rejections`)
+are externalized to `artifacts/` the same way `probe`'s `artifact_paths` are
+once their JSON size exceeds 4 KB — the JSONL line then carries
+`{"path", "n_items", "bytes"}` instead of the raw value. Standard shell tools
+work directly on it:
 
 ```bash
-tail -f run_dir/logs/*/run_log.jsonl                    # live stream
+tail -f run_dir/run_log.jsonl                           # live stream
 jq 'select(.event=="diagnosis")' run_log.jsonl          # all judge outputs
 jq 'select(.event=="probe") | .findings' run_log.jsonl  # M1 findings
 jq 'select(.event=="surgery") | .evidence' run_log.jsonl
 ```
+
+The event format is a **published JSON Schema** (Draft 2020-12), shipped as
+package data at `evalvitals/eval_agent/run_log.schema.json` and built from
+`evalvitals/eval_agent/log_schema.py` — so downstream parsers (in any language)
+can validate `run_log.jsonl` instead of guessing field shapes. It's permissive
+by design: it pins the common envelope (`event`, `schema_version`, `ts`,
+`trace_id`), the per-event required fields and core types, but allows additive
+fields (matching the `schema_version` rule above).
+
+```python
+from evalvitals.eval_agent import iter_log_errors, validate_event
+
+for line_no, msg in iter_log_errors("run_dir/run_log.jsonl"):  # empty == conforms
+    print(line_no, msg)
+```
+
+Set `EVALVITALS_VALIDATE_LOG=1` to have `RunLogger` self-check every event it
+writes against the schema and warn (never raise) on a violation — a CI/dev aid
+to catch a producer drifting from the contract. Both paths need the optional
+`jsonschema` dependency (`pip install evalvitals[dev]`).
+
+```python
+from evalvitals.eval_agent import RunContext, VLDiagnoseLoop
+
+with RunContext("examples/foo/outputs", verbose=True) as ctx:
+    stats_agent = StatsAnalysisAgent(judge=judge, figure_dir=str(ctx.figures_dir))
+    loop = VLDiagnoseLoop(..., run_logger=ctx.logger)
+    report = loop.run(cases)
+    ctx.write_diagnose_report(report, cases, discovery=discovery_rows)
+# manifest.json + README.txt written, logger closed on exit.
+```
+
+`write_diagnose_report(report, cases, discovery=...)` writes the standard
+`report/` deliverables — duck-typed across `VLDiagnoseReport` and
+`AutoDiagnoseReport`, replacing the `_write_report_artifacts` boilerplate
+previously copy-pasted into every example.
+
+**Per-trial folders** (`ctx.new_trial("fixes" | "experiments", label)`):
+each fix candidate or M4 experiment gets its own numbered folder —
+`fixes/03_widen_crop/` — holding the generated code, the sandbox it ran in,
+judge prompt/output, `record.md`, and `result.json`, instead of scattering
+those across `tools/` / `workspace/` / `fixes/` and re-correlating them by
+filename slug.  A `Trial`'s folder (and its `workspace/`) is created lazily
+on first write, so a candidate discarded before producing anything (e.g. a
+deduped proposal) leaves no empty folder — a gap in the numbering honestly
+means "proposed, then discarded," not a missing record.  `ctx.new_workdir(label)`
+is the non-trial equivalent for sandboxes that don't belong to a numbered
+attempt (e.g. M1/M2 tool codegen).
+
+**Not the same as `run_dir`** in the "Run-directory infrastructure" section
+above: `AutoDiagnoseLoop(run_dir=...)` owns *resume* mechanics (checkpoint,
+heartbeat, evolution, git) and is orthogonal — a run can use either, both, or
+neither. `RunContext` owns *output* (report/figures/artifacts/fixes/manifest).
+`AutoDiagnoseLoop`'s own `run_dir` infra was deliberately left untouched when
+`RunContext` was introduced.
+
+### FixAgent — tiered post-loop repair (M4)
+
+`FixAgent` (`stages/fix_agent.py`) is a second M4 path, invoked via
+`loop.run_fix(report, data)` after `loop.run()` — distinct from `SurgeryAgent`
+above, which verifies *why* something fails; `FixAgent` proposes and validates
+candidate *fixes*. The allowed intervention space is an **input** (`FixTier`,
+default `L2_SCAFFOLD`); there is no automatic escalation:
+
+```text
+L1   input space        prompt rewrites, instruction strategies
+L2   scaffold space     agent-designed pipelines around the unchanged model
+                         (multi-call, external tools, aggregation) — sandboxed,
+                         bridged model access; labels never reach the code
+L3a  internals (read)   read attention/logits to guide scaffold actions
+L3b  internals (write)  modify the forward pass (attention reweighting,
+                         sink suppression, activation steering)
+L4   parameter space    fine-tune recipe — recorded, executor not yet implemented
+```
+
+Every candidate is validated against the unmodified baseline with paired
+McNemar + e-value (never a bare p-value); a *fixed* verdict means the
+candidate repairs significantly more cases than it breaks.  `max_repair_rounds`
+(default 1) lets the judge/coder retry with *different* strategies within the
+same tier after a round where nothing validates — never re-proposing an
+identical candidate (`FixAgent._signature`), never raising the tier itself.
+`loop.run_fix(..., auto_escalate=True)` steps the ceiling tier L2 → L3a → L3b
+automatically, feeding each round the full history of prior failures.  When no
+candidate validates, the outcome carries a `recommendation` (e.g. "raise to
+L3a") for the caller to act on. Each candidate's code/sandbox/record lives
+under its own `fixes/NN_label/` folder when a `RunContext` is attached (see
+above).
 
 ## Public Surface Guidance
 
@@ -435,6 +571,9 @@ from evalvitals.eval_agent import (
     VLDiagnoseLoop, ExperimentProtocol,
     StatsAnalysisAgent, HypothesisTester,
 )
+
+# Run output ownership + post-loop tiered repair
+from evalvitals.eval_agent import RunContext, FixAgent, FixTier
 ```
 
 Lower-level implementation details (`compose`, `HFLocalModel`, `infer_spec`,

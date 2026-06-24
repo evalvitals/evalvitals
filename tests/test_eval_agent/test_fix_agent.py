@@ -1190,3 +1190,151 @@ def test_bridged_attend_enables_coded_l3a(tmp_path):
                              workdir=tmp_path / "off", timeout_sec=30,
                              enable_attend=False)
     assert off.ok is False
+
+
+# ── per-trial output folders: fixes/<NN_tier_name>/ self-contained attempts ──
+#
+# With a RunContext, every attempt's code + sandbox + record.md + result.json
+# live together under one numbered folder instead of being scattered across
+# tools/ / workspace/ / fixes/ and re-correlated by filename slug.
+
+
+def test_declarative_candidate_gets_record_and_result_but_no_workspace(tmp_path):
+    """A template/spec candidate never touches a sandbox — its trial folder
+    should hold only record.md + result.json, no workspace/ subdir."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    judge = ScriptedJudge(json.dumps([
+        {"name": "careful", "prompt_template": "Look very carefully. {prompt}"},
+    ]))
+    agent = FixAgent(judge=judge, max_tier="L1", run_logger=ctx.logger, run_context=ctx)
+    out = agent.propose_and_validate(BaselineFailsModel(), _gold_yes_batch(),
+                                     [_hyp("the prompt phrasing underspecifies the task")])
+    assert out.fixed is True
+    trial = out.best.candidate.trial
+    assert trial is not None
+    assert trial.root.parent == ctx.fixes_dir
+
+    ctx.finalize()
+    assert (trial.root / "record.md").exists()
+    assert (trial.root / "result.json").exists()
+    assert not (trial.root / "workspace").exists()
+
+
+def test_deduped_candidate_in_round_two_leaves_no_trial_folder(tmp_path):
+    """A judge that keeps proposing the SAME failing candidate is deduped
+    before a trial is ever allocated for it — round 2 must not leave behind
+    an empty (or duplicate) folder."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    judge = ScriptedJudge(json.dumps([
+        {"name": "polite", "prompt_template": "Please answer. {prompt}"}]))
+    agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3,
+                     run_logger=ctx.logger, run_context=ctx)
+    out = agent.propose_and_validate(
+        BaselineFailsModel(), _gold_yes_batch(), [_hyp("x")])
+    assert out.repair_rounds == 1
+    assert sum(1 for v in out.attempted if v.candidate.name == "polite") == 1
+
+    ctx.finalize()
+    trial_dirs = [p for p in ctx.fixes_dir.iterdir() if p.is_dir()]
+    assert len(trial_dirs) == 1  # exactly one — no orphan from the deduped re-proposal
+
+
+class TwoVersionCodeJudge(Model):
+    """Round 1's coded pipeline is a no-op (doesn't fix); round 2's (written
+    after seeing round 1's failure) inserts a marker the test model is
+    sensitive to (fixes) — exercises two coded fix attempts in one run, each
+    needing its own durable trial workspace (the bug this feature exists to
+    fix: both used to share — and overwrite — one sandbox)."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text"})
+
+    def __init__(self) -> None:
+        self.code_calls = 0
+
+    def generate(self, inputs, **kwargs) -> str:
+        if "EXECUTION CONTRACT" in str(inputs):
+            self.code_calls += 1
+            pipeline = _NOOP_CODE_PIPELINE if self.code_calls == 1 else _MARKER_CODE_PIPELINE
+            return f"```python\n{pipeline}\n```"
+        return "no json here"
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+class MarkerSensitiveModel(Model):
+    """Answers "yes" only when the prompt contains a literal marker — only a
+    custom-coded pipeline rewriting the prompt can trigger this, so none of
+    the default L1 templates / L2 image-op specs accidentally fix it (isolates
+    the coded-pipeline-only effect for the two-trial test below)."""
+
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        prompt = str(getattr(inputs, "prompt", ""))
+        return "Yes." if "SECRET_MARKER" in prompt else "No."
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+_NOOP_CODE_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    ans = model_generate(c["id"])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+_MARKER_CODE_PIPELINE = '''
+import json
+cases = json.load(open("fix_cases.json"))["cases"]
+out = []
+for c in cases:
+    ans = model_generate(c["id"], prompt="SECRET_MARKER " + c["prompt"])
+    out.append({"sample_id": c["id"], "output": ans})
+print("FIX_PIPELINE_RESULT_JSON=" + json.dumps({"per_case": out}))
+'''
+
+
+def test_two_coded_fix_attempts_get_separate_trial_workspaces(tmp_path):
+    pytest.importorskip("PIL")
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    agent = FixAgent(judge=TwoVersionCodeJudge(), max_tier="L2",
+                     run_logger=ctx.logger, run_context=ctx,
+                     exec_timeout_sec=30, max_repair_rounds=2)
+    out = agent.propose_and_validate(
+        MarkerSensitiveModel(), _gold_yes_batch(image=_img()),
+        [_hyp("the model never sees the marker it needs", mode="prompt_gap")])
+
+    coded = [v for v in out.attempted if v.candidate.kind == "code"]
+    assert len(coded) == 2
+    assert coded[0].fixed is False
+    assert coded[1].fixed is True
+    assert out.fixed is True
+    assert out.repair_rounds == 2
+
+    t1, t2 = coded[0].candidate.trial, coded[1].candidate.trial
+    assert t1 is not None and t2 is not None
+    assert t1.root != t2.root
+    code1 = (t1.workspace / "fix_pipeline_exec.py").read_text()
+    code2 = (t2.workspace / "fix_pipeline_exec.py").read_text()
+    assert "SECRET_MARKER" not in code1
+    assert "SECRET_MARKER" in code2
+
+    ctx.finalize()
+    # Each trial's own record + result — not a shared/overwritten one.
+    assert (t1.root / "record.md").exists()
+    assert (t2.root / "record.md").exists()
+    assert json.loads((t1.root / "result.json").read_text())["fixed"] is False
+    assert json.loads((t2.root / "result.json").read_text())["fixed"] is True

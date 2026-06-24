@@ -14,6 +14,7 @@ No GPU/model required.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 
@@ -57,6 +58,21 @@ def test_root_created_on_init(tmp_path):
     ctx = RunContext(root)
     assert ctx.root == root
     assert root.is_dir()
+
+
+def test_root_resolved_to_absolute_for_relative_input(tmp_path, monkeypatch):
+    """A relative root (e.g. ``Path("outputs/run1")``, the common case in
+    examples) must end up absolute. ExperimentSandbox/run_coded_pipeline run
+    subprocesses with cwd=<workdir under root> *and* a script path built from
+    that same (relative) workdir — a relative root makes the child process
+    resolve the script path a second time relative to its new cwd, doubling
+    it and raising FileNotFoundError on every coded fix/M4 attempt."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    monkeypatch.chdir(tmp_path)
+    ctx = RunContext(Path("outputs/run1"))
+    assert ctx.root.is_absolute()
+    assert ctx.root == (tmp_path / "outputs" / "run1").resolve()
 
 
 def test_subdirectories_lazily_created(tmp_path):
@@ -164,6 +180,98 @@ def test_figure_path_preserves_known_extension(tmp_path):
 
     ctx = RunContext(tmp_path / "run1")
     assert ctx.figure_path("heatmap.svg") == ctx.figures_dir / "heatmap.svg"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trial allocation (per-attempt self-contained folders: fix candidates, M4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_new_trial_root_not_created_until_first_write(tmp_path):
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    trial = ctx.new_trial("fixes", "L1 attend carefully")
+    # Lazy: a deduped/discarded candidate must leave nothing on disk.
+    assert not trial.root.exists()
+    assert trial.root.parent == ctx.fixes_dir
+    assert "L1_attend_carefully" in trial.root.name
+    assert trial.root.name.startswith("01_")
+
+
+def test_new_trial_numbering_is_monotonic_per_category(tmp_path):
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    f1 = ctx.new_trial("fixes", "a")
+    f2 = ctx.new_trial("fixes", "b")
+    e1 = ctx.new_trial("experiments", "x")
+    assert f1.root.name.startswith("01_")
+    assert f2.root.name.startswith("02_")
+    # Separate counter per category — experiments/ starts back at 01.
+    assert e1.root.name.startswith("01_")
+    assert e1.root.parent == ctx.experiments_dir
+
+
+def test_new_trial_rejects_unknown_category(tmp_path):
+    import pytest
+
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    with pytest.raises(ValueError, match="fixes.*experiments"):
+        ctx.new_trial("bogus", "x")
+
+
+def test_trial_write_creates_root_lazily(tmp_path):
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    trial = ctx.new_trial("fixes", "coded_pipeline")
+    path = trial.write("prompt.txt", "do the thing")
+    assert trial.root.exists()
+    assert path == trial.root / "prompt.txt"
+    assert path.read_text(encoding="utf-8") == "do the thing"
+
+
+def test_trial_workspace_created_lazily(tmp_path):
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    trial = ctx.new_trial("fixes", "coded_pipeline")
+    assert not trial.root.exists()
+    ws = trial.workspace
+    assert ws == trial.root / "workspace"
+    assert ws.is_dir()
+    # Idempotent — same path on repeated access.
+    assert trial.workspace == ws
+
+
+def test_trial_write_record_and_result(tmp_path):
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    trial = ctx.new_trial("fixes", "attend_carefully")
+    record_path = trial.write_record("# Fix attempt 01\n")
+    result_path = trial.write_result({"fixed": True, "effect": 0.3})
+    assert record_path == trial.root / "record.md"
+    assert result_path == trial.root / "result.json"
+    assert json.loads(result_path.read_text()) == {"fixed": True, "effect": 0.3}
+
+
+def test_two_trials_in_same_category_have_independent_workspaces(tmp_path):
+    """The bug this whole feature exists to fix: two coded fix attempts must
+    not share (and overwrite) one sandbox."""
+    from evalvitals.eval_agent.run_context import RunContext
+
+    ctx = RunContext(tmp_path / "run1")
+    t1 = ctx.new_trial("fixes", "coded_pipeline")
+    t2 = ctx.new_trial("fixes", "coded_pipeline")
+    (t1.workspace / "fix_pipeline_exec.py").write_text("v1")
+    (t2.workspace / "fix_pipeline_exec.py").write_text("v2")
+    assert t1.workspace != t2.workspace
+    assert (t1.workspace / "fix_pipeline_exec.py").read_text() == "v1"
+    assert (t2.workspace / "fix_pipeline_exec.py").read_text() == "v2"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

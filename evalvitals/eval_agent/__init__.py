@@ -88,6 +88,13 @@ from evalvitals.eval_agent.hypothesis import (
     hypothesis_from_dict,
     hypothesis_to_dict,
 )
+from evalvitals.eval_agent.log_schema import (
+    SCHEMA_PATH,
+    build_schema,
+    iter_log_errors,
+    load_schema,
+    validate_event,
+)
 from evalvitals.eval_agent.loop import (
     AutoDiagnoseLoop,
     AutoDiagnoseReport,
@@ -105,7 +112,7 @@ from evalvitals.eval_agent.preregister import (
 )
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_context import RunContext
-from evalvitals.eval_agent.run_logger import RunLogger
+from evalvitals.eval_agent.run_logger import RUN_LOG_SCHEMA_VERSION, RunLogger
 from evalvitals.eval_agent.sandbox import (
     ExperimentSandbox,
     SandboxProtocol,
@@ -251,6 +258,13 @@ __all__ = [
     "DiagnosticReport",
     "RunContext",
     "RunLogger",
+    # run_log.jsonl published schema
+    "RUN_LOG_SCHEMA_VERSION",
+    "build_schema",
+    "load_schema",
+    "validate_event",
+    "iter_log_errors",
+    "SCHEMA_PATH",
     # Experiment execution
     "ExperimentWriter",
     "ExperimentWriterConfig",
