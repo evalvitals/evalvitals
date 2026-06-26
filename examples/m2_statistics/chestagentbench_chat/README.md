@@ -4,6 +4,9 @@ This example starts a Lambda/Codex-style M2 chat over an existing results
 directory. You do not write analysis code; the local coding agent writes and
 runs exploratory analysis scripts inside EvalVitals' sandbox.
 
+For the general standalone M2 workflow, see
+[`docs/m2_analysis.md`](../../../docs/m2_analysis.md).
+
 Default data path:
 
 ```text

@@ -65,6 +65,8 @@ report = loop.run(failure_cases)
 ## Documentation Map
 
 - [Quickstart](quickstart.md): runnable examples and common entry points.
+- [M2 Statistical Analysis](m2_analysis.md): standalone chat, dashboard, and
+  confirmatory statistics.
 - [Architecture](architecture.md): package structure and design contracts.
 - [Extending EvalVitals](extending.md): how to add analyzers, specs, and backends.
 - [Roadmap](roadmap.md): current implementation status and planned surfaces.

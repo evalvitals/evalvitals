@@ -352,6 +352,10 @@ pip install -e ".[dashboard]"
 evalvitals dashboard m2_chat_output
 ```
 
+See [docs/m2_analysis.md](docs/m2_analysis.md) for the standalone M2 workflow,
+including chat mode, dashboard review, generated artifacts, and when to promote
+exploratory signals into confirmatory `StatsAnalysisAgent` tests.
+
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 
 1. *Statistical support* — does the signal group fail at a significantly higher

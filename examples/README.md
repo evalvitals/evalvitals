@@ -17,3 +17,6 @@ cd examples/m2_statistics/stats_compare && docker compose up
 RESULTS_DIR=/path/to/results bash examples/m2_statistics/chestagentbench_chat/run.sh
 cd examples/diagnosis_loops/qwen_loop_agy && docker compose up
 ```
+
+For the general standalone M2 workflow, see
+[`docs/m2_analysis.md`](../docs/m2_analysis.md).
