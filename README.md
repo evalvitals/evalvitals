@@ -310,6 +310,26 @@ protocol = ExperimentProtocol(
 e-BH FDR correction, and produces a `StatsAnalysisReport` with a structured
 evidence chain for M3.
 
+M2 can also be used independently from the diagnosis loop:
+
+```python
+from evalvitals.analysis import StatsAnalysisAgent
+
+rows = [
+    {"case_id": "c0", "label": "fail", "low_img_attn": 1},
+    {"case_id": "c1", "label": "pass", "low_img_attn": 0},
+]
+
+report = StatsAnalysisAgent().analyze_records(
+    rows,
+    id_col="case_id",
+    label_col="label",
+    signal_cols=["low_img_attn"],
+)
+print(report.conclusion)
+print([r.summary for r in report.stats_results])
+```
+
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 
 1. *Statistical support* — does the signal group fail at a significantly higher

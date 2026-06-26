@@ -72,6 +72,41 @@ class StatsInput:
     scalars: dict[str, float] = field(default_factory=dict)
     groups: dict[str, dict[str, float]] | None = None
 
+    @classmethod
+    def from_results(
+        cls,
+        results: "dict[str, Result]",
+        data: "CaseBatch | None" = None,
+    ) -> "StatsInput":
+        """Build statistical input from EvalVitals analyzer results."""
+        return build_stats_input(results, data)
+
+    @classmethod
+    def from_records(
+        cls,
+        records: "Any",
+        *,
+        id_col: str = "case_id",
+        label_col: str = "label",
+        signal_cols: "list[str] | tuple[str, ...] | None" = None,
+        scalar_cols: "list[str] | tuple[str, ...] | None" = None,
+        signal_prefix: str = "",
+    ) -> "StatsInput":
+        """Build statistical input from plain row dictionaries.
+
+        ``label_col`` accepts booleans, ``Label`` values, common strings
+        (``"pass"``, ``"fail"``, ``"success"``, ``"error"``), or 0/1 values
+        where 1 means FAIL.  Signal and scalar columns must be numeric/bool.
+        """
+        return build_stats_input_from_records(
+            records,
+            id_col=id_col,
+            label_col=label_col,
+            signal_cols=signal_cols,
+            scalar_cols=scalar_cols,
+            signal_prefix=signal_prefix,
+        )
+
 
 @dataclass
 class StatsToolResult:
@@ -190,6 +225,93 @@ def build_stats_input(
         scalars=scalars,
         groups=groups or None,
     )
+
+
+def build_stats_input_from_records(
+    records: "Any",
+    *,
+    id_col: str = "case_id",
+    label_col: str = "label",
+    signal_cols: "list[str] | tuple[str, ...] | None" = None,
+    scalar_cols: "list[str] | tuple[str, ...] | None" = None,
+    signal_prefix: str = "",
+) -> StatsInput:
+    """Normalise plain records into :class:`StatsInput`.
+
+    This is the standalone on-ramp for users who have a table of cases and
+    signals rather than EvalVitals ``Result`` objects.
+    """
+    labels: dict[str, bool] = {}
+    per_case: dict[str, dict[str, float]] = {}
+    scalars: dict[str, float] = {}
+
+    rows = list(records or [])
+    if signal_cols is None and rows:
+        excluded = {id_col, label_col, *(scalar_cols or ())}
+        signal_cols = [
+            str(k) for k, v in _row_items(rows[0])
+            if k not in excluded and isinstance(v, (int, float, bool))
+        ]
+    signal_cols = tuple(signal_cols or ())
+    scalar_cols = tuple(scalar_cols or ())
+
+    for i, row in enumerate(rows):
+        cid = _row_get(row, id_col, None)
+        if cid in (None, ""):
+            cid = str(i)
+        cid = str(cid)
+
+        label = _parse_label(_row_get(row, label_col, None))
+        if label is not None:
+            labels[cid] = label
+
+        for col in signal_cols:
+            val = _row_get(row, col, None)
+            if isinstance(val, (int, float, bool)):
+                key = f"{signal_prefix}.{col}" if signal_prefix else str(col)
+                per_case.setdefault(key, {})[cid] = float(val)
+
+        for col in scalar_cols:
+            val = _row_get(row, col, None)
+            if isinstance(val, (int, float, bool)):
+                scalars[str(col)] = float(val)
+
+    return StatsInput(labels=labels, per_case=per_case, scalars=scalars)
+
+
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
+def _row_items(row: Any) -> list[tuple[str, Any]]:
+    if isinstance(row, dict):
+        return list(row.items())
+    if hasattr(row, "_asdict"):
+        return list(row._asdict().items())
+    if hasattr(row, "__dict__"):
+        return list(vars(row).items())
+    return []
+
+
+def _parse_label(value: Any) -> bool | None:
+    if value is None or value == Label.UNKNOWN:
+        return None
+    if value == Label.FAIL:
+        return True
+    if value == Label.PASS:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"fail", "failed", "failure", "false", "incorrect", "error", "bad", "1"}:
+        return True
+    if text in {"pass", "passed", "success", "true", "correct", "ok", "0"}:
+        return False
+    return None
 
 
 def _is_binary(values: "Any") -> bool:
