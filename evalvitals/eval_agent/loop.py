@@ -348,6 +348,7 @@ class AutoDiagnoseLoop:
                     judge_prompt=getattr(self.probe_agent, "last_selection_prompt", ""),
                     judge_raw=getattr(self.probe_agent, "last_selection_raw", ""),
                     duration_sec=_dt,
+                    failed_analyzers=getattr(self.probe_agent, "_failed_analyzers", None) or None,
                 )
                 _log_generated_tools(self.run_logger, cycle, "m1_probe", self.probe_agent)
             if not probe_results:

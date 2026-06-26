@@ -100,6 +100,9 @@ _EVENTS: dict[str, dict[str, Any]] = {
             "analyzers": {"type": "array", "items": {"type": "string"}},
             "findings": {"type": "object"},
             "artifact_paths": {"type": "object"},
+            # Additive M1 fields (permissive schema): result_paths (per-analyzer
+            # complete result json), failed_analyzers (selected-but-errored),
+            # selected_analyzers — see RunLogger.log_probe.
             "selection_rationale": {"type": "string"},
             "judge_io": _JUDGE_IO,
             "duration_sec": {"type": "number"},
