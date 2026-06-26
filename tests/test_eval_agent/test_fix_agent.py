@@ -413,7 +413,7 @@ def test_feedback_round_one_fails_round_two_fixes():
     judge = FeedbackDrivenJudge()
     agent = FixAgent(judge=judge, max_tier="L1", max_repair_rounds=3)
     out = agent.propose_and_validate(
-        BaselineFailsModel(), _gold_yes_batch(),
+        BaselineFailsModel(), _gold_yes_batch(16),
         [_hyp("the prompt phrasing underspecifies the task")])
     assert out.fixed is True
     assert out.repair_rounds == 2            # stopped as soon as round 2 validated
@@ -720,7 +720,7 @@ def test_fix_agent_coded_candidate_fixes_and_logs(tmp_path):
     agent = FixAgent(judge=CodeWritingJudge(), max_tier="L2", run_logger=logger,
                      exec_timeout_sec=30)
     out = agent.propose_and_validate(
-        ZoomSensitiveModel(), _gold_yes_batch(image=_img()),
+        ZoomSensitiveModel(), _gold_yes_batch(16, image=_img()),
         [_hyp("small findings are destroyed by downsampling", mode="resolution_limit")])
     coded = [v for v in out.attempted if v.candidate.kind == "code"]
     assert len(coded) == 1 and coded[0].candidate.source == "judge"
@@ -1314,7 +1314,7 @@ def test_two_coded_fix_attempts_get_separate_trial_workspaces(tmp_path):
                      run_logger=ctx.logger, run_context=ctx,
                      exec_timeout_sec=30, max_repair_rounds=2)
     out = agent.propose_and_validate(
-        MarkerSensitiveModel(), _gold_yes_batch(image=_img()),
+        MarkerSensitiveModel(), _gold_yes_batch(16, image=_img()),
         [_hyp("the model never sees the marker it needs", mode="prompt_gap")])
 
     coded = [v for v in out.attempted if v.candidate.kind == "code"]

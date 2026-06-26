@@ -1073,11 +1073,21 @@ class VLDiagnoseLoop:
             finally:
                 agent.run_logger = agent_logger
 
-            # Merge all rounds into one combined outcome and emit once.
+            # Merge all rounds into one combined outcome and emit once. The
+            # merged set spans every escalated tier, so it is a LARGER best-of-N
+            # family than any single tier — re-apply e-BH FDR control over the
+            # whole union (mirrors FixAgent.propose_and_validate) instead of an
+            # uncorrected max, or auto-escalation would re-open the multiplicity
+            # leak it was meant to respect.
             if last_outcome is not None:
                 last_outcome.attempted = all_attempted
                 last_outcome.max_tier = ceiling
-                winners = [v for v in all_attempted if v.fixed]
+                tested = [v for v in all_attempted if v.e_value is not None]
+                survivors = agent._ebh_survivors(tested)
+                last_outcome.ebh_survivors = sorted(
+                    v.candidate.name for v in tested if id(v) in survivors)
+                winners = [v for v in all_attempted
+                           if v.fixed and id(v) in survivors]
                 if winners:
                     last_outcome.best = max(
                         winners, key=lambda v: (v.effect or 0.0, -v.n_broken)
