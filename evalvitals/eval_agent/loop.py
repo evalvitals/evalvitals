@@ -715,6 +715,8 @@ class VLDiagnoseLoop:
         run_logger: "Any | None" = None,
         token_budget: int = 0,
         analysis_only: bool = False,
+        confirm_split: float = 0.0,
+        confirm_split_seed: int = 0,
     ) -> None:
         from evalvitals.eval_agent.stages.fix_agent import FixAgent
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
@@ -735,8 +737,48 @@ class VLDiagnoseLoop:
         self.run_logger = run_logger
         self.token_budget = token_budget
         self.analysis_only = analysis_only
+        # Held-out CONFIRM split (leak #3): fraction of the batch reserved, away
+        # from M1-M5 hypothesis generation, for the post-loop fix/surgery to
+        # validate on — so the deployed fix is confirmed on data the loop never
+        # mined. 0.0 = off (current behavior); the split is deterministic
+        # (stratified by label+probe_type, seeded), so run() and run_m4/run_fix
+        # derive the identical partition from the same input batch.
+        self.confirm_split = float(confirm_split)
+        self.confirm_split_seed = int(confirm_split_seed)
         self._tokens_used: int = 0
         self._run_id: str = ""
+
+    @staticmethod
+    def _strat_key(case: "Any") -> "tuple":
+        """Stratify the explore/confirm split by label + probe_type when present
+        (keeps the no-free-lunch control mix, e.g. present-detections, in both
+        partitions). Falls back to label alone for generic batches."""
+        label = getattr(getattr(case, "label", None), "value", "?")
+        probe = (getattr(case, "metadata", {}) or {}).get("probe_type")
+        return (label, probe)
+
+    def _split_explore_confirm(self, data: "CaseBatch"):
+        """Deterministic, stratified (explore, confirm) partition.
+
+        Returns ``(explore_batch, confirm_batch)``. When ``confirm_split <= 0``
+        (or the batch is too small to split), returns ``(data, None)`` — a
+        no-op, so existing runs are byte-for-byte unchanged.
+        """
+        from evalvitals.core.case import CaseBatch
+        from evalvitals.stats.subset_sampling import stratified_subset
+
+        cases = list(data)
+        frac = self.confirm_split
+        if frac <= 0.0 or len(cases) < 4:
+            return data, None
+        n_confirm = round(len(cases) * frac)
+        if n_confirm <= 0 or n_confirm >= len(cases):
+            return data, None
+        confirm = stratified_subset(cases, self._strat_key, n_confirm,
+                                    seed=self.confirm_split_seed)
+        confirm_ids = {id(c) for c in confirm}
+        explore = [c for c in cases if id(c) not in confirm_ids]
+        return CaseBatch(explore), CaseBatch(confirm)
 
     # ──────────────────────────────────────────────────────────────────
     # Public API
@@ -762,6 +804,17 @@ class VLDiagnoseLoop:
 
         # Per-stage wall-clock totals (seconds) for the loop_end cost profile.
         timings: dict[str, float] = {}
+
+        # Held-out CONFIRM split (leak #3): M1-M5 see only EXPLORE; the post-loop
+        # fix/surgery validate on the frozen CONFIRM partition (run_m4/run_fix
+        # re-derive the same deterministic split from the same input batch).
+        explore, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            logger.info(
+                "confirm split: explore=%d cases, confirm=%d held out (frac=%.2f)",
+                len(list(explore)), len(list(confirm)), self.confirm_split,
+            )
+            data = explore
 
         # Forward the RunLogger into the agents so the probe / stats tool
         # generators record their tool-synthesis attempts ("tool_codegen" events).
@@ -971,6 +1024,13 @@ class VLDiagnoseLoop:
             logger.info("run_m4: no verified hypotheses to act on.")
             return None
 
+        # Confirm the fix on the held-out partition (leak #3): the loop generated
+        # the hypothesis on EXPLORE, so M4 must operate on CONFIRM — data it never
+        # mined. Deterministic re-split of the same batch; no-op when off.
+        _, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            data = confirm
+
         best_tr = report.verified_hypotheses[0]
         results: dict[str, Any] = (
             report.final_stats_report.raw_results
@@ -1028,6 +1088,14 @@ class VLDiagnoseLoop:
                             feeding prior failure context to each round.
         """
         from evalvitals.eval_agent.stages.fix_tiers import FixTier, parse_tier
+
+        # Validate the fix on the held-out partition (leak #3): the hypotheses
+        # were generated on EXPLORE, so the deployed repair must be confirmed on
+        # CONFIRM — cases the loop never used to pick the fix. Deterministic
+        # re-split of the same batch; no-op when confirm_split=0.
+        _, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            data = confirm
 
         agent = fix_agent or self.fix_agent
         hypotheses = [tr.hypothesis for tr in report.verified_hypotheses]
