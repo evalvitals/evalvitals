@@ -330,6 +330,21 @@ print(report.conclusion)
 print([r.summary for r in report.stats_results])
 ```
 
+For Lambda-style no-code exploration over an existing results directory, start
+the local M2 chat backend:
+
+```bash
+evalvitals chat /path/to/results \
+  --backend antigravity \
+  --out m2_chat_output
+```
+
+Each chat turn writes `exploratory_report.json`, the generated `analysis.py`,
+stdout/stderr, and any generated figures under `turn_XXX/`. The exploratory
+report surfaces candidate signals; run `StatsAnalysisAgent` on promoted signals
+when you need confirmatory effect/CI/e-value/FDR verdicts. For one-shot batch
+mode, use `evalvitals-m2-explore`.
+
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 
 1. *Statistical support* — does the signal group fail at a significantly higher

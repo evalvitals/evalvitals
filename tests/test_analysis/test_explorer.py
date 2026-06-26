@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from evalvitals.analysis import M2ExplorerAgent
+import json
+
+from evalvitals.analysis import M2ExplorerAgent, load_records_from_path
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 _GOOD_CODE = """
@@ -91,3 +93,63 @@ def test_m2_explorer_reports_missing_backend(tmp_path):
     assert not report.ok
     assert "no code-writing backend" in report.error
     assert report.data_profile["n_rows"] == 6
+
+
+def test_load_records_from_path_reads_jsonl_and_skips_tool_calls(tmp_path):
+    run_dir = tmp_path / "agent-a"
+    run_dir.mkdir()
+    main = run_dir / "agent-a_20260701.json"
+    rows = [
+        {"question_id": "q0", "is_correct": True, "input": {"question": "A?"}},
+        {"question_id": "q1", "is_correct": False, "input": {"question": "B?"}},
+    ]
+    main.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    (run_dir / "tool_calls_1.json").write_text(
+        json.dumps([{"name": "tool", "content": "x"}]), encoding="utf-8"
+    )
+
+    loaded = load_records_from_path(tmp_path)
+
+    assert len(loaded) == 2
+    assert loaded[0]["label"] == "pass"
+    assert loaded[1]["label"] == "fail"
+    assert loaded[0]["input.question"] == "A?"
+    assert loaded[0]["_source_dir"] == "agent-a"
+
+
+def test_load_records_from_path_samples_across_files(tmp_path):
+    for agent in ("agent-a", "agent-b"):
+        run_dir = tmp_path / agent
+        run_dir.mkdir()
+        rows = [
+            {"question_id": f"{agent}-{i}", "is_correct": i % 2 == 0}
+            for i in range(10)
+        ]
+        (run_dir / f"{agent}_results.json").write_text(
+            "\n".join(json.dumps(r) for r in rows),
+            encoding="utf-8",
+        )
+
+    loaded = load_records_from_path(tmp_path, max_rows=4, max_files=2)
+
+    assert len(loaded) == 4
+    assert {r["_source_dir"] for r in loaded} == {"agent-a", "agent-b"}
+
+
+def test_m2_explorer_explore_path(tmp_path):
+    data_dir = tmp_path / "logs" / "agent-a"
+    data_dir.mkdir(parents=True)
+    (data_dir / "agent-a_20260701.json").write_text(
+        "\n".join(json.dumps(r) for r in _rows()),
+        encoding="utf-8",
+    )
+    agent = M2ExplorerAgent(
+        judge=ScriptedJudge(f"```python\n{_GOOD_CODE}\n```"),
+        sandbox=ExperimentSandbox(workdir=tmp_path / "sandbox", cleanup=False),
+    )
+
+    report = agent.explore_path(data_dir.parent)
+
+    assert report.ok
+    assert report.data_profile["loaded_rows"] == 6
+    assert report.data_profile["source_path"] == str(data_dir.parent)

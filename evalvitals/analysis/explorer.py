@@ -242,6 +242,32 @@ class M2ExplorerAgent:
             raw_outputs=raw_outputs,
         )
 
+    def explore_path(
+        self,
+        path: str | Path,
+        *,
+        question: str = "Explore patterns that distinguish failures from passes.",
+        max_rows: int = 2000,
+        max_files: int = 200,
+        include_tool_calls: bool = False,
+    ) -> ExploratoryAnalysisReport:
+        """Load JSON/JSONL records from *path* and run exploratory analysis.
+
+        This is the no-code entrypoint behind the CLI. It recursively loads
+        structured log records, samples large directories deterministically, and
+        passes normalized row dictionaries to :meth:`explore_records`.
+        """
+        rows = load_records_from_path(
+            path,
+            max_rows=max_rows,
+            max_files=max_files,
+            include_tool_calls=include_tool_calls,
+        )
+        report = self.explore_records(rows, question=question)
+        report.data_profile.setdefault("source_path", str(Path(path)))
+        report.data_profile.setdefault("loaded_rows", len(rows))
+        return report
+
     def _write_input(self, rows: list[dict[str, Any]]) -> None:
         path = Path(self._sandbox.workdir) / _INPUT_FILENAME
         path.write_text(json.dumps(rows, default=str), encoding="utf-8")
@@ -321,6 +347,112 @@ def _records_to_rows(records: Any) -> list[dict[str, Any]]:
         else:
             rows.append({"value": row})
     return rows
+
+
+def load_records_from_path(
+    path: str | Path,
+    *,
+    max_rows: int = 2000,
+    max_files: int = 200,
+    include_tool_calls: bool = False,
+) -> list[dict[str, Any]]:
+    """Load a bounded sample of JSON/JSONL records from a file or directory."""
+    root = Path(path)
+    files = [root] if root.is_file() else sorted(root.rglob("*.json"))
+    if not include_tool_calls:
+        files = [p for p in files if not p.name.startswith("tool_calls_")]
+    files = files[:max_files]
+    per_file_limit = max(1, max_rows // max(1, len(files)))
+    rows: list[dict[str, Any]] = []
+    for file_path in files:
+        n_from_file = 0
+        for row in _load_json_records(file_path):
+            flat = _flatten_record(row)
+            flat["_source_file"] = str(file_path)
+            flat["_source_dir"] = file_path.parent.name
+            rows.append(flat)
+            n_from_file += 1
+            if len(rows) >= max_rows:
+                return rows
+            if n_from_file >= per_file_limit:
+                break
+    return rows
+
+
+def _load_json_records(path: Path) -> list[Any]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    stripped = text.strip()
+    if not stripped:
+        return []
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, list):
+            return parsed
+        return [parsed]
+    except json.JSONDecodeError:
+        pass
+    records: list[Any] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
+def _flatten_record(record: Any, *, max_text: int = 500) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        return {"value": _shorten(record, max_text)}
+
+    out: dict[str, Any] = {}
+    for key, value in record.items():
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            out[str(key)] = _shorten(value, max_text)
+        elif isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                flat_key = f"{key}.{sub_key}"
+                if isinstance(sub_value, (str, int, float, bool)) or sub_value is None:
+                    out[flat_key] = _shorten(sub_value, max_text)
+        elif isinstance(value, list):
+            out[f"{key}._len"] = len(value)
+            if key == "model_answer":
+                out["model_answer_text"] = _shorten(_join_text_blocks(value), max_text)
+        else:
+            out[str(key)] = _shorten(value, max_text)
+
+    if "is_correct" in out:
+        out.setdefault("label", "pass" if bool(out["is_correct"]) else "fail")
+    attempts = record.get("attempts")
+    if isinstance(attempts, list):
+        out.setdefault("attempts_count", len(attempts))
+    trace = record.get("trace")
+    if isinstance(trace, list):
+        out.setdefault("trace_steps", len(trace))
+    return out
+
+
+def _join_text_blocks(value: list[Any]) -> str:
+    parts: list[str] = []
+    for item in value:
+        if isinstance(item, dict) and item.get("type") == "text":
+            parts.append(str(item.get("text", "")))
+        elif isinstance(item, str):
+            parts.append(item)
+    return "\n".join(parts)
+
+
+def _shorten(value: Any, max_text: int) -> Any:
+    if not isinstance(value, str):
+        return value
+    if len(value) <= max_text:
+        return value
+    return value[:max_text] + f"... [truncated {len(value) - max_text} chars]"
 
 
 def _profile_rows(rows: list[dict[str, Any]], *, sample_size: int = 5) -> dict[str, Any]:

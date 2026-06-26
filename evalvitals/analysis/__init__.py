@@ -9,6 +9,7 @@ from evalvitals.analysis.explorer import (
     CandidateSignal,
     ExploratoryAnalysisReport,
     M2ExplorerAgent,
+    load_records_from_path,
 )
 from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.analysis.stats_tools import (
@@ -28,6 +29,7 @@ __all__ = [
     "M2ExplorerAgent",
     "ExploratoryAnalysisReport",
     "CandidateSignal",
+    "load_records_from_path",
     "StatsInput",
     "StatsToolResult",
     "STATS_TOOL_CATALOG",
