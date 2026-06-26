@@ -163,7 +163,7 @@ result = CHAIRAnalyzer(object_vocab=COCO_VOCAB).run(model, cases)
 # chair_i: mean per-caption hallucination rate; chair_s: fraction of captions with ≥1 hallucination
 ```
 
-Full runnable example: `examples/hallucination/` (launch with `docker compose up`).
+Full runnable example: `examples/analyzer_demos/hallucination/` (launch with `docker compose up`).
 
 ---
 
@@ -209,7 +209,7 @@ result = VLShapAnalyzer(n_regions=16, n_samples=64, top_k=3).run(model, CaseBatc
 # }
 ```
 
-Full runnable example: `examples/mm_shap/` (launch with `docker compose up`).
+Full runnable example: `examples/analyzer_demos/mm_shap/` (launch with `docker compose up`).
 
 ---
 
@@ -253,7 +253,7 @@ def logprobs_fn(prompt, *, model="gpt-4o-mini", max_new_tokens=40, top_k=5, **_)
 rt = RuntimeConfig(generate_fn=..., logprobs_fn=logprobs_fn)
 ```
 
-Full runnable example: `examples/logprob_entropy/` (launch with `docker compose up`).
+Full runnable example: `examples/analyzer_demos/logprob_entropy/` (launch with `docker compose up`).
 
 ---
 
@@ -297,7 +297,7 @@ print(mr.avg_ranks)          # {"A": 2.1, "B": 1.7, "C": 2.2}
 print(mr.significant_pairs)  # [("A", "B"), ...] — pairs that pass Nemenyi CD
 ```
 
-Full runnable example: `examples/stats_compare/` (no API key, `docker compose up`).
+Full runnable example: `examples/m2_statistics/stats_compare/` (no API key, `docker compose up`).
 
 ---
 
@@ -447,4 +447,4 @@ result = analyzer._run(model, CaseBatch([case_with_trajectory]))
 # High flip_rate ⇒ that step was causally influential.
 ```
 
-Full runnable example: `examples/eval_agent/` (no API key needed, `docker compose up`).
+Full runnable example: `examples/diagnosis_loops/eval_agent/` (no API key needed, `docker compose up`).

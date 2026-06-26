@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import evalvitals.analysis as public_analysis
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
 from evalvitals.core.result import Result
 from evalvitals.eval_agent import StatsAnalysisAgent, build_stats_input, fdr_correct
@@ -77,6 +78,34 @@ def test_build_stats_input_strategy_groups():
     assert inp.groups is not None
     assert set(inp.groups) == {"strat0", "strat1", "strat2"}
     assert len(inp.groups["strat0"]) == 6
+
+
+def test_public_analysis_import_reuses_stats_agent():
+    assert public_analysis.StatsAnalysisAgent is StatsAnalysisAgent
+
+
+def test_build_stats_input_from_records_extracts_labels_and_signals():
+    rows = [
+        {"case_id": "c0", "label": "fail", "low_img_attn": 1, "entropy": 3.0},
+        {"case_id": "c1", "label": "pass", "low_img_attn": 0, "entropy": 1.0},
+    ]
+    inp = public_analysis.build_stats_input_from_records(
+        rows, signal_cols=["low_img_attn", "entropy"]
+    )
+    assert inp.labels == {"c0": True, "c1": False}
+    assert inp.per_case["low_img_attn"] == {"c0": 1.0, "c1": 0.0}
+    assert inp.per_case["entropy"]["c0"] == 3.0
+
+
+def test_stats_analysis_agent_analyze_records_standalone():
+    rows = [
+        {"case_id": f"c{i}", "label": "fail" if i < 4 else "pass", "flag": 1 if i < 4 else 0}
+        for i in range(8)
+    ]
+    report = public_analysis.StatsAnalysisAgent().analyze_records(rows, signal_cols=["flag"])
+    assert report.stats_results
+    assert any(r.tool == "signal_label_assoc" and r.ok for r in report.stats_results)
+    assert "Standalone statistical analysis" in report.conclusion
 
 
 # ── individual tools ────────────────────────────────────────────────────────
