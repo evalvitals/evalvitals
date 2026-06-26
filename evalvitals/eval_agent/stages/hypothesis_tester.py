@@ -210,9 +210,19 @@ class HypothesisTester:
             One :class:`HypothesisTestResult` per hypothesis, in the
             same order as *hypotheses*.
         """
+        # The whole cycle shares one stats_report, so either ALL hypotheses take
+        # the primary (M2 e-BH-corrected) path or ALL take the label-free
+        # fallback. On the fallback path the family is every hypothesis, so each
+        # directional verdict must clear a Bonferroni-corrected significance
+        # level (alpha / family) — otherwise best-of-N over the fallback would
+        # manufacture SUPPORTED verdicts the primary path's e-BH would have
+        # blocked.
+        on_fallback = not list(getattr(stats_report, "stats_results", None) or [])
+        family_size = len(hypotheses) if on_fallback else 1
+
         results: list[HypothesisTestResult] = []
         for h in hypotheses:
-            result = self._test_one(h, stats_report, data, protocol)
+            result = self._test_one(h, stats_report, data, protocol, family_size)
             results.append(result)
         return results
 
@@ -271,6 +281,7 @@ class HypothesisTester:
         stats_report: "StatsAnalysisReport",
         data: CaseBatch,
         protocol: "ExperimentProtocol | None",
+        family_size: int = 1,
     ) -> HypothesisTestResult:
         """Test a single hypothesis.
 
@@ -283,7 +294,7 @@ class HypothesisTester:
         if stats_results:
             core = self._verdict_from_stats_results(hypothesis, stats_report, stats_results)
         else:
-            core = self._verdict_fallback(hypothesis, stats_report, data)
+            core = self._verdict_fallback(hypothesis, stats_report, data, family_size)
 
         status: HypothesisStatus = core["status"]
         verdict: str = core["verdict"]
@@ -451,8 +462,16 @@ class HypothesisTester:
         hypothesis: Hypothesis,
         stats_report: "StatsAnalysisReport",
         data: CaseBatch,
+        family_size: int = 1,
     ) -> dict[str, Any]:
-        """Rigorous bootstrap comparison when M2 supplied no stats_results."""
+        """Rigorous bootstrap comparison when M2 supplied no stats_results.
+
+        ``family_size`` is the number of hypotheses sharing this fallback cycle;
+        a directional verdict must be significant at the Bonferroni-corrected
+        level ``alpha / family_size`` (FWER control over the fallback family,
+        the unpaired-CI analogue of the primary path's e-BH). At ``family_size=1``
+        the correction is a no-op.
+        """
         signal = _extract_per_case_signals(stats_report.raw_results)
         signal_source = "analyzer_per_case"
         if not signal:
@@ -485,24 +504,39 @@ class HypothesisTester:
 
         # Rigorous, effect-sized verdict (clustered bootstrap CI) — replaces the
         # old hand-computed proportion difference + geometric-mean confidence.
+        # The CI is taken at the Bonferroni-corrected level so a directional
+        # verdict is significant across the whole fallback family, not just on
+        # its own (best-of-N over hypotheses would otherwise inflate SUPPORTED).
+        corrected_alpha = self.alpha / max(1, family_size)
         sr = compare(
             fail_control, fail_signal, paired=False,
-            alpha=self.alpha, min_effect=self.min_effect,
+            alpha=corrected_alpha, min_effect=self.min_effect,
         )
         effect_size = round(sr.effect, 4)
-        confidence = _confidence_from_stat(sr.effect, sr.ci, sr.e_value, sr.underpowered, self.alpha)
+        confidence = _confidence_from_stat(
+            sr.effect, sr.ci, sr.e_value, sr.underpowered, corrected_alpha)
+        # A directional verdict requires BOTH a meaningful effect AND significance
+        # (CI excludes 0) at the family-corrected level.
+        significant = sr.reject
 
-        if effect_size > self.min_effect:
+        if effect_size > self.min_effect and significant:
             status = HypothesisStatus.SUPPORTED
             verdict = (
                 f"Signal group fails {effect_size:.0%} more than control "
                 f"({sr.summary()})."
             )
-        elif effect_size < -self.min_effect:
+        elif effect_size < -self.min_effect and significant:
             status = HypothesisStatus.REFUTED
             verdict = (
                 f"Signal group fails less than control "
                 f"(effect={effect_size:.0%}); hypothesis refuted."
+            )
+        elif abs(effect_size) > self.min_effect and not significant:
+            status = HypothesisStatus.INCONCLUSIVE
+            verdict = (
+                f"Effect {effect_size:.0%} but CI includes 0 at the "
+                f"family-corrected level (alpha={corrected_alpha:.4g} over "
+                f"{family_size} hypotheses) — best-of-N multiplicity, inconclusive."
             )
         else:
             status = HypothesisStatus.INCONCLUSIVE
@@ -522,6 +556,9 @@ class HypothesisTester:
             "ci": list(sr.ci),
             "underpowered": sr.underpowered,
             "method": sr.method,
+            "significant": significant,
+            "family_size": family_size,
+            "corrected_alpha": corrected_alpha,
         }
         return {
             "status": status,
