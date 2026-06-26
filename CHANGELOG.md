@@ -86,7 +86,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   strategy — never re-running an identical candidate (candidate dedup via
   `FixAgent._signature`), never raising the tier automatically.
 
-- **`examples/deco_hallu/`** (from the `jiaqiliu` merge): POPE hallucination
+- **`examples/diagnosis_loops/deco_hallu/`** (from the `jiaqiliu` merge): POPE hallucination
   slice example with a no-free-lunch guard.
 
 ### Fixed

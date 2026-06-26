@@ -1,0 +1,8 @@
+services:
+  hallucination:
+    build:
+      context: ../../..
+      dockerfile: examples/analyzer_demos/hallucination/Dockerfile
+    image: evalvitals-hallucination
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}

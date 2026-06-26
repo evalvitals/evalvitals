@@ -1,6 +1,0 @@
-services:
-  stats_compare:
-    build:
-      context: ../..
-      dockerfile: examples/stats_compare/Dockerfile
-    image: evalvitals-stats-compare

@@ -444,7 +444,9 @@ report = loop.run(cases)
 print(report.final_hypotheses)
 ```
 
-3. **Add a Dockerfile + docker-compose.yml** mirroring any `examples/` subdirectory.
+3. **Add a Dockerfile + docker-compose.yml** mirroring one of the concrete
+   example directories under `examples/analyzer_demos/`, `examples/m2_statistics/`, or
+   `examples/diagnosis_loops/`.
 
 4. **Submit the container:**
 
@@ -455,7 +457,7 @@ docker compose up
 Outputs (logs, analyzer artifacts, hypotheses) are written to `outputs/` in the
 container, mounted to your local directory via the compose volume.
 
-See `examples/qwen_loop_agy/` and `examples/qwen_video_temporal/` for complete
+See `examples/diagnosis_loops/qwen_loop_agy/` and `examples/diagnosis_loops/qwen_video_temporal/` for complete
 working examples.
 
 ---
@@ -748,16 +750,19 @@ pytest --run-gpu
 
 ## Docker examples
 
-Each `examples/` subdirectory has its own `docker-compose.yml`:
+Examples are grouped by layer: `examples/analyzer_demos/` for direct analyzer demos,
+`examples/m2_statistics/` for standalone M2/statistical demos, and `examples/diagnosis_loops/`
+for full diagnosis loop demos. Each concrete example directory has its own
+`docker-compose.yml`:
 
 ```bash
-cd examples/qwen_attention       && docker compose up   # attention analysis on a text LLM
-cd examples/hallucination        && docker compose up   # POPE / CHAIR hallucination
-cd examples/mm_shap              && docker compose up   # multimodal SHAP attribution
-cd examples/logprob_entropy      && docker compose up   # logprob uncertainty
-cd examples/stats_compare        && docker compose up   # A/B statistical comparison
-cd examples/eval_agent           && docker compose up   # AutoDiagnoseLoop M1→M4
-cd examples/qwen_loop_agy        && docker compose up   # VLDiagnoseLoop M1→M5 (VLM)
-cd examples/qwen_video_temporal  && docker compose up   # video temporal diagnosis
-cd examples/vlm_research_topics  && docker compose up   # research topic discovery
+cd examples/analyzer_demos/qwen_attention       && docker compose up   # attention analysis on a text LLM
+cd examples/analyzer_demos/hallucination        && docker compose up   # POPE / CHAIR hallucination
+cd examples/analyzer_demos/mm_shap              && docker compose up   # multimodal SHAP attribution
+cd examples/analyzer_demos/logprob_entropy      && docker compose up   # logprob uncertainty
+cd examples/m2_statistics/stats_compare         && docker compose up   # A/B statistical comparison
+cd examples/diagnosis_loops/eval_agent          && docker compose up   # AutoDiagnoseLoop M1→M4
+cd examples/diagnosis_loops/qwen_loop_agy       && docker compose up   # VLDiagnoseLoop M1→M5 (VLM)
+cd examples/diagnosis_loops/qwen_video_temporal && docker compose up   # video temporal diagnosis
+cd examples/diagnosis_loops/vlm_research_topics && docker compose up   # research topic discovery
 ```
