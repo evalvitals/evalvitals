@@ -40,10 +40,13 @@ Write a self-contained Python script that:
 - reads "{input_filename}" from the current working directory
 - explores patterns relevant to the question
 - may use only local Python packages; no network and no repo mutation
-- may write plots under a local "figures/" directory
+- when useful, writes summary tables under a local "tables/" directory as CSV
+- when useful, writes plots under a local "figures/" directory as PNG
+- when useful, returns chart specs in "charts": each spec should include
+  {{"name", "kind", "data", "x", "y", "title"}} where data points to a CSV table
 - does NOT claim causal/statistical confirmation; this is exploratory only
 - prints the final result as the LAST stdout line exactly like:
-  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "..."}}], "plots": ["figures/name.png"], "tables": {{}}, "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "..."}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
 
 Return ONLY the Python code{fences_hint}."""
 
@@ -100,6 +103,7 @@ class ExploratoryAnalysisReport:
     candidate_signals: list[CandidateSignal] = field(default_factory=list)
     plots: list[str] = field(default_factory=list)
     tables: dict[str, Any] = field(default_factory=dict)
+    charts: list[dict[str, Any]] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
     recommended_confirmatory_tests: list[str] = field(default_factory=list)
     data_profile: dict[str, Any] = field(default_factory=dict)
@@ -123,6 +127,7 @@ class ExploratoryAnalysisReport:
             "candidate_signals": [s.to_dict() for s in self.candidate_signals],
             "plots": self.plots,
             "tables": self.tables,
+            "charts": self.charts,
             "caveats": self.caveats,
             "recommended_confirmatory_tests": self.recommended_confirmatory_tests,
             "data_profile": self.data_profile,
@@ -547,6 +552,7 @@ def _report_from_sandbox(
             candidate_signals=signals,
             plots=plots,
             tables=dict(parsed.get("tables", {}) or {}),
+            charts=[dict(x) for x in parsed.get("charts", []) or [] if isinstance(x, dict)],
             caveats=[str(x) for x in parsed.get("caveats", []) or []],
             recommended_confirmatory_tests=[
                 str(x) for x in parsed.get("recommended_confirmatory_tests", []) or []

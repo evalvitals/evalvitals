@@ -51,6 +51,10 @@ data = [
     "pillow>=9.0",
 ]
 viz = ["matplotlib>=3.7"]
+dashboard = [
+    "streamlit>=1.30",
+    "pandas>=2.0",
+]
 gemini = ["google-genai>=1.0"]
 all = [
     "torch>=2.0.0",
@@ -61,6 +65,8 @@ all = [
     "inseq>=0.6",
     "nnsight>=0.3",
     "matplotlib>=3.7",
+    "streamlit>=1.30",
+    "pandas>=2.0",
 ]
 dev = [
     "pytest>=8.0",

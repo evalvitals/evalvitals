@@ -21,6 +21,13 @@ def test_top_level_chat_help(capsys):
     assert "Start an interactive EvalVitals chat session" in capsys.readouterr().out
 
 
+def test_top_level_dashboard_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["dashboard", "--help"])
+    assert exc.value.code == 0
+    assert "Streamlit dashboard" in capsys.readouterr().out
+
+
 def test_m2_compat_help(capsys):
     with pytest.raises(SystemExit) as exc:
         chat_main(["--help"])

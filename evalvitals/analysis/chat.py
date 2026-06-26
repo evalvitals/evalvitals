@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,7 @@ class M2ChatShell:
 
 def write_report_artifacts(report: Any, out_dir: Path) -> None:
     """Persist one chat/explore turn's artifacts."""
+    _copy_artifact_dirs(report, out_dir)
     (out_dir / "exploratory_report.json").write_text(
         json.dumps(report.to_dict(), indent=2, default=str),
         encoding="utf-8",
@@ -173,3 +175,16 @@ def write_report_artifacts(report: Any, out_dir: Path) -> None:
             "\n\n--- attempt ---\n\n".join(report.raw_outputs),
             encoding="utf-8",
         )
+
+
+def _copy_artifact_dirs(report: Any, out_dir: Path) -> None:
+    workdir = Path(getattr(report, "workdir", "") or "")
+    if not workdir.exists():
+        return
+    for name in ("figures", "tables"):
+        src = workdir / name
+        dest = out_dir / name
+        if src.exists() and src.is_dir():
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(src, dest)

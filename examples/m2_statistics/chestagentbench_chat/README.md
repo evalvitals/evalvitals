@@ -45,6 +45,13 @@ Each turn writes:
 <out>/turn_001/agent_raw_output.txt
 ```
 
+Open the optional Streamlit dashboard:
+
+```bash
+pip install -e ".[dashboard]"
+evalvitals dashboard /tealab-data/rjin02/MedRAX/logs/202607/chestagentbench_m2_chat
+```
+
 By default, `tool_calls_*.json` files are skipped because they dominate the log
 volume. Add `--include-tool-calls` when you specifically want tool-call-level
 analysis.

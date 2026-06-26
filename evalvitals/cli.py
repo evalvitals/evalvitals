@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from evalvitals.analysis.chat import M2ChatConfig, M2ChatShell
+from evalvitals.analysis.dashboard import launch_dashboard
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,6 +48,14 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--timeout-sec", type=int, default=120)
     chat.add_argument("--max-attempts", type=int, default=2)
 
+    dashboard = sub.add_parser(
+        "dashboard",
+        help="Open a Streamlit dashboard for a chat/session output directory.",
+        description="Open a Streamlit dashboard for EvalVitals chat artifacts.",
+    )
+    dashboard.add_argument("session_dir", help="Directory containing turn_*/ artifacts.")
+    dashboard.add_argument("--port", type=int, default=None, help="Optional Streamlit port.")
+
     args = parser.parse_args(argv)
     if args.command == "chat":
         if not args.path:
@@ -66,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
                 prompt="evalvitals",
             )
         ).run()
+    if args.command == "dashboard":
+        return launch_dashboard(args.session_dir, port=args.port)
 
     parser.print_help()
     return 0

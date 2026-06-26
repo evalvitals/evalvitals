@@ -345,6 +345,13 @@ report surfaces candidate signals; run `StatsAnalysisAgent` on promoted signals
 when you need confirmatory effect/CI/e-value/FDR verdicts. For one-shot batch
 mode, use `evalvitals-m2-explore`.
 
+To inspect a chat session as a Streamlit dashboard:
+
+```bash
+pip install -e ".[dashboard]"
+evalvitals dashboard m2_chat_output
+```
+
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 
 1. *Statistical support* — does the signal group fail at a significantly higher
