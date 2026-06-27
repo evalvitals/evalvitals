@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from evalvitals.analysis.adjudicate import adjudicate_report
 from evalvitals.analysis.explorer import M2ExplorerAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
@@ -112,6 +113,10 @@ class M2ChatShell:
             max_files=self.config.max_files,
             include_tool_calls=self.config.include_tool_calls,
         )
+        # Host adjudication: any candidate that attached `sufficient` gets a
+        # verdict recomputed by the validated core (the explorer never decides).
+        # Standalone chat has no held-out split, so verdicts are flagged IN-SAMPLE.
+        adjudicate_report(report, split_label="in_sample")
         write_report_artifacts(report, turn_dir)
         self.history.append({
             "turn": self.turn,
@@ -119,6 +124,7 @@ class M2ChatShell:
             "ok": report.ok,
             "observations": report.observations[:5],
             "candidate_signals": report.candidate_signal_names[:8],
+            "adjudication": report.adjudication,
             "out_dir": str(turn_dir),
         })
         self._write_history()
@@ -132,7 +138,14 @@ class M2ChatShell:
         if report.candidate_signals:
             print("\ncandidate signals:")
             for signal in report.candidate_signals[:8]:
-                print(f"- {signal.name}: {signal.rationale}")
+                print(f"- {signal.name}: {signal.rationale}{_verdict_suffix(signal)}")
+        if report.adjudication:
+            adj = report.adjudication
+            print(
+                f"\nhost adjudication ({adj.get('split')}): "
+                f"{adj.get('n_rejected', 0)}/{adj.get('n_host_adjudicated', 0)} reject "
+                f"(e-BH family n={adj.get('n_in_family', 0)}, alpha={adj.get('alpha')})"
+            )
 
     def _question_with_history(self, question: str) -> str:
         if not self.history:
@@ -155,6 +168,20 @@ class M2ChatShell:
             json.dumps(self.history, indent=2, default=str),
             encoding="utf-8",
         )
+
+
+def _verdict_suffix(signal: Any) -> str:
+    """One-line host verdict tag for a candidate signal, or '' if not adjudicated."""
+    if not getattr(signal, "host_adjudicated", False):
+        return "  [descriptive]" if getattr(signal, "sufficient", None) else ""
+    verdict = "REJECT H0" if signal.reject else "inconclusive"
+    parts = [verdict]
+    if signal.e_value is not None:
+        parts.append(f"e={signal.e_value:.2f}")
+        parts.append("e-BH" if signal.fdr_corrected else "uncorrected")
+    elif signal.ci is not None:
+        parts.append(f"CI={signal.ci[0]:+.3f}..{signal.ci[1]:+.3f}")
+    return "  [host: " + ", ".join(parts) + "]"
 
 
 def write_report_artifacts(report: Any, out_dir: Path) -> None:

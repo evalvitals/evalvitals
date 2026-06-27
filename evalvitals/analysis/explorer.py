@@ -45,8 +45,15 @@ Write a self-contained Python script that:
 - when useful, returns chart specs in "charts": each spec should include
   {{"name", "kind", "data", "x", "y", "title"}} where data points to a CSV table
 - does NOT claim causal/statistical confirmation; this is exploratory only
+- for a candidate signal you want CONFIRMED, you MAY attach host-adjudicable
+  "sufficient" statistics computed from the rows, as ONE of these shapes:
+    {{"kind": "two_group", "a": [0/1, ...], "b": [0/1, ...]}}   # is_fail indicators among signal-ABSENT (a) vs signal-PRESENT (b) cases
+    {{"kind": "paired_binary", "b": <int>, "c": <int>}}          # discordant counts of a paired intervention (b = flips the good way, c = the bad way)
+  Do NOT emit "reject"/"e_value"/"p_value" anywhere — the HOST recomputes the
+  verdict from "sufficient" with its validated, multiplicity-aware core; a
+  self-declared verdict is ignored. Omit "sufficient" for descriptive-only signals.
 - prints the final result as the LAST stdout line exactly like:
-  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "..."}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "sufficient": {{"kind": "two_group", "a": [0, 0], "b": [1, 1]}}}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
 
 Return ONLY the Python code{fences_hint}."""
 
@@ -79,17 +86,48 @@ Rewrite the script. It must read "{input_filename}" and print a final
 
 @dataclass
 class CandidateSignal:
-    """A signal worth testing later in confirmatory M2."""
+    """A signal worth testing later in confirmatory M2.
+
+    The explorer PROPOSES this signal; it has no adjudication authority. When the
+    explorer attaches host-adjudicable ``sufficient`` statistics, the host
+    (:func:`evalvitals.analysis.adjudicate.adjudicate_report`) recomputes the
+    verdict with the validated, multiplicity-aware core and fills in the
+    ``effect`` / ``ci`` / ``e_value`` / ``reject`` / ``host_adjudicated`` fields.
+    Any ``reject`` / ``e_value`` the explorer self-declares is IGNORED — proposing
+    is not validating; only ``sufficient`` (or, in Phase B, ``recipe``) is read.
+    """
 
     name: str
     rationale: str = ""
     suggested_test: str = ""
+    # --- proposed by the explorer (no authority over the verdict) ---
+    sufficient: dict[str, Any] | None = None  # host-adjudicable sufficient stats
+    recipe: dict[str, Any] | None = None       # Phase B operationalization recipe
+    # --- filled in by the host adjudication pass (authoritative) ---
+    effect: float | None = None
+    ci: tuple[float, float] | None = None
+    e_value: float | None = None
+    reject: bool | None = None
+    underpowered: bool = False
+    host_adjudicated: bool = False
+    fdr_corrected: bool = False
+    descriptive_only: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "rationale": self.rationale,
             "suggested_test": self.suggested_test,
+            "sufficient": self.sufficient,
+            "recipe": self.recipe,
+            "effect": self.effect,
+            "ci": list(self.ci) if self.ci is not None else None,
+            "e_value": self.e_value,
+            "reject": self.reject,
+            "underpowered": self.underpowered,
+            "host_adjudicated": self.host_adjudicated,
+            "fdr_corrected": self.fdr_corrected,
+            "descriptive_only": self.descriptive_only,
         }
 
 
@@ -107,6 +145,9 @@ class ExploratoryAnalysisReport:
     caveats: list[str] = field(default_factory=list)
     recommended_confirmatory_tests: list[str] = field(default_factory=list)
     data_profile: dict[str, Any] = field(default_factory=dict)
+    # Host adjudication family metadata (method/alpha/split/n_in_family/rejected),
+    # filled by evalvitals.analysis.adjudicate; empty until adjudicated.
+    adjudication: dict[str, Any] = field(default_factory=dict)
     code: str = ""
     stdout: str = ""
     stderr: str = ""
@@ -131,6 +172,7 @@ class ExploratoryAnalysisReport:
             "caveats": self.caveats,
             "recommended_confirmatory_tests": self.recommended_confirmatory_tests,
             "data_profile": self.data_profile,
+            "adjudication": self.adjudication,
             "code": self.code,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -540,6 +582,8 @@ def _report_from_sandbox(
             name=str(item.get("name", "")),
             rationale=str(item.get("rationale", "")),
             suggested_test=str(item.get("suggested_test", "")),
+            sufficient=item["sufficient"] if isinstance(item.get("sufficient"), dict) else None,
+            recipe=item["recipe"] if isinstance(item.get("recipe"), dict) else None,
         )
         for item in parsed.get("candidate_signals", []) or []
         if isinstance(item, dict) and item.get("name")
