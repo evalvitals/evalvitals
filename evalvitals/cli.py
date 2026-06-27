@@ -47,6 +47,22 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--include-tool-calls", action="store_true")
     chat.add_argument("--timeout-sec", type=int, default=120)
     chat.add_argument("--max-attempts", type=int, default=2)
+    chat.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Open the Streamlit dashboard after the first completed chat turn.",
+    )
+    chat.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="Optional Streamlit port for --dashboard.",
+    )
+    chat.add_argument(
+        "--no-dashboard-browser",
+        action="store_true",
+        help="Start --dashboard without asking Streamlit to open a browser.",
+    )
 
     dashboard = sub.add_parser(
         "dashboard",
@@ -73,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_sec=args.timeout_sec,
                 max_attempts=args.max_attempts,
                 prompt="evalvitals",
+                dashboard=args.dashboard,
+                dashboard_port=args.dashboard_port,
+                dashboard_browser=not args.no_dashboard_browser,
             )
         ).run()
     if args.command == "dashboard":

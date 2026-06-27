@@ -38,6 +38,7 @@ Point the chat CLI at a file or directory containing JSON/JSONL results:
 evalvitals chat /path/to/results \
   --backend antigravity \
   --out m2_chat_output \
+  --dashboard \
   --max-rows 2000 \
   --max-files 200
 ```
@@ -61,6 +62,7 @@ Useful REPL commands:
 :help      show commands
 :status    show loaded data and output directory
 :history   show prior turns
+:dashboard open the Streamlit dashboard for this session
 :quit      exit
 ```
 
@@ -106,9 +108,9 @@ Open a Streamlit dashboard over a chat output directory:
 evalvitals dashboard m2_chat_output --port 8501
 ```
 
-The dashboard reads the saved artifacts; it does not re-run the agent. Use it to
-review multi-turn analyses, generated figures, tables, and the exact generated
-code for each turn.
+The dashboard reads the saved artifacts; it does not re-run the agent. Use
+`evalvitals chat --dashboard` to open it automatically after the first completed
+turn, or `:dashboard` inside the chat to open it manually.
 
 ## One-Shot Explore
 

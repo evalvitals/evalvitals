@@ -115,6 +115,22 @@ def chat_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--timeout-sec", type=int, default=120, help="Sandbox/agent timeout.")
     parser.add_argument("--max-attempts", type=int, default=2, help="Code repair attempts.")
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Open the Streamlit dashboard after the first completed chat turn.",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="Optional Streamlit port for --dashboard.",
+    )
+    parser.add_argument(
+        "--no-dashboard-browser",
+        action="store_true",
+        help="Start --dashboard without asking Streamlit to open a browser.",
+    )
     args = parser.parse_args(argv)
 
     return M2ChatShell(
@@ -130,6 +146,9 @@ def chat_main(argv: list[str] | None = None) -> int:
             timeout_sec=args.timeout_sec,
             max_attempts=args.max_attempts,
             prompt="m2",
+            dashboard=args.dashboard,
+            dashboard_port=args.dashboard_port,
+            dashboard_browser=not args.no_dashboard_browser,
         )
     ).run()
 

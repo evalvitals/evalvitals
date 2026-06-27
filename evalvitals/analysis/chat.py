@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from evalvitals.analysis.dashboard import DashboardHandle, start_dashboard
 from evalvitals.analysis.explorer import M2ExplorerAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
@@ -28,6 +29,9 @@ class M2ChatConfig:
     timeout_sec: int = 120
     max_attempts: int = 2
     prompt: str = "evalvitals"
+    dashboard: bool = False
+    dashboard_port: int | None = None
+    dashboard_browser: bool = True
 
 
 class M2ChatShell:
@@ -39,6 +43,7 @@ class M2ChatShell:
         self.out_root.mkdir(parents=True, exist_ok=True)
         self.history: list[dict[str, Any]] = []
         self.turn = 0
+        self.dashboard_handle: DashboardHandle | None = None
         self.cli_config = CliAgentConfig(
             provider=config.coder_provider,
             binary_path=config.coder_binary,
@@ -51,6 +56,8 @@ class M2ChatShell:
         print("mode: explore")
         print(f"data: {Path(self.config.path).resolve()}")
         print(f"out : {self.out_root}")
+        if self.config.dashboard:
+            print("dashboard: will open after the first completed turn")
         print("Type a question, or :help / :quit.")
 
         while True:
@@ -78,7 +85,10 @@ class M2ChatShell:
             print("  Which failure patterns distinguish wrong answers from correct answers?")
             print("  Compare models by accuracy and tool usage.")
             print("  Find candidate signals I should confirm with StatsAnalysisAgent.")
-            print("Commands: :help, :history, :status, :quit")
+            print("Commands: :help, :history, :status, :dashboard, :quit")
+            return True
+        if text == ":dashboard":
+            self._open_dashboard()
             return True
         if text == ":history":
             for item in self.history:
@@ -90,6 +100,10 @@ class M2ChatShell:
             print(f"out : {self.out_root}")
             print(f"turns: {len(self.history)}")
             print(f"backend: {self.config.coder_provider}")
+            if self.dashboard_handle and self.dashboard_handle.process.poll() is None:
+                print(f"dashboard: {self.dashboard_handle.url}")
+            elif self.config.dashboard:
+                print("dashboard: pending first turn")
             return True
         return False
 
@@ -133,6 +147,22 @@ class M2ChatShell:
             print("\ncandidate signals:")
             for signal in report.candidate_signals[:8]:
                 print(f"- {signal.name}: {signal.rationale}")
+        if self.config.dashboard:
+            self._open_dashboard()
+
+    def _open_dashboard(self) -> None:
+        if self.dashboard_handle and self.dashboard_handle.process.poll() is None:
+            print(f"dashboard: already running at {self.dashboard_handle.url}")
+            return
+        handle = start_dashboard(
+            self.out_root,
+            port=self.config.dashboard_port,
+            open_browser=self.config.dashboard_browser,
+        )
+        if handle is None:
+            return
+        self.dashboard_handle = handle
+        print(f"dashboard: {handle.url} (pid {handle.process.pid})")
 
     def _question_with_history(self, question: str) -> str:
         if not self.history:

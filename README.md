@@ -336,7 +336,8 @@ the local M2 chat backend:
 ```bash
 evalvitals chat /path/to/results \
   --backend antigravity \
-  --out m2_chat_output
+  --out m2_chat_output \
+  --dashboard
 ```
 
 Each chat turn writes `exploratory_report.json`, the generated `analysis.py`,
@@ -345,7 +346,9 @@ report surfaces candidate signals; run `StatsAnalysisAgent` on promoted signals
 when you need confirmatory effect/CI/e-value/FDR verdicts. For one-shot batch
 mode, use `evalvitals-m2-explore`.
 
-To inspect a chat session as a Streamlit dashboard:
+With `--dashboard`, the Streamlit dashboard opens after the first completed
+chat turn and keeps reading the saved artifacts as the session grows. To inspect
+an existing chat session later:
 
 ```bash
 pip install -e ".[dashboard]"
