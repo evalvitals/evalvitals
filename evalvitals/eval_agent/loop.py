@@ -797,24 +797,34 @@ class VLDiagnoseLoop:
         recipes are configured. Never raises into the loop."""
         if not self._signal_recipes:
             return
+        # Never silently overwrite a real analyzer that already used this key.
+        name = self._bridge_analyzer_name
+        if name in probe_results:
+            base, n = name, 1
+            while name in probe_results:
+                name, n = f"{base}_bridge{n}", n + 1
+            logger.warning(
+                "bridge analyzer name %r collides with a real analyzer; "
+                "injecting under %r instead", base, name,
+            )
         try:
             from evalvitals.analysis.operationalize import bridge_recipes_to_result
 
             synth = bridge_recipes_to_result(
                 self._signal_recipes, probe_results, data,
                 model_repr=repr(self.model),
-                analyzer_name=self._bridge_analyzer_name,
+                analyzer_name=name,
             )
         except Exception as exc:  # bridging must never sink the loop
             logger.warning("signal bridge failed: %s", exc)
             return
         if synth is None:
             return
-        probe_results[self._bridge_analyzer_name] = synth
+        probe_results[name] = synth
         self.store.add_result(synth)
         logger.info(
             "bridged %d signal row(s) into M2 as analyzer %r",
-            len(synth.findings.get("per_case", [])), self._bridge_analyzer_name,
+            len(synth.findings.get("per_case", [])), name,
         )
 
     # ──────────────────────────────────────────────────────────────────

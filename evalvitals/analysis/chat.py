@@ -177,10 +177,11 @@ def _verdict_suffix(signal: Any) -> str:
     verdict = "REJECT H0" if signal.reject else "inconclusive"
     parts = [verdict]
     if signal.e_value is not None:
+        # In the e-BH family (has an e-value); reject already reflects survival.
         parts.append(f"e={signal.e_value:.2f}")
-        parts.append("e-BH" if signal.fdr_corrected else "uncorrected")
+        parts.append("e-BH family")
     elif signal.ci is not None:
-        parts.append(f"CI={signal.ci[0]:+.3f}..{signal.ci[1]:+.3f}")
+        parts.append(f"CI={signal.ci[0]:+.3f}..{signal.ci[1]:+.3f} (not FDR-corrected)")
     return "  [host: " + ", ".join(parts) + "]"
 
 

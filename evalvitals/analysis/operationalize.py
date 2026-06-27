@@ -28,10 +28,22 @@ wraps that into a synthetic-analyzer ``findings["per_case"]`` entry so
 from __future__ import annotations
 
 import ast
+import logging
 import operator
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# A recipe expr may NEVER reference the outcome/id columns: a signal that IS the
+# label (or trivially derived from it) would perfectly "predict" FAIL — a
+# self-prediction leak. records/per_case_to_records may carry these columns, so the
+# DSL hard-rejects any expr that names one (defense regardless of what the rows hold).
+_RESERVED_RECIPE_NAMES = frozenset({
+    "label", "labels", "case_id", "id", "sample_id",
+    "is_fail", "is_correct", "outcome", "y_true", "target", "gold",
+})
 
 # ---------------------------------------------------------------------------
 # Recipe data contract
@@ -240,6 +252,16 @@ def compile_recipe(
     _validate(tree)
     names = _free_names(tree)
 
+    # Hard leak guard (G4): a recipe must be a function of PREDICTOR signals only,
+    # never the outcome/id. Referencing the label column would make the signal the
+    # label itself — a guaranteed double-dip self-prediction.
+    reserved = _RESERVED_RECIPE_NAMES | {id_col}
+    leaked = sorted(n for n in names if n in reserved)
+    if leaked:
+        raise RecipeError(
+            f"recipe expr may not reference reserved outcome/id column(s): {leaked}"
+        )
+
     out: dict[str, float] = {}
     for i, row in enumerate(records or []):
         env: dict[str, Any] = {}
@@ -277,6 +299,14 @@ def compile_recipes(
     out: dict[str, dict[str, float]] = {}
     for r in recipes:
         if r.kind != "expr":
+            continue
+        if r.name in out:
+            # Duplicate recipe name would silently clobber the first signal — keep
+            # the first, drop the rest, and say so rather than corrupt the family.
+            logger.warning(
+                "compile_recipes: duplicate recipe name %r — keeping the first, "
+                "dropping the duplicate", r.name,
+            )
             continue
         try:
             values = compile_recipe(r, records, id_col=id_col)
@@ -328,7 +358,30 @@ def per_case_to_records(
     them. Each row carries only the signals present for that case (missing ones are
     absent, so a recipe referencing a missing signal SKIPS that case). When *labels*
     is given, a ``pass``/``fail`` ``label`` column is added.
+
+    ``safe_ident`` is not injective (``a.b`` and ``a_b`` both map to ``a_b``). When
+    two DISTINCT signal keys collide on their sanitized identifier, the mapping is
+    ambiguous, so BOTH are EXCLUDED (never first-wins-overwrite, which would silently
+    test the wrong estimand) and a warning is logged. A recipe referencing the
+    ambiguous name then finds nothing and is dropped — fail-closed, not corrupt.
     """
+    # Identify safe_ident collisions among distinct signal keys; exclude them.
+    ident_owner: dict[str, str] = {}
+    collided: set[str] = set()
+    for signal in per_case:
+        ident = safe_ident(signal)
+        prior = ident_owner.get(ident)
+        if prior is not None and prior != signal:
+            collided.add(ident)
+        else:
+            ident_owner[ident] = signal
+    if collided:
+        clashing = sorted(s for s in per_case if safe_ident(s) in collided)
+        logger.warning(
+            "per_case_to_records: %d signal key(s) collide under safe_ident and are "
+            "EXCLUDED (ambiguous): %s", len(clashing), clashing,
+        )
+
     case_ids: set[str] = set()
     for vals in per_case.values():
         case_ids.update(vals)
@@ -339,8 +392,11 @@ def per_case_to_records(
     for cid in sorted(case_ids):
         row: dict[str, Any] = {id_key: cid}
         for signal, vals in per_case.items():
+            ident = safe_ident(signal)
+            if ident in collided:
+                continue
             if cid in vals:
-                row[safe_ident(signal)] = vals[cid]
+                row[ident] = vals[cid]
         if labels is not None and cid in labels:
             row[label_key] = "fail" if labels[cid] else "pass"
         records.append(row)
@@ -372,7 +428,9 @@ def bridge_recipes_to_result(
     from evalvitals.eval_agent.stages.stats_tools import build_stats_input
 
     inp = build_stats_input(probe_results, data)
-    records = per_case_to_records(inp.per_case, inp.labels, id_key=id_col)
+    # Compile over PREDICTOR signals only — never expose the label to recipe
+    # compilation (a recipe is a function of signals, not the outcome).
+    records = per_case_to_records(inp.per_case, labels=None, id_key=id_col)
     compiled = compile_recipes(recipes, records, id_col=id_col)
     if not compiled:
         return None

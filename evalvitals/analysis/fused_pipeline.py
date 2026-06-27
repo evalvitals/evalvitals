@@ -243,8 +243,27 @@ def run_fused_analysis(
     confirm_inp = build_stats_input_from_records(
         confirm_rows, id_col=id_col, label_col=label_col
     )
+    catalog_confirm = set(confirm_inp.per_case)  # real catalog columns on CONFIRM
+    bridged_keys: set[str] = set()               # final per_case keys for bridged signals
+    bridged_origin: dict[str, str] = {}          # final key -> originating recipe name
+    collisions: list[str] = []
     for name, values in bridged.items():
-        confirm_inp.per_case[name] = values
+        key = name
+        if key in catalog_confirm:
+            # A bridged recipe must NEVER silently overwrite a real catalog column —
+            # that would test a DIFFERENT estimand under the same name. Namespace it.
+            key = f"bridged.{name}"
+            while key in confirm_inp.per_case:
+                key = f"_{key}"
+            collisions.append(name)
+        confirm_inp.per_case[key] = values
+        bridged_keys.add(key)
+        bridged_origin[key] = name
+    if collisions:
+        report.caveats.append(
+            "bridged recipe name(s) collided with catalog column(s) and were "
+            f"namespaced to avoid overwriting a real signal: {sorted(collisions)}"
+        )
 
     if stats_agent is None:
         from evalvitals.analysis.stats_agent import StatsAnalysisAgent
@@ -265,12 +284,13 @@ def run_fused_analysis(
     verdict_by_signal = _verdicts_by_signal(getattr(confirm_report, "stats_results", []))
     for name in confirm_inp.per_case:
         result = verdict_by_signal.get(name)
+        origin = bridged_origin.get(name, name)  # recipe name for a (possibly renamed) bridged key
         report.candidate_signals.append(
             _fused_signal(
                 name=name,
-                source=_source_of(name, catalog_names, bridged, explorer_named),
-                description=_describe(name, explorer_named, bridged),
-                suggested_test=_suggested_test(name, explorer_named),
+                source=_source_of(name, catalog_names, bridged_keys, explorer_named),
+                description=_describe(name, origin, explorer_named, bridged_keys),
+                suggested_test=_suggested_test(origin, explorer_named),
                 result=result,
                 rejected_tools=rejected_tools,
                 confirmed_on=confirm_label,
@@ -382,26 +402,31 @@ def _fused_signal(
 def _source_of(
     name: str,
     catalog_names: set[str],
-    bridged: dict[str, Any],
+    bridged_keys: set[str],
     explorer_named: dict[str, Any],
 ) -> str:
-    in_bridged = name in bridged
+    in_bridged = name in bridged_keys
     in_catalog = name in catalog_names
     pointed = name in explorer_named
-    if in_bridged and in_catalog:
-        return "both"
+    # A bridged key is namespaced away from catalog columns, so a bridged signal is
+    # purely explorer-sourced; "both" is reserved for the explorer naming a real column.
     if in_bridged:
-        return "explorer"
+        return "both" if in_catalog else "explorer"
     if in_catalog and pointed:
         return "both"
     return "catalog"
 
 
-def _describe(name: str, explorer_named: dict[str, Any], bridged: dict[str, Any]) -> str:
-    c = explorer_named.get(name)
+def _describe(
+    name: str,
+    origin: str,
+    explorer_named: dict[str, Any],
+    bridged_keys: set[str],
+) -> str:
+    c = explorer_named.get(origin) or explorer_named.get(name)
     if c is not None and getattr(c, "rationale", ""):
         return c.rationale
-    if name in bridged:
+    if name in bridged_keys:
         return "bridged explorer signal"
     return "existing per-case column"
 

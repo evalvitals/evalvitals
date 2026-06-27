@@ -104,8 +104,13 @@ def adjudicate_signals(
         if not c.host_adjudicated:
             continue
         if c.e_value is not None:
-            c.fdr_corrected = True
+            # In the e-BH family. `reject` IS the e-BH outcome; `fdr_corrected`
+            # means "this rejection is FDR-controlled" — True ONLY when it survived
+            # e-BH (matches fused_pipeline; a family member that did not survive is
+            # reject=False, fdr_corrected=False). Family membership is recoverable
+            # from `e_value is not None`, so no information is lost.
             c.reject = family_key.get(i) in rejected_keys
+            c.fdr_corrected = bool(c.reject)
         else:
             # two_group: CI-based reject, outside the e-BH family (mirrors M2's
             # signal_label_assoc). Honest about not being FDR-corrected.
