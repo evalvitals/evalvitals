@@ -717,6 +717,8 @@ class VLDiagnoseLoop:
         analysis_only: bool = False,
         confirm_split: float = 0.0,
         confirm_split_seed: int = 0,
+        signal_recipes: "list | None" = None,
+        bridge_analyzer_name: str = "explored",
     ) -> None:
         from evalvitals.eval_agent.stages.fix_agent import FixAgent
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
@@ -745,6 +747,14 @@ class VLDiagnoseLoop:
         # derive the identical partition from the same input batch.
         self.confirm_split = float(confirm_split)
         self.confirm_split_seed = int(confirm_split_seed)
+        # Operationalization bridge (off by default): pre-registered SignalRecipes
+        # are compiled over the analyzer per_case signals each cycle into a synthetic
+        # "<bridge_analyzer_name>" analyzer Result, so LAMBDA-discovered composite
+        # signals enter M2's family via the standard findings["per_case"] contract.
+        # Leak-free by construction — recipes must be discovered out-of-band (e.g.
+        # the fused pipeline's held-out split), never by peeking at these labels.
+        self._signal_recipes = list(signal_recipes or [])
+        self._bridge_analyzer_name = bridge_analyzer_name
         self._tokens_used: int = 0
         self._run_id: str = ""
 
@@ -779,6 +789,33 @@ class VLDiagnoseLoop:
         confirm_ids = {id(c) for c in confirm}
         explore = [c for c in cases if id(c) not in confirm_ids]
         return CaseBatch(explore), CaseBatch(confirm)
+
+    def _bridge_signals(self, probe_results: "dict[str, Any]", data: "Any | None") -> None:
+        """Compile pre-registered signal recipes into a synthetic analyzer Result
+        and inject it into *probe_results* so M2/M3/M5 see the bridged composite
+        signals through the standard findings["per_case"] contract. No-op when no
+        recipes are configured. Never raises into the loop."""
+        if not self._signal_recipes:
+            return
+        try:
+            from evalvitals.analysis.operationalize import bridge_recipes_to_result
+
+            synth = bridge_recipes_to_result(
+                self._signal_recipes, probe_results, data,
+                model_repr=repr(self.model),
+                analyzer_name=self._bridge_analyzer_name,
+            )
+        except Exception as exc:  # bridging must never sink the loop
+            logger.warning("signal bridge failed: %s", exc)
+            return
+        if synth is None:
+            return
+        probe_results[self._bridge_analyzer_name] = synth
+        self.store.add_result(synth)
+        logger.info(
+            "bridged %d signal row(s) into M2 as analyzer %r",
+            len(synth.findings.get("per_case", [])), self._bridge_analyzer_name,
+        )
 
     # ──────────────────────────────────────────────────────────────────
     # Public API
@@ -878,6 +915,11 @@ class VLDiagnoseLoop:
                 break
             for r in probe_results.values():
                 self.store.add_result(r)
+
+            # Operationalization bridge: pre-registered recipes -> synthetic
+            # "explored" analyzer Result, injected so M2's family includes the
+            # LAMBDA-discovered composite signals (no-op when none configured).
+            self._bridge_signals(probe_results, data)
 
             # ── M2: protocol-aware stats analysis ────────────────────
             _t0 = time.monotonic()

@@ -20,9 +20,12 @@ from evalvitals.analysis.fused_pipeline import (
 from evalvitals.analysis.operationalize import (
     RecipeError,
     SignalRecipe,
+    bridge_recipes_to_result,
     compile_recipe,
     compile_recipes,
     per_case_finding,
+    per_case_to_records,
+    safe_ident,
 )
 from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.analysis.stats_tools import (
@@ -48,6 +51,9 @@ __all__ = [
     "compile_recipe",
     "compile_recipes",
     "per_case_finding",
+    "per_case_to_records",
+    "bridge_recipes_to_result",
+    "safe_ident",
     "RecipeError",
     "run_fused_analysis",
     "FusedReport",

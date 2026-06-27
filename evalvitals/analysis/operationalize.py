@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import operator
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -298,3 +299,86 @@ def per_case_finding(value_maps: dict[str, dict[str, float]], *, id_key: str = "
         for cid, val in values.items():
             rows.setdefault(cid, {id_key: cid})[signal_name] = val
     return list(rows.values())
+
+
+# ---------------------------------------------------------------------------
+# In-loop bridge: existing analyzer per_case signals -> records -> synthetic Result
+# ---------------------------------------------------------------------------
+
+def safe_ident(name: str) -> str:
+    """Map a per-case signal key (e.g. ``"saliency.obj_size"``) to a DSL identifier
+    (``"saliency_obj_size"``). Recipe ``expr`` references these sanitized names, since
+    the dotted ``analyzer.metric`` keys are not valid Python identifiers."""
+    s = re.sub(r"\W", "_", name)
+    if s and s[0].isdigit():
+        s = "_" + s
+    return s
+
+
+def per_case_to_records(
+    per_case: dict[str, dict[str, float]],
+    labels: dict[str, bool] | None = None,
+    *,
+    id_key: str = "case_id",
+    label_key: str = "label",
+) -> list[dict[str, Any]]:
+    """Transpose ``{signal -> {case_id -> value}}`` into per-case row dicts.
+
+    Signal keys are sanitized via :func:`safe_ident` so recipe exprs can reference
+    them. Each row carries only the signals present for that case (missing ones are
+    absent, so a recipe referencing a missing signal SKIPS that case). When *labels*
+    is given, a ``pass``/``fail`` ``label`` column is added.
+    """
+    case_ids: set[str] = set()
+    for vals in per_case.values():
+        case_ids.update(vals)
+    if labels:
+        case_ids.update(labels)
+
+    records: list[dict[str, Any]] = []
+    for cid in sorted(case_ids):
+        row: dict[str, Any] = {id_key: cid}
+        for signal, vals in per_case.items():
+            if cid in vals:
+                row[safe_ident(signal)] = vals[cid]
+        if labels is not None and cid in labels:
+            row[label_key] = "fail" if labels[cid] else "pass"
+        records.append(row)
+    return records
+
+
+def bridge_recipes_to_result(
+    recipes: "list[SignalRecipe]",
+    probe_results: "dict[str, Any]",
+    data: "Any | None" = None,
+    *,
+    model_repr: str = "",
+    analyzer_name: str = "explored",
+    id_col: str = "case_id",
+) -> "Any | None":
+    """Compile pre-registered recipes over existing analyzer per_case signals into a
+    synthetic analyzer ``Result``, so bridged composite signals enter M2 through the
+    standard ``findings["per_case"]`` contract (DESIGN §5.3).
+
+    LEAK-FREE BY CONSTRUCTION: the recipes must be PRE-SPECIFIED (discovered
+    out-of-band — e.g. on the fused pipeline's held-out split, or hand-authored —
+    NOT chosen by peeking at *these* labels). Testing a frozen extractor here is then
+    exactly like testing a pre-registered analyzer; this function does no discovery.
+
+    Returns the synthetic ``Result`` (analyzer=*analyzer_name*), or ``None`` if no
+    recipe compiled to a non-empty signal.
+    """
+    from evalvitals.core.result import Result
+    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+
+    inp = build_stats_input(probe_results, data)
+    records = per_case_to_records(inp.per_case, inp.labels, id_key=id_col)
+    compiled = compile_recipes(recipes, records, id_col=id_col)
+    if not compiled:
+        return None
+    return Result(
+        analyzer=analyzer_name,
+        model=model_repr,
+        findings={"per_case": per_case_finding(compiled, id_key=id_col)},
+        cases=data,
+    )

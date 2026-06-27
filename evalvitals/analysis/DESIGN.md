@@ -1,6 +1,7 @@
 # LAMBDA 探索 × M2/M5 确证 集成设计
 
-> 状态：**设计提案（未实现）**。如何把 LAMBDA 式探索层（`evalvitals/analysis/`）接入 M1→M5 诊断-修复链路。
+> 状态：**Phase A–D 已实现**（2026-06-27）。如何把 LAMBDA 式探索层（`evalvitals/analysis/`）接入 M1→M5 诊断-修复链路。
+> 新增模块：[adjudicate.py](adjudicate.py)（宿主裁决）· [operationalize.py](operationalize.py)（recipe→冻结信号 + in-loop 桥接）· [fused_pipeline.py](fused_pipeline.py)（explore→confirm 编排）；in-loop 注入在 [loop.py](../eval_agent/loop.py) `VLDiagnoseLoop._bridge_signals`。测试 `tests/test_analysis/test_{adjudicate,operationalize,fused_pipeline,bridge_inloop,integration_fused}.py`（74 项全过）。
 > 一句话：**LAMBDA 提议、M2 扩族确证、M5（gated on M2）验证、FixAgent 修复——永不用一张图来确证。** 核心新部件是 **operationalization bridge**，把 LAMBDA 发现的复合/切片信号编译成冻结 per-case 信号，使其进入 M2 的 e-BH family。
 > 配套：`/tealab-data/jiaqiliu/evalsmith/LAMBDA/LAMBDA_架构与设计原理.md`。
 
@@ -97,25 +98,28 @@ def compile_recipe(recipe, records) -> dict[str, float]:
 |---|---|---|
 | **无 double-dip** | 选在 EXPLORE、每个 e-value 算在冻结 CONFIRM | `_split_explore_confirm`（loop.py:760） |
 | **宿主裁决** | LLM 只发充分统计量/标量；reject/e_value/p_value 一律宿主重算 | `_reconstruct_decision`（stats_tool_generator.py:328） |
-| **统一 e-BH family** | catalog + 桥接信号进**同一个** `fdr_correct` 族 | `fdr_correct`/`ebh` |
+| **统一 e-BH family** | catalog + 桥接信号进**同一个** `fdr_correct` 族 | `fdr_correct`/`ebh`；**注**：边际 `signal_label_assoc` 是 bootstrap-CI、无 e-value，故按 alpha 出 CI-reject 但**不进 e-BH**,如实标 `fdr_corrected=False`(见 §6 catalog 表达力) |
 | **图表无权威** | charts/observations 只进 M3 prompt 与人工引导，绝不进确证/修复门 | explorer schema 无 reject |
 | **M2 盲于假设** | M2 在 M3 提假设前、独立跑完整信号族 | 现有 M2→M3 顺序 |
 | **e-value 不乱合并** | 撞同一 estimand 先去重，仅**算术平均**（product/sum 非法）；不同 null 各作独立成员进 e-BH | 新增去重步 |
 
 ---
 
-## 5. 落地计划（分阶段，file-level）
+## 5. 落地计划（分阶段，file-level）—— ✅ 全部已实现
 
-**Phase A — 把 chat 每个候选接上已有宿主裁决（S/M，无新统计代码）**
-- `CandidateSignal`/`ExploratoryAnalysisReport` 加可选确证字段（recipe/sufficient/effect/ci/host 裁决），`to_dict` 向后兼容；explorer `_GENERATE_PROMPT` 加"可附 sufficient/recipe、禁发 reject、只从 confirm 行算"；宿主裁决 pass（import `_reconstruct_decision`/`fdr_correct`，每候选算 → 标注 reject）。 → [explorer.py](explorer.py)
+**Phase A ✅ — 把 chat 每个候选接上已有宿主裁决**
+- [explorer.py](explorer.py)：`CandidateSignal`/`ExploratoryAnalysisReport` 加可选 `sufficient`/`recipe`/host 裁决字段（`to_dict` 向后兼容）；`_GENERATE_PROMPT` 允许附 `sufficient`、明确自报 reject/e_value 被忽略；parser 透传。
+- [adjudicate.py](adjudicate.py)：`adjudicate_signals/adjudicate_report` 复用 `_reconstruct_decision` + `fdr_correct` 做宿主裁决（`paired_binary`→e-BH；`two_group`→CI、标 `fdr_corrected=False`；无 sufficient→`descriptive_only`）。[chat.py](chat.py) 串联，标 `in_sample`。
 
-**Phase B — bridge + 双发现源接进循环（M/L，核心）**
-- `SignalRecipe` + `compile_recipe`（先做 `kind="expr"`）。 → 新模块 `analysis/operationalize.py`
-- 编排器：`_split_explore_confirm` 切分；EXPLORE 上跑 explorer + `default_plan`（两发现源）按 estimand 并集去重；CONFIRM 上编译信号 + 跑 M2；输出组装 + 无法归约的候选降级到 `recommended_confirmatory_tests`。 → 新模块 `analysis/fused_pipeline.py`
+**Phase B ✅ — bridge + 双发现源（核心）**
+- [operationalize.py](operationalize.py)：`SignalRecipe` + `compile_recipe`（`kind="expr"` 受限 DSL + safe AST eval，拒 import/attr/subscript/lambda；`kind="code"` 暂 NotImplemented）；`compile_recipes`/`per_case_finding`。
+- [fused_pipeline.py](fused_pipeline.py)：`run_fused_analysis` —— `_split_records` 分层切分；EXPLORE 跑 explorer + catalog 两发现源、按名去重；CONFIRM 上编译 recipe + `StatsAnalysisAgent.analyze_input` 跑 M2；输出组装 + 无法归约者降级 `recommended_confirmatory_tests`。
 
-**Phase C — 桥接信号接回 in-loop M2（L）**：让 `StatsAnalysisAgent` 接受"额外 per_case 信号"，使 LAMBDA 发现进 in-loop e-BH family，M3/M5 直接受益。
+**Phase C ✅ — 桥接信号接回 in-loop M2（合成-Result 注入）**
+- [operationalize.py](operationalize.py)：`safe_ident`/`per_case_to_records`（转置 + 把 `analyzer.metric` 消歧成 DSL 标识符）/`bridge_recipes_to_result`（recipe 在已有 analyzer 信号上编译 → 合成 `explored` analyzer Result）。
+- [loop.py](../eval_agent/loop.py)：`VLDiagnoseLoop` 加 `signal_recipes` 参数 + `_bridge_signals`（M1→M2 之间注入，no-op 默认）。**leak-free by construction**：recipe 必须 out-of-band 预注册（B2 留出集或手写），非窥探本轮 label，故 in-loop 测它等同测预注册 analyzer。
 
-**Phase D — 测试**：双盲守卫（e-value 全在 confirm、id 不相交）；宿主裁决（喂 `reject=true` 必被丢弃重算）；默认不合并 / 同 null 才算术平均；确定性复现 confirm 分区；`expr` 编译正确性。
+**Phase D ✅ — 测试**：双盲守卫（explorer 只见 explore、verdict 算在不相交 confirm）；宿主裁决（自报 `reject=true`/`e_value=1e9` 被结构性丢弃重算）；**不合并**（不同 estimand → 两个独立 e-BH 成员，从不合并 e-value）；确定性复现（同 seed 同输出）；`expr` 编译/安全；真实 explorer codegen→bridge→M2 端到端。
 
 ---
 
