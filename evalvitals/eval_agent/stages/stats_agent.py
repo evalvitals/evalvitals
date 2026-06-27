@@ -54,6 +54,7 @@ from evalvitals.eval_agent.stages.stats_tools import (
     StatsInput,
     StatsToolResult,
     build_stats_input,
+    build_stats_input_from_records,
     default_plan,
     describe_data,
     fdr_correct,
@@ -338,11 +339,90 @@ class StatsAnalysisAgent:
         """
         base = self._base.analyze(results, model_name)
         legacy_tool_results = self._run_legacy_stats_tools(results, protocol)
+        inp = build_stats_input(results, data)
+
+        return self._analyze_from_input(
+            inp=inp,
+            base=base,
+            protocol=protocol,
+            results=results,
+            extra_figures=extra_figures,
+            legacy_tool_results=legacy_tool_results,
+        )
+
+    def analyze_input(
+        self,
+        inp: StatsInput,
+        *,
+        model_name: str = "",
+        protocol: "ExperimentProtocol | None" = None,
+        extra_figures: "list | None" = None,
+    ) -> StatsAnalysisReport:
+        """Analyze a pre-normalized :class:`StatsInput`.
+
+        This is the standalone path for callers that have already prepared
+        labels, per-case signals, scalar metrics, or strategy groups and do not
+        need to run M1 analyzers first.
+        """
+        base = AnalysisReport(
+            model_name=model_name,
+            findings=[],
+            severity="none",
+            narrative=_build_input_narrative(model_name, inp),
+            raw_results={},
+        )
+        return self._analyze_from_input(
+            inp=inp,
+            base=base,
+            protocol=protocol,
+            results={},
+            extra_figures=extra_figures,
+            legacy_tool_results=[],
+        )
+
+    def analyze_records(
+        self,
+        records: "Any",
+        *,
+        id_col: str = "case_id",
+        label_col: str = "label",
+        signal_cols: "list[str] | tuple[str, ...] | None" = None,
+        scalar_cols: "list[str] | tuple[str, ...] | None" = None,
+        signal_prefix: str = "",
+        model_name: str = "",
+        protocol: "ExperimentProtocol | None" = None,
+        extra_figures: "list | None" = None,
+    ) -> StatsAnalysisReport:
+        """Analyze plain row dictionaries without constructing M1 ``Result`` objects."""
+        inp = build_stats_input_from_records(
+            records,
+            id_col=id_col,
+            label_col=label_col,
+            signal_cols=signal_cols,
+            scalar_cols=scalar_cols,
+            signal_prefix=signal_prefix,
+        )
+        return self.analyze_input(
+            inp,
+            model_name=model_name,
+            protocol=protocol,
+            extra_figures=extra_figures,
+        )
+
+    def _analyze_from_input(
+        self,
+        *,
+        inp: StatsInput,
+        base: AnalysisReport,
+        protocol: "ExperimentProtocol | None",
+        results: "dict[str, Result]",
+        extra_figures: "list | None",
+        legacy_tool_results: list[Any],
+    ) -> StatsAnalysisReport:
+        """Shared implementation for loop-driven and standalone M2 analysis."""
 
         # ── Statistical tool layer (select → run → FDR-correct → plot) ──
-        stats_results, stats_plan, corrected, figures = self._run_stats_tools(
-            results, data, protocol
-        )
+        stats_results, stats_plan, corrected, figures = self._run_stats_tools_input(inp, protocol)
 
         # Merge in analyzer heatmap PNGs forwarded from the run logger.
         if extra_figures:
@@ -383,6 +463,14 @@ class StatsAnalysisAgent:
         when there is no labeled/grouped data to test (pure backward compat).
         """
         inp = build_stats_input(results, data)
+        return self._run_stats_tools_input(inp, protocol)
+
+    def _run_stats_tools_input(
+        self,
+        inp: StatsInput,
+        protocol: "ExperimentProtocol | None",
+    ) -> tuple[list[StatsToolResult], list[dict[str, Any]], dict[str, Any], list[str]]:
+        """Run the statistical tool layer over already-normalized input."""
         if not self._enable_stats_tools or not has_testable_data(inp):
             return [], [], {}, []
 
@@ -692,6 +780,11 @@ def _build_conclusion(
         top = max(supported, key=lambda r: abs(r.effect or 0.0))
         stat_msg = f" Statistically supported: {top.summary}"
 
+    if not base.raw_results and base.narrative:
+        if stat_msg:
+            return f"{domain}Standalone statistical analysis found a supported signal.{stat_msg}"
+        return f"{domain}Standalone statistical analysis found no supported signal."
+
     if not base.findings:
         if stat_msg:
             return f"{domain}No threshold violations, but a statistical test fired.{stat_msg}"
@@ -706,6 +799,26 @@ def _build_conclusion(
     if len(base.findings) > 1:
         msg += f" {len(base.findings) - 1} additional finding(s) also flagged."
     return f"{domain}{msg}{stat_msg}"
+
+
+def _build_input_narrative(model_name: str, inp: StatsInput) -> str:
+    """Human-readable summary for standalone StatsInput analysis."""
+    d = describe_data(inp)
+    lines = [f"Model: {model_name}" if model_name else "Model: unspecified"]
+    lines.append("Input: standalone statistical dataset")
+    lines.append(
+        f"Labeled cases: {d['n_labeled']} "
+        f"({d['n_fail']} FAIL, {d['n_pass']} PASS)"
+    )
+    if d["per_case_signals"]:
+        lines.append(f"Per-case signals: {', '.join(d['per_case_signals'])}")
+    else:
+        lines.append("Per-case signals: none")
+    if d["scalar_metrics"]:
+        lines.append(f"Scalar metrics: {', '.join(d['scalar_metrics'])}")
+    if d["n_strategy_groups"]:
+        lines.append(f"Strategy groups: {d['n_strategy_groups']}")
+    return "\n".join(lines)
 
 
 def _compat_stats_tool_results(stats_results: list[StatsToolResult]) -> list[dict[str, Any]]:

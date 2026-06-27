@@ -51,6 +51,10 @@ data = [
     "pillow>=9.0",
 ]
 viz = ["matplotlib>=3.7"]
+dashboard = [
+    "streamlit>=1.30",
+    "pandas>=2.0",
+]
 gemini = ["google-genai>=1.0"]
 all = [
     "torch>=2.0.0",
@@ -61,12 +65,16 @@ all = [
     "inseq>=0.6",
     "nnsight>=0.3",
     "matplotlib>=3.7",
+    "streamlit>=1.30",
+    "pandas>=2.0",
 ]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
     "ruff>=0.4",
     "mypy>=1.8",
+    # Validate run_log.jsonl against the published schema (log_schema.py).
+    "jsonschema>=4.0",
 ]
 
 [project.urls]
@@ -76,12 +84,22 @@ Repository = "https://github.com/evalvitals/evalvitals"
 Issues = "https://github.com/evalvitals/evalvitals/issues"
 Changelog = "https://github.com/evalvitals/evalvitals/blob/main/CHANGELOG.md"
 
+[project.scripts]
+evalvitals = "evalvitals.cli:main"
+evalvitals-m2-chat = "evalvitals.analysis.cli:chat_main"
+evalvitals-m2-explore = "evalvitals.analysis.cli:main"
+
 [tool.setuptools.dynamic]
 version = {attr = "evalvitals.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["evalvitals*"]
+
+[tool.setuptools.package-data]
+# Ship the published run_log.jsonl JSON Schema so non-Python consumers can
+# validate the log without installing evalvitals.
+"evalvitals.eval_agent" = ["run_log.schema.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

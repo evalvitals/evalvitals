@@ -7,7 +7,13 @@ from evalvitals.core.case import FailureCase, Inputs, Label
 
 
 def _load_example():
-    path = Path(__file__).resolve().parents[2] / "examples" / "mllms_small_object" / "run.py"
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "examples"
+        / "analyzer_demos"
+        / "mllms_small_object"
+        / "run.py"
+    )
     spec = importlib.util.spec_from_file_location("mllms_small_object_run", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

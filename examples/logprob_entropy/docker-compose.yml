@@ -1,8 +1,0 @@
-services:
-  logprob_entropy:
-    build:
-      context: ../..
-      dockerfile: examples/logprob_entropy/Dockerfile
-    image: evalvitals-logprob-entropy
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}

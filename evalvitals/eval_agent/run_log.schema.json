@@ -1,0 +1,690 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evalvitals.dev/schemas/run_log.schema.json",
+  "title": "EvalVitals run_log.jsonl event",
+  "description": "One event per line in run_log.jsonl. Discriminated on `event`; matches schema_version 2. Permissive: extra (additive) fields are allowed.",
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "required": [
+        "event",
+        "schema_version",
+        "ts",
+        "trace_id"
+      ],
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "run_start",
+            "probe",
+            "analysis",
+            "diagnosis",
+            "surgery",
+            "experiment",
+            "fix",
+            "loop_end",
+            "tool_codegen",
+            "tool_registry"
+          ]
+        },
+        "schema_version": {
+          "const": 2
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})?$"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "cycle": {
+          "type": "integer"
+        }
+      }
+    },
+    "run_start": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "run_start"
+            },
+            "evalvitals_version": {
+              "type": "string"
+            },
+            "python_version": {
+              "type": "string"
+            },
+            "git_commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "data_fingerprint": {
+              "type": "string"
+            },
+            "label_distribution": {
+              "type": "object"
+            },
+            "n_cases": {
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ]
+        }
+      ]
+    },
+    "probe": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "probe"
+            },
+            "analyzers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "findings": {
+              "type": "object"
+            },
+            "artifact_paths": {
+              "type": "object"
+            },
+            "selection_rationale": {
+              "type": "string"
+            },
+            "judge_io": {
+              "type": "object",
+              "properties": {
+                "prompt_path": {
+                  "type": "string"
+                },
+                "prompt_chars": {
+                  "type": "integer"
+                },
+                "raw_path": {
+                  "type": "string"
+                },
+                "raw_chars": {
+                  "type": "integer"
+                }
+              }
+            },
+            "duration_sec": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "analyzers",
+            "findings",
+            "artifact_paths"
+          ]
+        }
+      ]
+    },
+    "analysis": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "analysis"
+            },
+            "severity": {
+              "type": "string"
+            },
+            "n_findings": {
+              "type": "integer"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "narrative": {
+              "type": "string"
+            },
+            "conclusion": {
+              "type": "string"
+            },
+            "evidence_chain": {
+              "type": "array"
+            },
+            "stats_tool_results": {
+              "type": [
+                "object",
+                "array"
+              ]
+            },
+            "stats_plan": {
+              "type": [
+                "object",
+                "array"
+              ]
+            },
+            "stats_results": {
+              "type": [
+                "object",
+                "array"
+              ]
+            },
+            "corrected_rejections": {
+              "type": [
+                "object",
+                "array"
+              ]
+            },
+            "visualizations": {
+              "type": "array"
+            },
+            "figures": {
+              "type": "array"
+            },
+            "judge_io": {
+              "type": "object",
+              "properties": {
+                "prompt_path": {
+                  "type": "string"
+                },
+                "prompt_chars": {
+                  "type": "integer"
+                },
+                "raw_path": {
+                  "type": "string"
+                },
+                "raw_chars": {
+                  "type": "integer"
+                }
+              }
+            },
+            "duration_sec": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "severity",
+            "n_findings",
+            "findings",
+            "narrative"
+          ]
+        }
+      ]
+    },
+    "diagnosis": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "diagnosis"
+            },
+            "model_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "n_hypotheses": {
+              "type": "integer"
+            },
+            "hypotheses": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "statement": {
+                    "type": "string"
+                  },
+                  "failure_mode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "raw_judge_output": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "judge_io": {
+              "type": "object",
+              "properties": {
+                "prompt_path": {
+                  "type": "string"
+                },
+                "prompt_chars": {
+                  "type": "integer"
+                },
+                "raw_path": {
+                  "type": "string"
+                },
+                "raw_chars": {
+                  "type": "integer"
+                }
+              }
+            },
+            "duration_sec": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "model_name",
+            "n_hypotheses",
+            "hypotheses",
+            "raw_judge_output"
+          ]
+        }
+      ]
+    },
+    "surgery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "surgery"
+            },
+            "module": {
+              "type": "string"
+            },
+            "hypothesis": {
+              "type": "string"
+            },
+            "failure_mode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "fixed": {
+              "type": "boolean"
+            },
+            "confidence_score": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "evidence": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "n_refocused_cases": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "duration_sec": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "module",
+            "hypothesis",
+            "failure_mode",
+            "status",
+            "fixed"
+          ]
+        }
+      ]
+    },
+    "experiment": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "experiment"
+            },
+            "module": {
+              "type": "string"
+            },
+            "hypothesis": {
+              "type": "string"
+            },
+            "failure_mode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fixed": {
+              "type": "boolean"
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "metrics": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "returncode": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "timed_out": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "llm_calls": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "code_paths": {
+              "type": "object"
+            },
+            "output_paths": {
+              "type": "object"
+            },
+            "workspace_snapshot": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "record": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "module",
+            "hypothesis",
+            "failure_mode",
+            "status",
+            "fixed"
+          ]
+        }
+      ]
+    },
+    "fix": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "fix"
+            },
+            "module": {
+              "type": "string"
+            },
+            "record": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "module"
+          ]
+        }
+      ]
+    },
+    "loop_end": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "loop_end"
+            },
+            "cycles": {
+              "type": "integer"
+            },
+            "tokens_used": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "timings_sec": {
+              "type": "object"
+            },
+            "total_duration_sec": {
+              "type": "number"
+            },
+            "resolved": {
+              "type": "boolean"
+            },
+            "n_hypotheses": {
+              "type": "integer"
+            },
+            "final_hypotheses": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "statement": {
+                    "type": "string"
+                  },
+                  "failure_mode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "stopped_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "n_verified": {
+              "type": "integer"
+            },
+            "verified_hypotheses": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "cycles"
+          ]
+        }
+      ]
+    },
+    "tool_codegen": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "tool_codegen"
+            },
+            "module": {
+              "type": "string"
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "need": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "code_paths": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "module",
+            "tool_name",
+            "need",
+            "source",
+            "ok"
+          ]
+        }
+      ]
+    },
+    "tool_registry": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "tool_registry"
+            },
+            "module": {
+              "type": "string"
+            },
+            "n_tools": {
+              "type": "integer"
+            },
+            "tools": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "cycle",
+            "module",
+            "n_tools",
+            "tools"
+          ]
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/run_start"
+    },
+    {
+      "$ref": "#/$defs/probe"
+    },
+    {
+      "$ref": "#/$defs/analysis"
+    },
+    {
+      "$ref": "#/$defs/diagnosis"
+    },
+    {
+      "$ref": "#/$defs/surgery"
+    },
+    {
+      "$ref": "#/$defs/experiment"
+    },
+    {
+      "$ref": "#/$defs/fix"
+    },
+    {
+      "$ref": "#/$defs/loop_end"
+    },
+    {
+      "$ref": "#/$defs/tool_codegen"
+    },
+    {
+      "$ref": "#/$defs/tool_registry"
+    }
+  ]
+}

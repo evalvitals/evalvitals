@@ -1,0 +1,8 @@
+services:
+  mm_shap:
+    build:
+      context: ../../..
+      dockerfile: examples/analyzer_demos/mm_shap/Dockerfile
+    image: evalvitals-mm-shap
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
