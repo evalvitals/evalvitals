@@ -93,6 +93,31 @@ print(evalvitals.registry.analyzers.names_compatible_with(model))
 
 This is the same discovery surface intended for an automated evaluation agent.
 
+## Standalone M2 Chat
+
+If you already have result logs and want M2 to analyze them without writing
+analysis code, use the chat CLI:
+
+```bash
+evalvitals chat /path/to/results \
+  --backend antigravity \
+  --out m2_chat_output
+```
+
+Each turn writes generated code, stdout/stderr, a structured exploratory report,
+and optional figures/tables under `m2_chat_output/turn_XXX/`.
+
+Open the saved session as a dashboard:
+
+```bash
+pip install -e ".[dashboard]"
+evalvitals dashboard m2_chat_output
+```
+
+See [M2 Statistical Analysis](m2_analysis.md) for the full standalone workflow
+and the boundary between exploratory chat and confirmatory `StatsAnalysisAgent`
+tests.
+
 ## Convenience Shim
 
 Models expose `call_<analysis>` methods dynamically through the analyzer
