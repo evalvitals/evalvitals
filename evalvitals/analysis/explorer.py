@@ -64,7 +64,7 @@ Write a self-contained Python script that:
   self-declared verdict is ignored. Omit both for descriptive-only signals.
 - prints the final result as the LAST stdout line exactly like:
   {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "recipe": {{"name": "...", "kind": "expr", "expr": "(col_a < 40) and (col_b < 0.3)"}}}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
-
+{skills_hint}
 Return ONLY the Python code{fences_hint}."""
 
 _REPAIR_PROMPT = """\
@@ -335,6 +335,7 @@ class M2ExplorerAgent:
             input_filename=_INPUT_FILENAME,
             data_profile=json.dumps(profile, indent=2, default=str),
             marker=_RESULT_MARKER,
+            skills_hint=_skills_hint(self._cli_config),
             fences_hint=_fences_hint(self._cli_config),
         )
         return self._run_writer(prompt, use_inspector=False)
@@ -670,3 +671,25 @@ def _fences_hint(cli_config: "CliAgentConfig | None") -> str:
     if cli_config is not None and cli_config.provider != "llm":
         return ", written to a file named analysis.py"
     return " inside a ```python code block"
+
+
+def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
+    """Prompt addendum steering the agent to use available Agent Skills (e.g. a
+    figure-styling skill) for the plots it writes. Empty unless skills are enabled
+    on the CLI backend. Skills style the agent-authored ``figures/*.png`` only;
+    the host-rendered ``charts`` (spec+CSV) stay deterministic and unstyled."""
+    if cli_config is None or not getattr(cli_config, "skills_enabled", False):
+        return ""
+    from pathlib import Path as _P
+
+    names = [_P(s).name for s in (cli_config.skills or [])]
+    which = ("the " + ", ".join(f"`/{n}`" for n in names) + " skill(s)") if names else "any installed Agent Skills"
+    return (
+        "\nFIGURE STYLING: Agent Skills are available. When you write plots under "
+        f"figures/, you MAY invoke {which} to produce publication-quality, "
+        "well-labelled matplotlib figures. This is a non-interactive PYTHON "
+        "analysis: if a skill asks you to choose a plotting backend, choose "
+        "Python and proceed without pausing — never stop to ask a question. Use a "
+        "skill for styling only — it must not change the data, the analysis, the "
+        "sandbox workflow, or the final result JSON.\n"
+    )

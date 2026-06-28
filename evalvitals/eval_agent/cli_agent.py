@@ -105,6 +105,14 @@ class CliAgentConfig:
         max_budget_usd:  Spend cap forwarded to ``--max-budget-usd`` (Claude Code).
         timeout_sec:     Hard wall-clock limit for the agent subprocess.
         extra_args:      Additional flags appended verbatim to the CLI command.
+        skills:          Paths to Agent-Skill directories (each containing a
+                         ``SKILL.md``) to vendor into the sandbox per run, under
+                         ``<workdir>/.claude/skills/<name>/``. Claude Code / agy
+                         auto-discover skills inside an ``--add-dir`` directory.
+                         A non-empty value implies ``allow_skills=True``.
+        allow_skills:    Enable the ``Skill`` tool so the agent may invoke skills
+                         (vendored here OR installed globally in ``~/.claude/skills``).
+                         Off by default to preserve deterministic behavior.
     """
 
     provider: str = "llm"
@@ -113,6 +121,12 @@ class CliAgentConfig:
     max_budget_usd: float = 5.0
     timeout_sec: int = 600
     extra_args: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    allow_skills: bool = False
+
+    @property
+    def skills_enabled(self) -> bool:
+        return self.allow_skills or bool(self.skills)
 
 
 # ---------------------------------------------------------------------------
@@ -351,12 +365,36 @@ class _CliAgentBase:
         max_budget_usd: float = 5.0,
         timeout_sec: int = 600,
         extra_args: list[str] | None = None,
+        skills: list[str] | None = None,
+        allow_skills: bool = False,
     ) -> None:
         self._binary = binary_path
         self._model = model
         self._max_budget_usd = max_budget_usd
         self._timeout_sec = timeout_sec
         self._extra_args: list[str] = extra_args or []
+        self._skills: list[str] = list(skills or [])
+        # A vendored skill is useless unless the Skill tool is permitted.
+        self._allow_skills: bool = bool(allow_skills or self._skills)
+
+    def _install_skills(self, workdir: Path) -> None:
+        """Vendor each configured skill dir into ``<workdir>/.claude/skills/<name>/``
+        so an ``--add-dir <workdir>`` agent auto-discovers it. Best-effort; a
+        missing or unreadable skill is skipped, never fatal."""
+        if not self._skills:
+            return
+        import shutil
+
+        dest_root = workdir / ".claude" / "skills"
+        for src in self._skills:
+            src_path = Path(src)
+            if not src_path.exists() or not src_path.is_dir():
+                logger.warning("skill dir not found, skipping: %s", src)
+                continue
+            try:
+                shutil.copytree(src_path, dest_root / src_path.name, dirs_exist_ok=True)
+            except OSError as exc:
+                logger.warning("could not vendor skill %s: %s", src, exc)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -377,6 +415,8 @@ class _CliAgentBase:
             timeout_sec: Override the instance-level timeout.
         """
         timeout = timeout_sec if timeout_sec is not None else self._timeout_sec
+        workdir.mkdir(parents=True, exist_ok=True)
+        self._install_skills(workdir)
         cmd = self._build_cmd(prompt, workdir)
         logger.debug("%s: running %s", self._provider_name, cmd[0])
 
@@ -506,6 +546,10 @@ class ClaudeCodeAgent(_CliAgentBase):
     _provider_name = "claude_code"
 
     def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
+        # When skills are enabled, the Skill tool must be in the allowlist so the
+        # agent can invoke a vendored/global skill (e.g. nature-figure) to style
+        # the figures its own code writes under figures/.
+        allowed = "Bash Edit Write Read" + (" Skill" if self._allow_skills else "")
         cmd = [
             self._binary, "-p", prompt,
             "--dangerously-skip-permissions",
@@ -515,7 +559,7 @@ class ClaudeCodeAgent(_CliAgentBase):
             # print mode it requires --verbose.  Rendered by _postprocess_output.
             "--output-format", "stream-json",
             "--verbose",
-            "--allowed-tools", "Bash Edit Write Read",
+            "--allowed-tools", allowed,
             "--add-dir", str(workdir),
         ]
         if self._model:
@@ -953,4 +997,6 @@ def create_cli_agent(config: CliAgentConfig) -> _CliAgentBase:
         max_budget_usd=config.max_budget_usd,
         timeout_sec=config.timeout_sec,
         extra_args=list(config.extra_args),
+        skills=list(config.skills),
+        allow_skills=config.allow_skills,
     )

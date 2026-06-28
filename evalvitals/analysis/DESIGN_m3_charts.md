@@ -1,6 +1,8 @@
 # 单轮可视化管线：LAMBDA 图表/观察 → M3 + Dashboard（含 chat 退役）
 
-> 状态：**设计提案（未实现）**。本文档定义如何在**只有单轮管线、无交互式 REPL**的前提下，让 explorer 的**图表/观察(机制语言)**进入 in-loop **M3** 并渲染成 **dashboard**，同时把 `chat` 的能力收敛进单轮入口、退役交互 REPL，使**全系统只有一套探索引擎、一套 viz 核**。
+> 状态：**已实现（Phase 0+A+B+C+D）**。chat REPL 已退役；`evalvitals explore` 单轮入口、`render_chart_specs` 渲染核、`load_run`/`load_loop_story` dashboard、`ExploreContext`→M3、`run_m2-5 --explore-report` 全部落地，附 30+ 测试。经多智能体对抗审查（9 个发现全部修复：CSV 解码/超长字段不再 crash、schema builder 同步、loop story 跨目录定位 Step1 报告、provenance 仅记实际存在的图、`_extract_referenced` 词边界匹配、`--model` 别名对齐等）。全量测试 958 passed。
+>
+> 本文档定义如何在**只有单轮管线、无交互式 REPL**的前提下，让 explorer 的**图表/观察(机制语言)**进入 in-loop **M3** 并渲染成 **dashboard**，同时把 `chat` 的能力收敛进单轮入口、退役交互 REPL，使**全系统只有一套探索引擎、一套 viz 核**。
 > 配套：[DESIGN.md](DESIGN.md)（LAMBDA×M2 信号集成，Phase A–D 已实现）。前者接「信号→M2 确证」；本设计接「机制语言→M3 提假设」+「可视化共享核」。
 > 一句话：**砍掉交互 REPL，三条单轮入口（explore / fused / loop）共用一个 `render_chart_specs` + 一个 dashboard loader；图表只进 M3 prompt 与 dashboard，永不进 M2/M5/修复门。**
 

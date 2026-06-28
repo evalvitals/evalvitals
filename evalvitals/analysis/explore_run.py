@@ -26,6 +26,21 @@ from evalvitals.analysis.charts import render_chart_specs
 from evalvitals.analysis.explorer import M2ExplorerAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 
+# Agent Skills vendored with the package (e.g. nature-figure). They ship via both
+# `git clone` and `pip install` and are auto-applied by `explore` on claude/agy.
+_BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+# Skills are a Claude Code / agy feature; other backends vendor-but-ignore them.
+_SKILL_BACKENDS = {"claude_code", "antigravity"}
+
+
+def bundled_skill_paths() -> list[str]:
+    """Absolute paths of the Agent-Skill dirs bundled with the package (each a
+    directory containing ``SKILL.md``). Empty when none are present."""
+    root = _BUNDLED_SKILLS_DIR
+    if not root.is_dir():
+        return []
+    return [str(p) for p in sorted(root.iterdir()) if (p / "SKILL.md").is_file()]
+
 
 def run_explore(
     path: str | Path,
@@ -42,20 +57,36 @@ def run_explore(
     max_attempts: int = 2,
     dashboard: bool = False,
     dashboard_port: int | None = None,
+    skills: "list[str] | tuple[str, ...]" = (),
+    allow_skills: bool = False,
+    use_bundled_skills: bool = True,
 ) -> int:
     """Run one exploratory analysis and persist its artifacts.
 
     Returns a process exit code: ``0`` if the exploration succeeded, else ``1``.
     When *dashboard* is set, the return value is the dashboard process's code.
+
+    Skills style the agent-authored figures (e.g. the bundled nature-figure
+    skill). By default (*use_bundled_skills*) the package's bundled skills are
+    applied on the claude/agy backends; *skills* adds more dirs and *allow_skills*
+    also enables globally-installed (`~/.claude/skills`) skills.
     """
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    skill_dirs = list(skills or [])
+    if use_bundled_skills and coder_provider in _SKILL_BACKENDS:
+        # Vendored skills first so the agent sees them; de-dup explicit repeats.
+        bundled = [p for p in bundled_skill_paths() if p not in skill_dirs]
+        skill_dirs = bundled + skill_dirs
 
     cli_config = CliAgentConfig(
         provider=coder_provider,
         binary_path=coder_binary,
         model=coder_model,
         timeout_sec=timeout_sec,
+        skills=tuple(skill_dirs),
+        allow_skills=allow_skills or bool(skill_dirs),
     )
     agent = M2ExplorerAgent(
         cli_config=cli_config,

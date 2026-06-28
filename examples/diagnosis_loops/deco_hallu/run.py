@@ -105,10 +105,11 @@ def build_judge(model_name: str, effort: str):
 _PROVIDER = {"claude": "claude_code", "codex": "codex", "agy": "antigravity"}
 
 
-def build_codegen(backend: str = "claude"):
+def build_codegen(backend: str = "claude", skills=(), allow_skills: bool = False):
     """CliAgentConfig for the coder/explorer backend. ``backend`` is one of
     ``claude`` | ``codex`` | ``agy`` (default claude). model/effort are claude-only
-    knobs; codex/agy use their own defaults."""
+    knobs; codex/agy use their own defaults. ``skills`` are Agent-Skill dirs (e.g.
+    a nature-figure skill) vendored to style agent-authored figures."""
     from evalvitals.eval_agent import CliAgentConfig
 
     provider = _PROVIDER.get(backend, backend)
@@ -120,6 +121,8 @@ def build_codegen(backend: str = "claude"):
         max_budget_usd=float(CFG.get("codegen_budget_usd", 2.0)),
         timeout_sec=int(CFG.get("codegen_timeout_sec", 240)),
         extra_args=(("--effort", effort) if (effort and is_claude) else ()),
+        skills=tuple(skills or ()),
+        allow_skills=allow_skills,
     )
     print(f"coder backend: {provider}" + (f" model={cfg.model} effort={effort or 'default'}" if is_claude else ""))
     return cfg

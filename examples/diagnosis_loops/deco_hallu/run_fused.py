@@ -48,6 +48,10 @@ def main() -> None:
         "signals as deterministic recipes over the available numeric columns."))
     ap.add_argument("--dashboard", action="store_true",
                     help="open the Streamlit dashboard on the fused output when done")
+    ap.add_argument("--skill", action="append", default=[], metavar="DIR",
+                    help="Agent-Skill dir (e.g. nature-figure) to style agent figures; repeatable")
+    ap.add_argument("--allow-skills", action="store_true",
+                    help="enable the Skill tool so ~/.claude/skills are usable too")
     args = ap.parse_args()
 
     if not M1_STATE.exists():
@@ -73,7 +77,7 @@ def main() -> None:
 
     FUSED_DIR.mkdir(parents=True, exist_ok=True)
     explorer = M2ExplorerAgent(
-        cli_config=run.build_codegen(args.backend),
+        cli_config=run.build_codegen(args.backend, skills=args.skill, allow_skills=args.allow_skills),
         sandbox=ExperimentSandbox(workdir=FUSED_DIR / "sandbox", cleanup=False),
         timeout_sec=args.timeout_sec,
         max_attempts=2,

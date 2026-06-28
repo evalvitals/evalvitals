@@ -93,6 +93,21 @@ The exploratory report is intentionally discovery-oriented. It is allowed to
 surface hypotheses, patterns, suspicious correlations, and suggested follow-up
 tests. It is not the final confirmatory statistics layer.
 
+### Figure styling (Agent Skills)
+
+On the **claude** / **agy** backends, `explore` automatically applies the
+package-bundled **nature-figure** Agent Skill so the figures the agent writes
+under `figures/` come out publication-quality. The skill is vendored in the repo
+(`evalvitals/analysis/skills/`), so it travels with `git clone` and `pip
+install` — no per-machine `~/.claude` setup needed.
+
+- `--no-skills` — skip bundled skills for a run.
+- `--skill /path/to/other-skill` — add more skill dirs (repeatable).
+- `--allow-skills` — also enable globally-installed `~/.claude/skills`.
+
+Skills style only the agent-authored `figures/*.png`; the host-rendered chart
+specs (`charts`) stay deterministic and are never touched by a skill.
+
 ## Dashboard
 
 Open a Streamlit dashboard over an explore output directory:

@@ -57,6 +57,29 @@ def main(argv: list[str] | None = None) -> int:
         help="Open the Streamlit dashboard on the output directory when done.",
     )
     parser.add_argument("--port", type=int, default=None, help="Optional dashboard port.")
+    parser.add_argument(
+        "--skill",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Path to an Agent-Skill directory (with SKILL.md) to style the "
+             "agent-authored figures, e.g. a nature-figure skill. Repeatable. "
+             "Only the claude/agy backends use skills.",
+    )
+    parser.add_argument(
+        "--allow-skills",
+        action="store_true",
+        help="Enable the Skill tool so globally-installed (~/.claude/skills) "
+             "skills are usable too. Implied when --skill is given.",
+    )
+    parser.add_argument(
+        "--no-skills",
+        dest="use_bundled_skills",
+        action="store_false",
+        default=True,
+        help="Do not apply the package's bundled skills (e.g. nature-figure) "
+             "for this run.",
+    )
     args = parser.parse_args(argv)
 
     return run_explore(
@@ -73,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         max_attempts=args.max_attempts,
         dashboard=args.dashboard,
         dashboard_port=args.port,
+        skills=args.skill,
+        allow_skills=args.allow_skills,
+        use_bundled_skills=args.use_bundled_skills,
     )
 
 
