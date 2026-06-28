@@ -46,6 +46,8 @@ def main() -> None:
         "Among these labeled cases, what per-case signals distinguish the FAIL cases "
         "(false 'Yes' on an absent object) from the PASS cases? Propose composite "
         "signals as deterministic recipes over the available numeric columns."))
+    ap.add_argument("--dashboard", action="store_true",
+                    help="open the Streamlit dashboard on the fused output when done")
     args = ap.parse_args()
 
     if not M1_STATE.exists():
@@ -104,6 +106,14 @@ def main() -> None:
     for c in report.caveats:
         print(f"  [caveat] {c}")
 
+    # ── render the explorer's chart specs (host-side, spec + CSV -> PNG) so the
+    #    fused_report.json carries figure_path for Step 2's M3 and the dashboard ──
+    from evalvitals.analysis.charts import render_chart_specs
+
+    report.charts = render_chart_specs(report.charts, FUSED_DIR / "sandbox", FUSED_DIR)
+    n_rendered = sum(1 for c in report.charts if c.get("figure_path"))
+    print(f"rendered {n_rendered}/{len(report.charts)} chart(s) -> {FUSED_DIR / 'figures'}")
+
     # ── persist full report + the CONFIRMED recipes for Step 2 ──
     (FUSED_DIR / "fused_report.json").write_text(
         json.dumps(report.to_dict(), indent=2, default=str), encoding="utf-8")
@@ -116,10 +126,18 @@ def main() -> None:
     print(f"\nwrote {FUSED_DIR / 'fused_report.json'}")
     print(f"wrote {len(confirmed)} confirmed recipe(s) -> {FUSED_DIR / 'confirmed_recipes.json'}")
     if confirmed:
-        print("Step 2:  python run_m2-5.py --recipes outputs/fused/confirmed_recipes.json")
+        print("Step 2:  python run_m2-5.py --recipes outputs/fused/confirmed_recipes.json "
+              "--explore-report outputs/fused/fused_report.json")
     else:
         print("no explorer recipe was confirmed on the held-out split — "
               "nothing to feed Step 2 (this is an honest negative, not an error)")
+        print("(you can still feed M3 the charts/observations: "
+              "run_m2-5.py --explore-report outputs/fused/fused_report.json)")
+
+    if args.dashboard:
+        from evalvitals.analysis.dashboard import launch_dashboard
+
+        raise SystemExit(launch_dashboard(FUSED_DIR))
 
 
 if __name__ == "__main__":

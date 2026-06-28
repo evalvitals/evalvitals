@@ -59,6 +59,9 @@ def main() -> None:
                     help="coder backend for M2/M4/fix codegen (default claude)")
     ap.add_argument("--recipes", default="",
                     help="path to confirmed_recipes.json (Step 1 output) — bridged into M2")
+    ap.add_argument("--explore-report", default="",
+                    help="path to Step 1 fused_report.json — its charts/observations "
+                         "(UNCONFIRMED) are shown to M3 only, never to M2/M5/fix")
     ap.add_argument("--max-validation-cases", type=int,
                     default=int(run.CFG.get("fix_validation_cases", 60)),
                     help="cap fix-validation cases (overrides config; 0 = full batch)")
@@ -113,6 +116,16 @@ def main() -> None:
         print(f"bridging {len(signal_recipes)} confirmed recipe(s): "
               f"{[r.name for r in signal_recipes]}")
 
+    # Optional: feed Step 1's explorer mechanism notes (charts/observations) to M3.
+    # Descriptive + UNCONFIRMED — they inform WHICH hypotheses M3 proposes; they do
+    # NOT enter the M2 confirmatory family, M5 testing, or the fix gate.
+    explore_report = None
+    if args.explore_report:
+        explore_report = json.loads(Path(args.explore_report).read_text())
+        n_charts = len(explore_report.get("charts") or [])
+        n_obs = len(explore_report.get("observations") or [])
+        print(f"feeding explore context to M3: {n_charts} chart(s), {n_obs} observation(s)")
+
     run_logger = RunLogger(run_dir=OUT / "logs_m2_5", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,
@@ -131,6 +144,7 @@ def main() -> None:
         protocol=run.build_protocol(),
         run_logger=run_logger,
         signal_recipes=signal_recipes,
+        explore_report=explore_report,
     )
 
     report = loop.run(cases)

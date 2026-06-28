@@ -627,6 +627,43 @@ _STOPPED_BY_NO_HYPS   = "no_hypotheses"
 _STOPPED_BY_NO_PROBE  = "no_probe_results"
 
 
+def _coerce_explore_context(value: "Any | None") -> "Any | None":
+    """Normalise an explore_report argument into an ExploreContext or None.
+
+    Accepts an ``ExploreContext``, a report dict (e.g. ``fused_report.json``),
+    or ``None``. Never raises — a malformed value degrades to ``None``."""
+    if value is None:
+        return None
+    try:
+        from evalvitals.eval_agent.stages.diagnosis import ExploreContext
+
+        if isinstance(value, ExploreContext):
+            return None if value.is_empty else value
+        if isinstance(value, dict):
+            return ExploreContext.from_report(value)
+    except Exception as exc:  # explore context is optional, never fatal
+        logger.warning("could not build ExploreContext from explore_report: %s", exc)
+    return None
+
+
+def _diagnose_with_optional_context(
+    diag_agent: "Any", stats_report: "Any", prior_cycles: "Any", explore_context: "Any | None"
+) -> "Any":
+    """Call ``diag_agent.diagnose`` passing ``explore_context`` only when the
+    agent accepts it, so custom/legacy diagnosis agents keep working unchanged."""
+    import inspect as _inspect
+
+    kwargs: dict[str, Any] = {"prior_cycles": prior_cycles or None}
+    if explore_context is not None:
+        try:
+            params = _inspect.signature(diag_agent.diagnose).parameters
+            if "explore_context" in params:
+                kwargs["explore_context"] = explore_context
+        except (TypeError, ValueError):
+            pass
+    return diag_agent.diagnose(stats_report, **kwargs)
+
+
 @dataclass
 class VLDiagnoseReport:
     """Summary returned by :class:`VLDiagnoseLoop.run`.
@@ -719,6 +756,7 @@ class VLDiagnoseLoop:
         confirm_split_seed: int = 0,
         signal_recipes: "list | None" = None,
         bridge_analyzer_name: str = "explored",
+        explore_report: "Any | None" = None,
     ) -> None:
         from evalvitals.eval_agent.stages.fix_agent import FixAgent
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
@@ -755,6 +793,11 @@ class VLDiagnoseLoop:
         # the fused pipeline's held-out split), never by peeking at these labels.
         self._signal_recipes = list(signal_recipes or [])
         self._bridge_analyzer_name = bridge_analyzer_name
+        # Step-1 explorer mechanism notes (charts/observations/caveats). Descriptive,
+        # UNCONFIRMED: passed to M3's hypothesis-proposal prompt ONLY — never to the
+        # M2 confirmatory family, M5 testing, or the fix gate. Accepts an
+        # ExploreContext, a report dict (fused_report.json), or None.
+        self._explore_context = _coerce_explore_context(explore_report)
         self._tokens_used: int = 0
         self._run_id: str = ""
 
@@ -975,7 +1018,9 @@ class VLDiagnoseLoop:
 
             _t0 = time.monotonic()
             try:
-                diag = diag_agent.diagnose(stats_report, prior_cycles=prior_cycles or None)
+                diag = _diagnose_with_optional_context(
+                    diag_agent, stats_report, prior_cycles, self._explore_context
+                )
             except Exception as exc:  # judge timeout/quota must not kill the loop
                 logger.warning(
                     "M3 diagnosis failed at cycle %d (%s) — stopping with the "
@@ -993,7 +1038,14 @@ class VLDiagnoseLoop:
             self._tokens_used += _tok
 
             if self.run_logger:
-                self.run_logger.log_diagnosis(cycle, diag, duration_sec=_dt)
+                _explore_figs = (
+                    self._explore_context.figure_paths
+                    if self._explore_context is not None
+                    else None
+                )
+                self.run_logger.log_diagnosis(
+                    cycle, diag, duration_sec=_dt, explore_figures=_explore_figs or None
+                )
 
             if not diag.hypotheses:
                 logger.info("M3 produced no hypotheses at cycle %d.", cycle)

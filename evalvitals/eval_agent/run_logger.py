@@ -663,8 +663,13 @@ class RunLogger:
         diag: "DiagnosisResult",
         *,
         duration_sec: "float | None" = None,
+        explore_figures: "list[str] | None" = None,
     ) -> None:
-        """M3: log raw LLM output, the prompt, and every parsed hypothesis."""
+        """M3: log raw LLM output, the prompt, and every parsed hypothesis.
+
+        *explore_figures* are the (UNCONFIRMED) explorer chart PNGs M3 was shown,
+        recorded for the dashboard; they have no bearing on hypothesis survival.
+        """
         entry: dict[str, Any] = {
             "event": "diagnosis",
             "cycle": cycle,
@@ -680,6 +685,16 @@ class RunLogger:
             ],
             "raw_judge_output": diag.raw_judge_output,
         }
+        # Provenance of the (UNCONFIRMED) explorer mechanism notes M3 was shown.
+        # Descriptive only — these never enter M2/M5/fix; logged so the dashboard
+        # can tag which explore charts/observations each hypothesis cited.
+        referenced = getattr(diag, "referenced_charts", None)
+        if referenced:
+            entry["referenced_charts"] = list(referenced)
+        if getattr(diag, "explore_context_used", False):
+            entry["explore_context_used"] = True
+        if explore_figures:
+            entry["explore_figures"] = list(explore_figures)
         judge_io = self._save_judge_io(
             f"c{cycle}_m3_diagnosis",
             getattr(diag, "prompt", None),

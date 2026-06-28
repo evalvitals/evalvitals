@@ -9,24 +9,29 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from evalvitals.analysis.dashboard import load_session
+from evalvitals.analysis.dashboard import load_run
 
 
 def main() -> None:
-    session_arg = sys.argv[1] if len(sys.argv) > 1 else "."
-    session = load_session(session_arg)
+    run_arg = sys.argv[1] if len(sys.argv) > 1 else "."
+    session = load_run(run_arg)
     root = Path(session["root"])
-    turns = session["turns"]
+    runs = session["runs"]
 
-    st.set_page_config(page_title="EvalVitals M2", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="EvalVitals", layout="wide", initial_sidebar_state="expanded")
     _inject_css()
 
     selected = _render_sidebar(root, session)
-    if not turns:
+
+    if session.get("kind") == "loop" and session.get("story"):
+        _render_loop_story(root, session["story"], runs)
+        return
+
+    if not runs:
         _render_empty(root)
         return
 
-    turn = turns[selected]
+    turn = runs[selected]
     turn_dir = Path(turn["dir"])
     report = turn["report"]
 
@@ -45,38 +50,96 @@ def main() -> None:
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
-    turns = session["turns"]
-    history = session.get("history") or []
+    runs = session["runs"]
+    kind = session.get("kind", "explore")
 
-    st.sidebar.markdown('<div class="ev-sidebar-title">EvalVitals M2</div>', unsafe_allow_html=True)
+    st.sidebar.markdown('<div class="ev-sidebar-title">EvalVitals</div>', unsafe_allow_html=True)
     st.sidebar.caption(str(root))
+    st.sidebar.markdown(f"**Mode:** {kind}")
 
-    if not turns:
+    if not runs:
         return 0
 
-    labels = [_turn_label(t) for t in turns]
-    selected = st.sidebar.radio("Runs", range(len(turns)), format_func=lambda i: labels[i])
+    if kind == "loop":
+        st.sidebar.markdown("---")
+        st.sidebar.caption("Diagnostic loop run — see the story view.")
+        return 0
+
+    labels = [_turn_label(t) for t in runs]
+    selected = st.sidebar.radio("Reports", range(len(runs)), format_func=lambda i: labels[i])
 
     st.sidebar.markdown("---")
-    st.sidebar.metric("Turns", len(turns))
-    st.sidebar.metric("Messages", len(history))
-
-    with st.sidebar.expander("Session History", expanded=False):
-        if history:
-            for item in history[-8:]:
-                role = str(item.get("role", "message")) if isinstance(item, dict) else "message"
-                content = str(item.get("content", item)) if isinstance(item, dict) else str(item)
-                st.markdown(f"**{role}**")
-                st.caption(_truncate(content, 240))
-        else:
-            st.caption("No chat history found.")
+    st.sidebar.metric("Reports", len(runs))
     return int(selected)
 
 
 def _render_empty(root: Path) -> None:
-    st.markdown('<div class="ev-hero"><h1>M2 Dashboard</h1></div>', unsafe_allow_html=True)
-    st.warning("No turn_*/exploratory_report.json files found.")
+    st.markdown('<div class="ev-hero"><h1>EvalVitals Dashboard</h1></div>', unsafe_allow_html=True)
+    st.warning("No exploratory_report.json / fused_report.json / run_log.jsonl found.")
     st.caption(str(root))
+
+
+def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, Any]]) -> None:
+    """Render a diagnostic loop run as an ordered story: explore charts (Step 1)
+    → M2 stats → M3 hypotheses (each tagged with the explore charts/observations
+    it referenced) → M5 tests → fixes."""
+    st.markdown(
+        f"""
+        <div class="ev-header">
+          <div>
+            <div class="ev-kicker">Diagnostic Loop Run</div>
+            <h1>M1 → M2 → M3 → M5 → Fix</h1>
+            <div class="ev-path">{_html_escape(str(root))}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Step 1 explore artifacts (charts the loop's M3 was allowed to consult).
+    explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
+    if explore_report:
+        with st.expander("Step 1 — exploratory charts & observations (UNCONFIRMED; fed to M3 only)", expanded=True):
+            _render_charts_and_plots(explore_report, Path(runs[0]["dir"]) if runs else root)
+            obs = explore_report.get("observations") or []
+            for o in obs[:8]:
+                st.markdown(f"- {o}")
+
+    diagnoses = story.get("diagnoses") or []
+    surgeries = story.get("surgeries") or []
+    fixes = story.get("fixes") or []
+
+    st.markdown("### M3 — hypotheses")
+    if not diagnoses:
+        st.caption("No diagnosis events in the loop log.")
+    for diag in diagnoses:
+        cycle = diag.get("cycle")
+        st.markdown(f"**Cycle {cycle}** · {diag.get('n_hypotheses', 0)} hypotheses")
+        refs = diag.get("referenced_charts") or []
+        if refs:
+            st.caption("M3 referenced explore artifacts: " + ", ".join(str(r) for r in refs))
+        for h in diag.get("hypotheses") or []:
+            st.markdown(
+                f"""
+                <div class="ev-signal">
+                  <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
+                  <div class="ev-signal-test">failure_mode: {_html_escape(str(h.get('failure_mode', '')))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    if surgeries:
+        st.markdown("### M5 / M4 — tested interventions")
+        for s in surgeries:
+            tag = str(s.get("module", "")).upper()
+            status = str(s.get("status", ""))
+            st.markdown(f"- **[{tag}]** {status} · {_truncate(str(s.get('hypothesis', '')), 120)}")
+
+    if fixes:
+        st.markdown("### Fix — e-BH adjudicated outcomes")
+        for f in fixes:
+            st.json(f)
 
 
 def _render_header(root: Path, turn: dict[str, Any], report: dict[str, Any]) -> None:
@@ -223,6 +286,17 @@ def _render_chart_card(chart: dict[str, Any], turn_dir: Path) -> None:
     df = _table_to_dataframe(chart.get("data"), turn_dir)
 
     st.markdown(f'<div class="ev-card-title">{_html_escape(title)}</div>', unsafe_allow_html=True)
+
+    # Prefer the host-rendered PNG (deterministic, what M3 saw) when present.
+    fig_path = chart.get("figure_path")
+    if fig_path:
+        p = _resolve_artifact_path(fig_path, turn_dir)
+        if p.exists() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            st.image(str(p), width="stretch")
+            return
+    if chart.get("render_skipped"):
+        st.caption(f"(render skipped: {chart['render_skipped']})")
+
     if df is None:
         st.json(chart)
         return

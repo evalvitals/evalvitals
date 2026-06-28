@@ -86,8 +86,7 @@ Changelog = "https://github.com/evalvitals/evalvitals/blob/main/CHANGELOG.md"
 
 [project.scripts]
 evalvitals = "evalvitals.cli:main"
-evalvitals-m2-chat = "evalvitals.analysis.cli:chat_main"
-evalvitals-m2-explore = "evalvitals.analysis.cli:main"
+evalvitals-explore = "evalvitals.analysis.cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "evalvitals.__version__"}
