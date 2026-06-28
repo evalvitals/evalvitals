@@ -1,0 +1,33 @@
+{
+  "tier": "L1",
+  "name": "evidence_grounded",
+  "kind": "template",
+  "source": "judge",
+  "payload": {
+    "prompt_template": "{prompt} Answer Yes only if you can point to the specific visible region where the object actually appears. If you cannot locate it directly in the image, answer No. Do not infer its presence from other objects that are commonly found alongside it."
+  },
+  "trial_root": null,
+  "n_pairs": 40,
+  "n_fixed": 5,
+  "n_broken": 2,
+  "fixed_cases": [
+    "9906d4f70c33",
+    "f4180dce7c58",
+    "8a6bd51a877b",
+    "c8952e6d8856",
+    "18ffb4e4a446"
+  ],
+  "broken_cases": [
+    "d1edf34bb1bb",
+    "86e794df592c"
+  ],
+  "effect": 0.07499999999999996,
+  "reject": false,
+  "fixed": false,
+  "summary": "[mcnemar + e-value (paired binary)] effect=+0.0750 (B>A) CI=-0.0500..+0.2000, e=0.76 -> inconclusive [partial, coverage=100%]",
+  "n_applicable": 40,
+  "coverage": 1.0,
+  "n_unstable": 0,
+  "e_value": 0.7619047619047632,
+  "verdict": "partial"
+}

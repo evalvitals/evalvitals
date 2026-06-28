@@ -1,0 +1,50 @@
+{
+  "tier": "L2",
+  "name": "upscale_evidence_vote",
+  "kind": "spec",
+  "source": "judge",
+  "payload": {
+    "name": "upscale_evidence_vote",
+    "image_ops": [
+      {
+        "tool": "upscale",
+        "params": {
+          "factor": 2.0
+        }
+      },
+      {
+        "tool": "sharpen",
+        "params": {
+          "factor": 2.0
+        }
+      }
+    ],
+    "prompt_template": "Base your answer strictly on visual evidence in this image. Ignore expectations about which objects commonly co-occur. If the object is not actually depicted, answer No. {prompt}",
+    "n_samples": 5
+  },
+  "trial_root": null,
+  "n_pairs": 40,
+  "n_fixed": 7,
+  "n_broken": 1,
+  "fixed_cases": [
+    "9906d4f70c33",
+    "f4180dce7c58",
+    "c9708d64631d",
+    "09d651295764",
+    "df9252ab7455",
+    "8a6bd51a877b",
+    "53f065ac6e65"
+  ],
+  "broken_cases": [
+    "d1edf34bb1bb"
+  ],
+  "effect": 0.15000000000000002,
+  "reject": false,
+  "fixed": false,
+  "summary": "[mcnemar + e-value (paired binary)] effect=+0.1500 (B>A) CI=+0.0250..+0.2750, e=3.56 -> inconclusive [partial, coverage=100%]",
+  "n_applicable": 40,
+  "coverage": 1.0,
+  "n_unstable": 0,
+  "e_value": 3.5555555555555642,
+  "verdict": "partial"
+}

@@ -18,7 +18,9 @@ defaults to 1). Shared setup (judge, protocol) is reused from run.py.
 from __future__ import annotations
 
 import argparse
+import json
 import pickle
+from pathlib import Path
 
 import run  # reuse build_judge / build_protocol / CFG
 
@@ -53,6 +55,13 @@ def main() -> None:
     ap.add_argument("--skip-m4", action="store_true")
     ap.add_argument("--judge-model", default=run.CFG.get("judge_model", "claude-opus-4-8"))
     ap.add_argument("--judge-effort", default=run.CFG.get("judge_effort", "low"))
+    ap.add_argument("--backend", default="claude", choices=["claude", "codex", "agy"],
+                    help="coder backend for M2/M4/fix codegen (default claude)")
+    ap.add_argument("--recipes", default="",
+                    help="path to confirmed_recipes.json (Step 1 output) — bridged into M2")
+    ap.add_argument("--max-validation-cases", type=int,
+                    default=int(run.CFG.get("fix_validation_cases", 60)),
+                    help="cap fix-validation cases (overrides config; 0 = full batch)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
@@ -90,14 +99,20 @@ def main() -> None:
                     want={Capability.GENERATE, Capability.HIDDEN_STATES,
                           Capability.ATTENTION})
 
-    codegen_effort = str(run.CFG.get("codegen_effort", "") or "")
-    codegen = CliAgentConfig(
-        provider="claude_code",
-        model=str(run.CFG.get("codegen_model", "claude-opus-4-8")),
-        max_budget_usd=float(run.CFG.get("codegen_budget_usd", 2.0)),
-        timeout_sec=int(run.CFG.get("codegen_timeout_sec", 240)),
-        extra_args=(("--effort", codegen_effort) if codegen_effort else ()),
-    )
+    codegen = run.build_codegen(args.backend)
+
+    # Optional: bridge the recipes confirmed by Step 1 (run_fused.py) into M2 as a
+    # synthetic "explored" analyzer, so the LAMBDA-discovered composite signals
+    # enter M2/M3/M5 via the standard findings["per_case"] contract.
+    signal_recipes = []
+    if args.recipes:
+        from evalvitals.analysis.operationalize import SignalRecipe
+
+        raw = json.loads(Path(args.recipes).read_text())
+        signal_recipes = [SignalRecipe.from_dict(r) for r in raw]
+        print(f"bridging {len(signal_recipes)} confirmed recipe(s): "
+              f"{[r.name for r in signal_recipes]}")
+
     run_logger = RunLogger(run_dir=OUT / "logs_m2_5", verbose=True)
     loop = VLDiagnoseLoop(
         model=model,
@@ -110,11 +125,12 @@ def main() -> None:
         fix_agent=FixAgent(judge=judge,
                            max_tier=str(run.CFG.get("fix_max_tier", "L3b")),
                            cli_config=codegen, run_logger=run_logger,
-                           max_validation_cases=int(run.CFG.get("fix_validation_cases", 60)),
+                           max_validation_cases=args.max_validation_cases,
                            exec_timeout_sec=int(run.CFG.get("fix_exec_timeout_sec", 900))),
         max_cycles=args.max_cycles,
         protocol=run.build_protocol(),
         run_logger=run_logger,
+        signal_recipes=signal_recipes,
     )
 
     report = loop.run(cases)

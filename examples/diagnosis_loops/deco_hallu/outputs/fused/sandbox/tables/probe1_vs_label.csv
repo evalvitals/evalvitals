@@ -1,0 +1,3 @@
+probe1_value,n_pass,n_fail,n_total,fail_rate
+0,96,0,96,0
+1,0,25,25,1

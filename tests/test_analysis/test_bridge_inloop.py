@@ -141,3 +141,20 @@ def test_loop_bridge_signals_is_noop_without_recipes():
 
     assert "explored" not in probe_results
     assert me._added == []
+
+
+def test_loop_bridge_raises_stats_signal_cap_so_bridged_signals_are_tested():
+    """Regression: a low max_signal_tools must not silently cap the bridged signals
+    (they are appended last to per_case). The bridge raises the cap to cover them."""
+    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+
+    probe_results = _probe_results()  # saliency.obj_size + saliency.attention
+    recipe = SignalRecipe(name="small", kind="expr", expr="saliency_obj_size < 40")
+    agent = StatsAnalysisAgent(max_signal_tools=1)  # deliberately too small
+    me = _fake_loop_self([recipe])
+    me.stats_agent = agent
+
+    VLDiagnoseLoop._bridge_signals(me, probe_results, None)
+
+    # 3 signals now in the family: saliency.obj_size, saliency.attention, explored.small
+    assert agent._max_signal_tools >= 3

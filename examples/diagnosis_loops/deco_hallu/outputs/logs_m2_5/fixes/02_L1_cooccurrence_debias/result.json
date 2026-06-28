@@ -1,0 +1,30 @@
+{
+  "tier": "L1",
+  "name": "cooccurrence_debias",
+  "kind": "template",
+  "source": "judge",
+  "payload": {
+    "prompt_template": "Do not assume an object is present just because it commonly appears alongside other things in the image. Only answer Yes if you can directly see the specific object being asked about. {prompt}"
+  },
+  "trial_root": null,
+  "n_pairs": 24,
+  "n_fixed": 3,
+  "n_broken": 1,
+  "fixed_cases": [
+    "d1edf34bb1bb",
+    "df9252ab7455",
+    "18ffb4e4a446"
+  ],
+  "broken_cases": [
+    "86e794df592c"
+  ],
+  "effect": 0.08333333333333326,
+  "reject": false,
+  "fixed": false,
+  "summary": "[mcnemar + e-value (paired binary)] effect=+0.0833 (B>A) CI=-0.0833..+0.2500, e=0.80 -> inconclusive [partial, coverage=100%]",
+  "n_applicable": 24,
+  "coverage": 1.0,
+  "n_unstable": 0,
+  "e_value": 0.7999999999999997,
+  "verdict": "partial"
+}

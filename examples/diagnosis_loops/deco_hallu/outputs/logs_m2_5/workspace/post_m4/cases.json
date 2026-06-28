@@ -1,0 +1,2615 @@
+[
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "6ebe00ddf386",
+    "metadata": {
+      "image_id": 210789,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6ebe00ddf386.jpg"
+  },
+  {
+    "prompt": "Is there a bus in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "86e794df592c",
+    "metadata": {
+      "image_id": 458338,
+      "object": "bus",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/86e794df592c.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "1188ff04064e",
+    "metadata": {
+      "image_id": 353180,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1188ff04064e.jpg"
+  },
+  {
+    "prompt": "Is there a bottle in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "1f7f0f03728a",
+    "metadata": {
+      "image_id": 157084,
+      "object": "bottle",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1f7f0f03728a.jpg"
+  },
+  {
+    "prompt": "Is there a skis in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "92340eb2b4bf",
+    "metadata": {
+      "image_id": 42190,
+      "object": "skis",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/92340eb2b4bf.jpg"
+  },
+  {
+    "prompt": "Is there a chair in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "8a6bd51a877b",
+    "metadata": {
+      "image_id": 7320,
+      "object": "chair",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8a6bd51a877b.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "ead9fb9f0794",
+    "metadata": {
+      "image_id": 564336,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ead9fb9f0794.jpg"
+  },
+  {
+    "prompt": "Is there a bowl in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "df9252ab7455",
+    "metadata": {
+      "image_id": 387098,
+      "object": "bowl",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/df9252ab7455.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "45b56a3a767f",
+    "metadata": {
+      "image_id": 114710,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/45b56a3a767f.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "afa6e9a0a337",
+    "metadata": {
+      "image_id": 167110,
+      "object": "truck",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/afa6e9a0a337.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "95280df42336",
+    "metadata": {
+      "image_id": 288042,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/95280df42336.jpg"
+  },
+  {
+    "prompt": "Is there a bicycle in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "c9708d64631d",
+    "metadata": {
+      "image_id": 87435,
+      "object": "bicycle",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c9708d64631d.jpg"
+  },
+  {
+    "prompt": "Is there a bear in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "47cefa2c4f28",
+    "metadata": {
+      "image_id": 567886,
+      "object": "bear",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/47cefa2c4f28.jpg"
+  },
+  {
+    "prompt": "Is there a bottle in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "4efaf6638356",
+    "metadata": {
+      "image_id": 539251,
+      "object": "bottle",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/4efaf6638356.jpg"
+  },
+  {
+    "prompt": "Is there a potted plant in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "d51ea851c13a",
+    "metadata": {
+      "image_id": 327771,
+      "object": "potted plant",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d51ea851c13a.jpg"
+  },
+  {
+    "prompt": "Is there a bear in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "d1edf34bb1bb",
+    "metadata": {
+      "image_id": 358255,
+      "object": "bear",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d1edf34bb1bb.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "18192c113a93",
+    "metadata": {
+      "image_id": 506483,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/18192c113a93.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "b60e743b380c",
+    "metadata": {
+      "image_id": 249720,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b60e743b380c.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "ce53fa061bbc",
+    "metadata": {
+      "image_id": 378873,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ce53fa061bbc.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "1e5235248aa8",
+    "metadata": {
+      "image_id": 11241,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1e5235248aa8.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "5befb1bbec9d",
+    "metadata": {
+      "image_id": 463522,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/5befb1bbec9d.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "09d651295764",
+    "metadata": {
+      "image_id": 309371,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/09d651295764.jpg"
+  },
+  {
+    "prompt": "Is there a bowl in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "69b35320e334",
+    "metadata": {
+      "image_id": 108189,
+      "object": "bowl",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/69b35320e334.jpg"
+  },
+  {
+    "prompt": "Is there a bowl in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "36ad6a303c91",
+    "metadata": {
+      "image_id": 246199,
+      "object": "bowl",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/36ad6a303c91.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "44250189a779",
+    "metadata": {
+      "image_id": 245448,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/44250189a779.jpg"
+  },
+  {
+    "prompt": "Is there a bottle in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "f7d72d6362e9",
+    "metadata": {
+      "image_id": 349936,
+      "object": "bottle",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/f7d72d6362e9.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "64dea5ad693f",
+    "metadata": {
+      "image_id": 196462,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/64dea5ad693f.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "f4180dce7c58",
+    "metadata": {
+      "image_id": 356424,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/f4180dce7c58.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "065252fe7b95",
+    "metadata": {
+      "image_id": 452297,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/065252fe7b95.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "9906d4f70c33",
+    "metadata": {
+      "image_id": 125524,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/9906d4f70c33.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "8f10599af865",
+    "metadata": {
+      "image_id": 304819,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8f10599af865.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "f4fff43d4af0",
+    "metadata": {
+      "image_id": 549390,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/f4fff43d4af0.jpg"
+  },
+  {
+    "prompt": "Is there a potted plant in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "4ac56ef01ef8",
+    "metadata": {
+      "image_id": 243158,
+      "object": "potted plant",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/4ac56ef01ef8.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "9b919d8aeb57",
+    "metadata": {
+      "image_id": 325347,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/9b919d8aeb57.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "c8952e6d8856",
+    "metadata": {
+      "image_id": 256906,
+      "object": "backpack",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c8952e6d8856.jpg"
+  },
+  {
+    "prompt": "Is there a chair in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "4a1bb22e89b7",
+    "metadata": {
+      "image_id": 117527,
+      "object": "chair",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/4a1bb22e89b7.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "c560bf98c4ca",
+    "metadata": {
+      "image_id": 390184,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c560bf98c4ca.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "8bb028c9a225",
+    "metadata": {
+      "image_id": 465346,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8bb028c9a225.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "53f065ac6e65",
+    "metadata": {
+      "image_id": 514248,
+      "object": "truck",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/53f065ac6e65.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "eb30b5b7d628",
+    "metadata": {
+      "image_id": 554002,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/eb30b5b7d628.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.FAIL",
+    "id": "6a5d7f74d534",
+    "metadata": {
+      "image_id": 122962,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6a5d7f74d534.jpg"
+  },
+  {
+    "prompt": "Is there a skis in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "f87f3ae9d294",
+    "metadata": {
+      "image_id": 238691,
+      "object": "skis",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/f87f3ae9d294.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "15f5dae8adcc",
+    "metadata": {
+      "image_id": 465275,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/15f5dae8adcc.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "44c4ecdf7042",
+    "metadata": {
+      "image_id": 544456,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/44c4ecdf7042.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "6b60abd8e5f0",
+    "metadata": {
+      "image_id": 541783,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6b60abd8e5f0.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "f7b46b7649da",
+    "metadata": {
+      "image_id": 23084,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/f7b46b7649da.jpg"
+  },
+  {
+    "prompt": "Is there a bird in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b70a85522b58",
+    "metadata": {
+      "image_id": 472143,
+      "object": "bird",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b70a85522b58.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "c6695dc728db",
+    "metadata": {
+      "image_id": 252911,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c6695dc728db.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "9907039d5238",
+    "metadata": {
+      "image_id": 45685,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/9907039d5238.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2d41348db313",
+    "metadata": {
+      "image_id": 429580,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2d41348db313.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "52dcaf0c202f",
+    "metadata": {
+      "image_id": 184338,
+      "object": "truck",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/52dcaf0c202f.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "3394a70b65f3",
+    "metadata": {
+      "image_id": 433574,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/3394a70b65f3.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2651e4194d07",
+    "metadata": {
+      "image_id": 449432,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2651e4194d07.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2b1d9d90231f",
+    "metadata": {
+      "image_id": 467176,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2b1d9d90231f.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "39ad5f358392",
+    "metadata": {
+      "image_id": 299074,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/39ad5f358392.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8565c3870da9",
+    "metadata": {
+      "image_id": 381895,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8565c3870da9.jpg"
+  },
+  {
+    "prompt": "Is there a dog in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ca3d41b1ecfe",
+    "metadata": {
+      "image_id": 283412,
+      "object": "dog",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ca3d41b1ecfe.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "6ab6d695bd11",
+    "metadata": {
+      "image_id": 17708,
+      "object": "handbag",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6ab6d695bd11.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8f19e4aa25c4",
+    "metadata": {
+      "image_id": 405205,
+      "object": "truck",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8f19e4aa25c4.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "de851b419875",
+    "metadata": {
+      "image_id": 353096,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/de851b419875.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "60a92d18772c",
+    "metadata": {
+      "image_id": 499105,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/60a92d18772c.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "55de67591bcd",
+    "metadata": {
+      "image_id": 283168,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/55de67591bcd.jpg"
+  },
+  {
+    "prompt": "Is there a dog in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b3d7be2b42d4",
+    "metadata": {
+      "image_id": 421455,
+      "object": "dog",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b3d7be2b42d4.jpg"
+  },
+  {
+    "prompt": "Is there a skis in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8fd38ea89f87",
+    "metadata": {
+      "image_id": 396338,
+      "object": "skis",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8fd38ea89f87.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ace6bd5bd57d",
+    "metadata": {
+      "image_id": 23084,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ace6bd5bd57d.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "0ccad075d2c9",
+    "metadata": {
+      "image_id": 405205,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/0ccad075d2c9.jpg"
+  },
+  {
+    "prompt": "Is there a chair in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "389858abc32b",
+    "metadata": {
+      "image_id": 376959,
+      "object": "chair",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/389858abc32b.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "0b42747fce49",
+    "metadata": {
+      "image_id": 214244,
+      "object": "backpack",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/0b42747fce49.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "7c523ec98fd0",
+    "metadata": {
+      "image_id": 287305,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/7c523ec98fd0.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "0e40679a88c2",
+    "metadata": {
+      "image_id": 273450,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/0e40679a88c2.jpg"
+  },
+  {
+    "prompt": "Is there a sink in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "38c4f89fc2e6",
+    "metadata": {
+      "image_id": 288639,
+      "object": "sink",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/38c4f89fc2e6.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ff087173f847",
+    "metadata": {
+      "image_id": 287035,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ff087173f847.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "23f4dcbdd9f3",
+    "metadata": {
+      "image_id": 199764,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/23f4dcbdd9f3.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "bd5a3b33f66a",
+    "metadata": {
+      "image_id": 39516,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/bd5a3b33f66a.jpg"
+  },
+  {
+    "prompt": "Is there a tv in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "06988c13b820",
+    "metadata": {
+      "image_id": 33270,
+      "object": "tv",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/06988c13b820.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "d7d1c18a5b92",
+    "metadata": {
+      "image_id": 478736,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d7d1c18a5b92.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "c3da47d47bcb",
+    "metadata": {
+      "image_id": 273450,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c3da47d47bcb.jpg"
+  },
+  {
+    "prompt": "Is there a baseball bat in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "135421668958",
+    "metadata": {
+      "image_id": 554328,
+      "object": "baseball bat",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/135421668958.jpg"
+  },
+  {
+    "prompt": "Is there a tv in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "7e449d9c54f2",
+    "metadata": {
+      "image_id": 102439,
+      "object": "tv",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/7e449d9c54f2.jpg"
+  },
+  {
+    "prompt": "Is there a skis in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2f7ba901d5bd",
+    "metadata": {
+      "image_id": 302405,
+      "object": "skis",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2f7ba901d5bd.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "42bad9ce5cc1",
+    "metadata": {
+      "image_id": 433574,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/42bad9ce5cc1.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "874feb4f5c87",
+    "metadata": {
+      "image_id": 525667,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/874feb4f5c87.jpg"
+  },
+  {
+    "prompt": "Is there a pizza in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "62bcc888fe9f",
+    "metadata": {
+      "image_id": 122962,
+      "object": "pizza",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/62bcc888fe9f.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "87632ef57acc",
+    "metadata": {
+      "image_id": 184338,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/87632ef57acc.jpg"
+  },
+  {
+    "prompt": "Is there a chair in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b5db494927c8",
+    "metadata": {
+      "image_id": 12333,
+      "object": "chair",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b5db494927c8.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "cf64802ce162",
+    "metadata": {
+      "image_id": 414516,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/cf64802ce162.jpg"
+  },
+  {
+    "prompt": "Is there a chair in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "07eb234fff7a",
+    "metadata": {
+      "image_id": 281028,
+      "object": "chair",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/07eb234fff7a.jpg"
+  },
+  {
+    "prompt": "Is there a bottle in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "e349cb33e418",
+    "metadata": {
+      "image_id": 498374,
+      "object": "bottle",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/e349cb33e418.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "5c90f819fe7b",
+    "metadata": {
+      "image_id": 528905,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/5c90f819fe7b.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "697c4d12f879",
+    "metadata": {
+      "image_id": 303099,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/697c4d12f879.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "596b25adc237",
+    "metadata": {
+      "image_id": 125572,
+      "object": "truck",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/596b25adc237.jpg"
+  },
+  {
+    "prompt": "Is there a skis in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "c0a82284bfbe",
+    "metadata": {
+      "image_id": 511341,
+      "object": "skis",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c0a82284bfbe.jpg"
+  },
+  {
+    "prompt": "Is there a snowboard in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "e01c05914199",
+    "metadata": {
+      "image_id": 302405,
+      "object": "snowboard",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/e01c05914199.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "325b6a3ff592",
+    "metadata": {
+      "image_id": 573796,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/325b6a3ff592.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "693b69e1a4db",
+    "metadata": {
+      "image_id": 15738,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/693b69e1a4db.jpg"
+  },
+  {
+    "prompt": "Is there a dog in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "1081595a64a5",
+    "metadata": {
+      "image_id": 468997,
+      "object": "dog",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1081595a64a5.jpg"
+  },
+  {
+    "prompt": "Is there a knife in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "c2c28b43152d",
+    "metadata": {
+      "image_id": 573796,
+      "object": "knife",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c2c28b43152d.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "287795183c10",
+    "metadata": {
+      "image_id": 15738,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/287795183c10.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8e92e54b7df2",
+    "metadata": {
+      "image_id": 125524,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8e92e54b7df2.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b779d0e06072",
+    "metadata": {
+      "image_id": 300876,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b779d0e06072.jpg"
+  },
+  {
+    "prompt": "Is there a bird in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "707ff4f967b8",
+    "metadata": {
+      "image_id": 348469,
+      "object": "bird",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/707ff4f967b8.jpg"
+  },
+  {
+    "prompt": "Is there a cow in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "6a38c07501c0",
+    "metadata": {
+      "image_id": 235541,
+      "object": "cow",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6a38c07501c0.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "553292e1cfc4",
+    "metadata": {
+      "image_id": 265719,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/553292e1cfc4.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "d92172f5aabe",
+    "metadata": {
+      "image_id": 170077,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d92172f5aabe.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "4324495fde9d",
+    "metadata": {
+      "image_id": 73182,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/4324495fde9d.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "07dee9d896e5",
+    "metadata": {
+      "image_id": 265472,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/07dee9d896e5.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "6deabd26a62e",
+    "metadata": {
+      "image_id": 544456,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6deabd26a62e.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "d4f2732a478f",
+    "metadata": {
+      "image_id": 390157,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d4f2732a478f.jpg"
+  },
+  {
+    "prompt": "Is there a tv in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "c88994a2fef7",
+    "metadata": {
+      "image_id": 303971,
+      "object": "tv",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c88994a2fef7.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "6a8b2750e3a6",
+    "metadata": {
+      "image_id": 235203,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6a8b2750e3a6.jpg"
+  },
+  {
+    "prompt": "Is there a traffic light in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "fd4d21a0d84c",
+    "metadata": {
+      "image_id": 102906,
+      "object": "traffic light",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/fd4d21a0d84c.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8ddc1c6a0987",
+    "metadata": {
+      "image_id": 470699,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8ddc1c6a0987.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "934f8262d75e",
+    "metadata": {
+      "image_id": 392364,
+      "object": "car",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/934f8262d75e.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "bf21f4467e54",
+    "metadata": {
+      "image_id": 301575,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/bf21f4467e54.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b5caa37b885f",
+    "metadata": {
+      "image_id": 13348,
+      "object": "truck",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b5caa37b885f.jpg"
+  },
+  {
+    "prompt": "Is there a chair in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "fd3890a49bc0",
+    "metadata": {
+      "image_id": 436127,
+      "object": "chair",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/fd3890a49bc0.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "85b3b301bbec",
+    "metadata": {
+      "image_id": 418471,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/85b3b301bbec.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2fc54f94f8ef",
+    "metadata": {
+      "image_id": 510138,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2fc54f94f8ef.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "da0ec7055a66",
+    "metadata": {
+      "image_id": 142774,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/da0ec7055a66.jpg"
+  },
+  {
+    "prompt": "Is there a cup in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "a4278c0a9e93",
+    "metadata": {
+      "image_id": 575755,
+      "object": "cup",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/a4278c0a9e93.jpg"
+  },
+  {
+    "prompt": "Is there a tv in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "14fb2de2fd78",
+    "metadata": {
+      "image_id": 21327,
+      "object": "tv",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/14fb2de2fd78.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "be8e6f73bd90",
+    "metadata": {
+      "image_id": 120792,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/be8e6f73bd90.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "3ab9a7339e65",
+    "metadata": {
+      "image_id": 565941,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/3ab9a7339e65.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2c973108c497",
+    "metadata": {
+      "image_id": 366141,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2c973108c497.jpg"
+  },
+  {
+    "prompt": "Is there a traffic light in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b8689744f849",
+    "metadata": {
+      "image_id": 465418,
+      "object": "traffic light",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b8689744f849.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ae1a82c67c19",
+    "metadata": {
+      "image_id": 131018,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ae1a82c67c19.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "fa62e27fe961",
+    "metadata": {
+      "image_id": 105732,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/fa62e27fe961.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "3abac06c2d37",
+    "metadata": {
+      "image_id": 246928,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/3abac06c2d37.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "cb4ceb6749fd",
+    "metadata": {
+      "image_id": 458325,
+      "object": "car",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/cb4ceb6749fd.jpg"
+  },
+  {
+    "prompt": "Is there a bowl in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "1ce68d493c27",
+    "metadata": {
+      "image_id": 551908,
+      "object": "bowl",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1ce68d493c27.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "d27362b8fbd2",
+    "metadata": {
+      "image_id": 100238,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d27362b8fbd2.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b23aa9ad7b88",
+    "metadata": {
+      "image_id": 54025,
+      "object": "truck",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b23aa9ad7b88.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ce7fbf3cec5c",
+    "metadata": {
+      "image_id": 396338,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ce7fbf3cec5c.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "18ffb4e4a446",
+    "metadata": {
+      "image_id": 458325,
+      "object": "truck",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/18ffb4e4a446.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "3f9b0ba3ea94",
+    "metadata": {
+      "image_id": 279499,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/3f9b0ba3ea94.jpg"
+  },
+  {
+    "prompt": "Is there a surfboard in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "cdcded846409",
+    "metadata": {
+      "image_id": 550514,
+      "object": "surfboard",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/cdcded846409.jpg"
+  },
+  {
+    "prompt": "Is there a laptop in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "dba2d4a2216d",
+    "metadata": {
+      "image_id": 526368,
+      "object": "laptop",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "explore"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/dba2d4a2216d.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "c958fb62db65",
+    "metadata": {
+      "image_id": 204100,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/c958fb62db65.jpg"
+  },
+  {
+    "prompt": "Is there a baseball glove in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "7a0b5a775255",
+    "metadata": {
+      "image_id": 524979,
+      "object": "baseball glove",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/7a0b5a775255.jpg"
+  },
+  {
+    "prompt": "Is there a bottle in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "382881d40f5f",
+    "metadata": {
+      "image_id": 18918,
+      "object": "bottle",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/382881d40f5f.jpg"
+  },
+  {
+    "prompt": "Is there a dog in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "12e3f523e392",
+    "metadata": {
+      "image_id": 472375,
+      "object": "dog",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/12e3f523e392.jpg"
+  },
+  {
+    "prompt": "Is there a skis in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "65f0fafb1e7f",
+    "metadata": {
+      "image_id": 69196,
+      "object": "skis",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/65f0fafb1e7f.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ac594fd1c55d",
+    "metadata": {
+      "image_id": 245642,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ac594fd1c55d.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2928a1134a11",
+    "metadata": {
+      "image_id": 71738,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2928a1134a11.jpg"
+  },
+  {
+    "prompt": "Is there a pizza in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2277255be0ed",
+    "metadata": {
+      "image_id": 8749,
+      "object": "pizza",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2277255be0ed.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "edc76ca93aa0",
+    "metadata": {
+      "image_id": 379162,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/edc76ca93aa0.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "9f2e44e6be6a",
+    "metadata": {
+      "image_id": 468169,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/9f2e44e6be6a.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "ac823f0d7067",
+    "metadata": {
+      "image_id": 80022,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/ac823f0d7067.jpg"
+  },
+  {
+    "prompt": "Is there a bowl in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "e82309a844be",
+    "metadata": {
+      "image_id": 123017,
+      "object": "bowl",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/e82309a844be.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b1df8750fe05",
+    "metadata": {
+      "image_id": 61507,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b1df8750fe05.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "d2826254822f",
+    "metadata": {
+      "image_id": 32610,
+      "object": "backpack",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/d2826254822f.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "e4dcbf3a6fc1",
+    "metadata": {
+      "image_id": 388983,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/e4dcbf3a6fc1.jpg"
+  },
+  {
+    "prompt": "Is there a pizza in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "a6d330c2d85d",
+    "metadata": {
+      "image_id": 280734,
+      "object": "pizza",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/a6d330c2d85d.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "24cf2d483795",
+    "metadata": {
+      "image_id": 313162,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/24cf2d483795.jpg"
+  },
+  {
+    "prompt": "Is there a pizza in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "441796f1007a",
+    "metadata": {
+      "image_id": 154846,
+      "object": "pizza",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/441796f1007a.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "382043b6697a",
+    "metadata": {
+      "image_id": 100215,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/382043b6697a.jpg"
+  },
+  {
+    "prompt": "Is there a traffic light in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "7efe036bcce1",
+    "metadata": {
+      "image_id": 579415,
+      "object": "traffic light",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/7efe036bcce1.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "919c3f0031d7",
+    "metadata": {
+      "image_id": 408757,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/919c3f0031d7.jpg"
+  },
+  {
+    "prompt": "Is there a bowl in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "a194c8a87df4",
+    "metadata": {
+      "image_id": 511622,
+      "object": "bowl",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/a194c8a87df4.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2f0696cc816c",
+    "metadata": {
+      "image_id": 391735,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2f0696cc816c.jpg"
+  },
+  {
+    "prompt": "Is there a sink in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "0e123887d9f8",
+    "metadata": {
+      "image_id": 79446,
+      "object": "sink",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/0e123887d9f8.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "a1c99960a251",
+    "metadata": {
+      "image_id": 501652,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/a1c99960a251.jpg"
+  },
+  {
+    "prompt": "Is there a traffic light in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b5bdcfd9417f",
+    "metadata": {
+      "image_id": 201148,
+      "object": "traffic light",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b5bdcfd9417f.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "e85476acb7ba",
+    "metadata": {
+      "image_id": 472375,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/e85476acb7ba.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "bc46a8c3e76f",
+    "metadata": {
+      "image_id": 288576,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/bc46a8c3e76f.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "3479c725aa3c",
+    "metadata": {
+      "image_id": 462805,
+      "object": "backpack",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/3479c725aa3c.jpg"
+  },
+  {
+    "prompt": "Is there a sandwich in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b73451d063e4",
+    "metadata": {
+      "image_id": 108189,
+      "object": "sandwich",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b73451d063e4.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "988d4afaab5a",
+    "metadata": {
+      "image_id": 236865,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/988d4afaab5a.jpg"
+  },
+  {
+    "prompt": "Is there a sink in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "fec83b579295",
+    "metadata": {
+      "image_id": 542145,
+      "object": "sink",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/fec83b579295.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "853aea27aae6",
+    "metadata": {
+      "image_id": 337502,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/853aea27aae6.jpg"
+  },
+  {
+    "prompt": "Is there a knife in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "b622b3681422",
+    "metadata": {
+      "image_id": 300368,
+      "object": "knife",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/b622b3681422.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "5ed4140b4d30",
+    "metadata": {
+      "image_id": 65001,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/5ed4140b4d30.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "449fe04585f0",
+    "metadata": {
+      "image_id": 211674,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/449fe04585f0.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "29f03460433e",
+    "metadata": {
+      "image_id": 473199,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/29f03460433e.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "61e594aff616",
+    "metadata": {
+      "image_id": 447787,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/61e594aff616.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "cc1172a503fe",
+    "metadata": {
+      "image_id": 579415,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/cc1172a503fe.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8e7895fc2f2d",
+    "metadata": {
+      "image_id": 401398,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8e7895fc2f2d.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "8397b9415a37",
+    "metadata": {
+      "image_id": 332025,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/8397b9415a37.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "bdd916692b2a",
+    "metadata": {
+      "image_id": 314992,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/bdd916692b2a.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "02f9ade80ca3",
+    "metadata": {
+      "image_id": 447787,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/02f9ade80ca3.jpg"
+  },
+  {
+    "prompt": "Is there a banana in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "4a2f69999728",
+    "metadata": {
+      "image_id": 383185,
+      "object": "banana",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/4a2f69999728.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "30eb3bd385de",
+    "metadata": {
+      "image_id": 281766,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/30eb3bd385de.jpg"
+  },
+  {
+    "prompt": "Is there a traffic light in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "282dde90f7e9",
+    "metadata": {
+      "image_id": 44801,
+      "object": "traffic light",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/282dde90f7e9.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "1246a5bbc29b",
+    "metadata": {
+      "image_id": 485485,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1246a5bbc29b.jpg"
+  },
+  {
+    "prompt": "Is there a snowboard in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "41a69f2da30a",
+    "metadata": {
+      "image_id": 462805,
+      "object": "snowboard",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/41a69f2da30a.jpg"
+  },
+  {
+    "prompt": "Is there a backpack in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "3a29db0a787b",
+    "metadata": {
+      "image_id": 44801,
+      "object": "backpack",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/3a29db0a787b.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2550cd854780",
+    "metadata": {
+      "image_id": 156704,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2550cd854780.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "629fdd0134c3",
+    "metadata": {
+      "image_id": 239347,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/629fdd0134c3.jpg"
+  },
+  {
+    "prompt": "Is there a truck in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "57d7bcacc78a",
+    "metadata": {
+      "image_id": 218224,
+      "object": "truck",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/57d7bcacc78a.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "4af0f7591f30",
+    "metadata": {
+      "image_id": 156704,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/4af0f7591f30.jpg"
+  },
+  {
+    "prompt": "Is there a traffic light in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "eeacf58d4178",
+    "metadata": {
+      "image_id": 391735,
+      "object": "traffic light",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/eeacf58d4178.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "220633cd92bd",
+    "metadata": {
+      "image_id": 190788,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/220633cd92bd.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "dde7b194c857",
+    "metadata": {
+      "image_id": 155131,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/dde7b194c857.jpg"
+  },
+  {
+    "prompt": "Is there a car in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "5d22e1d50f32",
+    "metadata": {
+      "image_id": 288576,
+      "object": "car",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/5d22e1d50f32.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "179b6711fa22",
+    "metadata": {
+      "image_id": 298633,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/179b6711fa22.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "1d0d86906fe7",
+    "metadata": {
+      "image_id": 38645,
+      "object": "person",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/1d0d86906fe7.jpg"
+  },
+  {
+    "prompt": "Is there a person in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "2675f59f829a",
+    "metadata": {
+      "image_id": 217397,
+      "object": "person",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/2675f59f829a.jpg"
+  },
+  {
+    "prompt": "Is there a toilet in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "946484d6ee2f",
+    "metadata": {
+      "image_id": 189694,
+      "object": "toilet",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/946484d6ee2f.jpg"
+  },
+  {
+    "prompt": "Is there a teddy bear in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "6940becff814",
+    "metadata": {
+      "image_id": 358255,
+      "object": "teddy bear",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/6940becff814.jpg"
+  },
+  {
+    "prompt": "Is there a dining table in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "074c7136ff95",
+    "metadata": {
+      "image_id": 346707,
+      "object": "dining table",
+      "probe_type": "adversarial",
+      "pope_label": "no",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/074c7136ff95.jpg"
+  },
+  {
+    "prompt": "Is there a handbag in the image? Please answer Yes or No.",
+    "label": "Label.PASS",
+    "id": "e7c71dca4b7f",
+    "metadata": {
+      "image_id": 551881,
+      "object": "handbag",
+      "probe_type": "present",
+      "pope_label": "yes",
+      "split": "validate"
+    },
+    "image_path": "/tmp/evalvitals_sandbox_vl0u6i_4/e7c71dca4b7f.jpg"
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "probe1_flag",
+    "kind": "expr",
+    "expr": "generated_probe1_false_detection >= 0.5"
+  },
+  {
+    "name": "probe1_or_diffuse",
+    "kind": "expr",
+    "expr": "(generated_probe1_false_detection >= 0.5) or (relative_attention_focus_share < 0.2)"
+  }
+]

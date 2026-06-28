@@ -100,6 +100,31 @@ def build_judge(model_name: str, effort: str):
     return judge
 
 
+# Coder/explorer backend is selectable across the three local CLI agents; the
+# chat judge stays claude (no codex/agy chat-model wrapper exists).
+_PROVIDER = {"claude": "claude_code", "codex": "codex", "agy": "antigravity"}
+
+
+def build_codegen(backend: str = "claude"):
+    """CliAgentConfig for the coder/explorer backend. ``backend`` is one of
+    ``claude`` | ``codex`` | ``agy`` (default claude). model/effort are claude-only
+    knobs; codex/agy use their own defaults."""
+    from evalvitals.eval_agent import CliAgentConfig
+
+    provider = _PROVIDER.get(backend, backend)
+    is_claude = provider == "claude_code"
+    effort = str(CFG.get("codegen_effort", "") or "")
+    cfg = CliAgentConfig(
+        provider=provider,
+        model=str(CFG.get("codegen_model", "claude-opus-4-8")) if is_claude else "",
+        max_budget_usd=float(CFG.get("codegen_budget_usd", 2.0)),
+        timeout_sec=int(CFG.get("codegen_timeout_sec", 240)),
+        extra_args=(("--effort", effort) if (effort and is_claude) else ()),
+    )
+    print(f"coder backend: {provider}" + (f" model={cfg.model} effort={effort or 'default'}" if is_claude else ""))
+    return cfg
+
+
 def build_protocol():
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
 

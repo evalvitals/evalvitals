@@ -822,6 +822,20 @@ class VLDiagnoseLoop:
             return
         probe_results[name] = synth
         self.store.add_result(synth)
+        # The bridged signals ARE the discovered candidates — they must be tested,
+        # not optional. default_plan caps at the stats agent's max_signal_tools and
+        # appends bridged signals LAST, so a low cap silently drops them. Raise the
+        # cap to cover the expanded family (more multiplicity = more conservative,
+        # never less — e-BH still controls FDR over whatever is tested).
+        agent = getattr(self, "stats_agent", None)
+        if agent is not None and hasattr(agent, "_max_signal_tools"):
+            try:
+                from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+
+                n_signals = len(build_stats_input(probe_results, data).per_case)
+                agent._max_signal_tools = max(int(agent._max_signal_tools), n_signals)
+            except Exception as exc:  # never let the cap-bump break the loop
+                logger.debug("bridge: could not raise stats signal cap: %s", exc)
         logger.info(
             "bridged %d signal row(s) into M2 as analyzer %r",
             len(synth.findings.get("per_case", [])), name,

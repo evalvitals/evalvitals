@@ -56,6 +56,7 @@ class FusedSignal:
     source: str                 # "explorer" | "catalog" | "both"
     description: str = ""
     suggested_test: str = ""
+    recipe: dict[str, Any] | None = None  # the SignalRecipe dict (bridged signals); replayable in-loop
     operationalized: bool = True   # became a per-case column on CONFIRM
     # host verdict (from the M2 firewall on CONFIRM) — authoritative
     effect: float | None = None
@@ -73,6 +74,7 @@ class FusedSignal:
             "source": self.source,
             "description": self.description,
             "suggested_test": self.suggested_test,
+            "recipe": self.recipe,
             "operationalized": self.operationalized,
             "effect": self.effect,
             "ci": list(self.ci) if self.ci is not None else None,
@@ -222,6 +224,7 @@ def run_fused_analysis(
 
     # ── 3. Operationalization bridge: compile explorer recipes on CONFIRM ──
     bridged: dict[str, dict[str, float]] = {}
+    recipe_by_name: dict[str, dict[str, Any]] = {}  # recipe name -> recipe dict (for replay)
     bridge_failed: list[Any] = []
     for c in explorer_candidates:
         recipe_data = getattr(c, "recipe", None)
@@ -236,6 +239,7 @@ def run_fused_analysis(
             values = {}
         if values:
             bridged[recipe.name] = values
+            recipe_by_name[recipe.name] = {**recipe_data, "name": recipe.name}
         else:
             bridge_failed.append(c)
 
@@ -291,6 +295,7 @@ def run_fused_analysis(
                 source=_source_of(name, catalog_names, bridged_keys, explorer_named),
                 description=_describe(name, origin, explorer_named, bridged_keys),
                 suggested_test=_suggested_test(origin, explorer_named),
+                recipe=recipe_by_name.get(origin),
                 result=result,
                 rejected_tools=rejected_tools,
                 confirmed_on=confirm_label,
@@ -371,6 +376,7 @@ def _fused_signal(
     source: str,
     description: str,
     suggested_test: str,
+    recipe: dict[str, Any] | None,
     result: Any,
     rejected_tools: set[str],
     confirmed_on: str,
@@ -380,6 +386,7 @@ def _fused_signal(
         source=source,
         description=description,
         suggested_test=suggested_test,
+        recipe=recipe,
         confirmed_on=confirmed_on,
     )
     if result is None:

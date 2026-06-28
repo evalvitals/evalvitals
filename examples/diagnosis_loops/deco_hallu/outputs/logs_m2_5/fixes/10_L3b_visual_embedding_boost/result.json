@@ -1,0 +1,29 @@
+{
+  "tier": "L3b",
+  "name": "visual_embedding_boost",
+  "kind": "primitive",
+  "source": "judge",
+  "payload": {
+    "primitive": "visual_embedding_boost",
+    "params": {
+      "gamma": 1.25
+    }
+  },
+  "trial_root": null,
+  "n_pairs": 24,
+  "n_fixed": 1,
+  "n_broken": 0,
+  "fixed_cases": [
+    "18ffb4e4a446"
+  ],
+  "broken_cases": [],
+  "effect": 0.04166666666666663,
+  "reject": false,
+  "fixed": false,
+  "summary": "[mcnemar + e-value (paired binary)] effect=+0.0417 (B>A) CI=+0.0000..+0.1250, e=1.00 -> inconclusive [partial, coverage=100%]",
+  "n_applicable": 24,
+  "coverage": 1.0,
+  "n_unstable": 0,
+  "e_value": 1.0000000000000004,
+  "verdict": "partial"
+}

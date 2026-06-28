@@ -45,15 +45,25 @@ Write a self-contained Python script that:
 - when useful, returns chart specs in "charts": each spec should include
   {{"name", "kind", "data", "x", "y", "title"}} where data points to a CSV table
 - does NOT claim causal/statistical confirmation; this is exploratory only
-- for a candidate signal you want CONFIRMED, you MAY attach host-adjudicable
-  "sufficient" statistics computed from the rows, as ONE of these shapes:
+- PREFERRED: for any composite / threshold / interaction signal that is a
+  DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
+  compute it on a HELD-OUT split and confirm it rigorously:
+    "recipe": {{"name": "<new signal key>", "kind": "expr",
+                "expr": "<boolean/numeric expression over the numeric columns above>"}}
+  The expr may use the columns BY NAME, comparisons (< <= > >= == !=), and/or/not,
+  arithmetic (+ - * / %), and abs/min/max/float/int/len. It must NOT reference the
+  label/outcome column (a recipe is a PREDICTOR, never the answer). Example:
+    "recipe": {{"name": "small_and_peripheral", "kind": "expr", "expr": "(obj_size < 40) and (focus_share < 0.3)"}}
+  Emit a recipe rather than prose whenever the candidate is computable from the columns.
+- ALTERNATIVELY, you MAY attach host-adjudicable "sufficient" statistics computed
+  from the rows, as ONE of these shapes:
     {{"kind": "two_group", "a": [0/1, ...], "b": [0/1, ...]}}   # is_fail indicators among signal-ABSENT (a) vs signal-PRESENT (b) cases
     {{"kind": "paired_binary", "b": <int>, "c": <int>}}          # discordant counts of a paired intervention (b = flips the good way, c = the bad way)
   Do NOT emit "reject"/"e_value"/"p_value" anywhere — the HOST recomputes the
-  verdict from "sufficient" with its validated, multiplicity-aware core; a
-  self-declared verdict is ignored. Omit "sufficient" for descriptive-only signals.
+  verdict from "recipe"/"sufficient" with its validated, multiplicity-aware core; a
+  self-declared verdict is ignored. Omit both for descriptive-only signals.
 - prints the final result as the LAST stdout line exactly like:
-  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "sufficient": {{"kind": "two_group", "a": [0, 0], "b": [1, 1]}}}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "recipe": {{"name": "...", "kind": "expr", "expr": "(col_a < 40) and (col_b < 0.3)"}}}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
 
 Return ONLY the Python code{fences_hint}."""
 

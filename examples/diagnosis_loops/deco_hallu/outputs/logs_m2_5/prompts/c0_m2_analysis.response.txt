@@ -1,0 +1,10 @@
+CONCLUSION: The model is not broadly miscalibrated — its failures are a specific false-positive (over-detection) mode in which, on absent-object questions, attention collapses onto a small cluster of image patches and the model over-commits to "Yes"; fail cases show markedly more peaked/concentrated attention (fail mean max_relative_weight ≈196 vs pass ≈91, higher focus_share and mean weight) while no prompting strategy meaningfully repairs it, pointing to a perceptual grounding failure (latching onto a salient region and misreading it as the queried object) rather than a prompt-format or instruction-following problem.
+
+EVIDENCE_CHAIN:
+- The `relative_attention` block first stood out because `focus_share`, `max_relative_weight`, and `mean_relative_weight` all REJECT H0 with positive effects (fail > pass), and the fail-vs-pass mean maps (196.6 vs 91.1) show failures have sharply concentrated attention.
+- This connects directly to the protocol's false-detection pattern: peaked attention on a small patch cluster is the signature of the model fixating on one salient region and answering "Yes" for an object that is actually absent.
+- The `generated:probe1`/`explored.probe1_flag` signals corroborate with effect +0.9461 (essentially co-extensive with FAIL, confirming these failures ARE false detections), while `prompt_contrast` shows describe_first and sensitive are statistically inconclusive vs baseline (all ~0.68–0.70 success), ruling out a prompt-level fix.
+
+QUALITATIVE:
+- The "sensitive" strategy fixed 1 and broke 0 while "describe_first" fixed 1 but broke 3, hinting that nudging toward caution is directionally safer than forcing description-before-answer, even though neither reaches significance.
+- It is notable that the attention concentration is graded rather than binary (Kendall τ ≈0.25–0.32), suggesting false detections sit on a continuum of over-focus rather than a discrete broken state, so a confidence/attention-dispersion threshold could plausibly flag them at inference time.
