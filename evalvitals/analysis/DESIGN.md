@@ -3,7 +3,7 @@
 > 状态：**Phase A–D 已实现**（2026-06-27）。如何把 LAMBDA 式探索层（`evalvitals/analysis/`）接入 M1→M5 诊断-修复链路。
 > 新增模块：[adjudicate.py](adjudicate.py)（宿主裁决）· [operationalize.py](operationalize.py)（recipe→冻结信号 + in-loop 桥接）· [fused_pipeline.py](fused_pipeline.py)（explore→confirm 编排）；in-loop 注入在 [loop.py](../eval_agent/loop.py) `VLDiagnoseLoop._bridge_signals`。测试 `tests/test_analysis/test_{adjudicate,operationalize,fused_pipeline,bridge_inloop,integration_fused}.py`（74 项全过）。
 >
-> **延伸（图表/观察→M3 + dashboard）**：本文档接的是**信号→M2 确证**；让 M3 像 `chat --dashboard` 那样消费/输出 explorer **图表+观察(机制语言)**的设计见 [DESIGN_m3_charts.md](DESIGN_m3_charts.md)（设计提案，未实现）。
+> **延伸（单轮 viz 管线：图表/观察→M3 + dashboard，含 chat 退役）**：本文档接的是**信号→M2 确证**；让 M3 消费/输出 explorer **图表+观察(机制语言)**、把 viz 提成共享核、退役交互 REPL（只留单轮管线）的设计见 [DESIGN_m3_charts.md](DESIGN_m3_charts.md)（设计提案，未实现）。
 > 一句话：**LAMBDA 提议、M2 扩族确证、M5（gated on M2）验证、FixAgent 修复——永不用一张图来确证。** 核心新部件是 **operationalization bridge**，把 LAMBDA 发现的复合/切片信号编译成冻结 per-case 信号，使其进入 M2 的 e-BH family。
 > 配套：`/tealab-data/jiaqiliu/evalsmith/LAMBDA/LAMBDA_架构与设计原理.md`。
 
