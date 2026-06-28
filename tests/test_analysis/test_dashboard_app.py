@@ -41,11 +41,15 @@ def _build_loop_run(root):
 
     events = [
         {"event": "analysis", "cycle": 1, "severity": "none",
-         "conclusion": "Specific over-detection failure mode."},
+         "conclusion": "Specific over-detection failure mode.",
+         "evidence_chain": ["attention near-uniform"],
+         "stats_results": [{"summary": "signal vs FAIL: effect=+0.86 -> REJECT H0"}]},
         {"event": "diagnosis", "cycle": 1, "n_hypotheses": 1,
          "hypotheses": [{"statement": "language-prior hallucination", "failure_mode": "lp"}],
          "referenced_charts": ["Fail rate by signal"], "explore_context_used": True},
-        {"event": "surgery", "cycle": 1, "module": "m5", "status": "supported"},
+        # surgery.hypothesis matches the diagnosis statement -> the M5 verdict joins.
+        {"event": "surgery", "cycle": 1, "module": "m5", "status": "supported",
+         "hypothesis": "language-prior hallucination"},
         {"event": "fix", "cycle": 1},
     ]
     (logs / "run_log.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
@@ -89,6 +93,37 @@ def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
     assert not at.exception
     # No measured signals → an actionable warning, not a silent empty page.
     assert any("explore report" in str(w.value).lower() for w in at.warning)
+
+
+def test_analysis_tab_tells_connected_story(tmp_path):
+    _build_loop_run(tmp_path)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    heads = [m.value for m in at.markdown if isinstance(m.value, str) and m.value.startswith("###")]
+    # the three narrative sections are present
+    assert any("What we analysed" in h for h in heads)
+    assert any("What we found" in h for h in heads)
+    assert any("Hypotheses formed" in h for h in heads)
+    # the hypothesis statement + its M5 verdict appear somewhere in the page
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "language-prior hallucination" in blob
+    assert "supported" in blob.lower()
+
+
+def test_hypotheses_join_with_m5_outcomes():
+    from evalvitals.analysis.dashboard_app import _hypotheses_with_outcomes
+
+    story = {
+        "diagnoses": [{"cycle": 1, "referenced_charts": ["C"],
+                       "hypotheses": [{"statement": "H one", "failure_mode": "fm"},
+                                      {"statement": "H two", "failure_mode": "fm2"}]}],
+        "surgeries": [{"module": "m5", "status": "supported", "hypothesis": "H one"},
+                      {"module": "m4", "status": "fixed", "fixed": True, "hypothesis": "H one"}],
+    }
+    out = _hypotheses_with_outcomes(story)
+    assert [h["statement"] for h in out] == ["H one", "H two"]
+    assert len(out[0]["tests"]) == 2          # joined both tests by statement
+    assert out[1]["tests"] == []              # H two was never tested
 
 
 def test_signals_dataframe_and_effect_figure_helpers():

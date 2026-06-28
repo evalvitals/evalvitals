@@ -59,6 +59,31 @@ def test_load_run_detects_loop_run_and_parses_story(tmp_path):
     assert len(story["surgeries"]) == 1 and len(story["fixes"]) == 1
 
 
+def test_load_loop_story_merges_multiple_logs(tmp_path):
+    # A run split across logs_m1/ (M1) and logs_m2_5/ (M2-M5): the story must
+    # merge both, not pick whichever sorts first (regression — logs_m1 has no
+    # diagnoses, so picking it alone made the dashboard look empty).
+    (tmp_path / "logs_m1").mkdir()
+    (tmp_path / "logs_m1" / "run_log.jsonl").write_text(
+        json.dumps({"event": "probe", "cycle": 0}) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "logs_m2_5").mkdir()
+    (tmp_path / "logs_m2_5" / "run_log.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in [
+            {"event": "analysis", "cycle": 1},
+            {"event": "diagnosis", "cycle": 1, "n_hypotheses": 1,
+             "hypotheses": [{"statement": "h", "failure_mode": "fm"}]},
+            {"event": "surgery", "cycle": 1, "module": "m5", "status": "supported", "hypothesis": "h"},
+        ]),
+        encoding="utf-8",
+    )
+
+    story = load_loop_story(tmp_path)
+    assert story is not None
+    assert len(story["diagnoses"]) == 1    # came from logs_m2_5, not lost to logs_m1
+    assert len(story["surgeries"]) == 1
+
+
 def test_load_run_empty_dir():
     import tempfile
 

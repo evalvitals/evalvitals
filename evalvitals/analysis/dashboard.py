@@ -90,30 +90,38 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
     Returns ``None`` when no loop log is present (i.e. this is explore output).
     """
     root = Path(run_dir).resolve()
-    log_path = next(
-        (p for p in [root / "run_log.jsonl", *sorted(root.glob("logs*/run_log.jsonl"))] if p.exists()),
-        None,
-    )
-    if log_path is None:
+    # A single run can be split across several logs (e.g. logs_m1/ for M1 and
+    # logs_m2_5/ for M2-M5). MERGE events from all of them so the story has the
+    # full M1->M2->M3->M5->Fix arc, not just whichever log sorts first.
+    log_paths = [
+        p for p in [root / "run_log.jsonl", *sorted(root.glob("logs*/run_log.jsonl"))]
+        if p.exists()
+    ]
+    if not log_paths:
         return None
 
     events: list[dict[str, Any]] = []
-    try:
-        for line in log_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    except OSError:
+    for lp in log_paths:
+        try:
+            for line in lp.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            continue
+    if not events:
         return None
 
     by_event: dict[str, list[dict[str, Any]]] = {}
     for ev in events:
         by_event.setdefault(str(ev.get("event", "")), []).append(ev)
 
+    # Display the log that actually carries the diagnostic arc (most events).
+    log_path = max(log_paths, key=lambda p: p.stat().st_size if p.exists() else 0)
     explore_report, explore_dir = _find_explore_report(root, log_path)
 
     return {
