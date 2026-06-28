@@ -59,6 +59,7 @@ def render_chart_specs(
     out_dir = Path(out_dir)
     tdir = Path(tables_dir) if tables_dir else None
     plt = _import_matplotlib()
+    style = _load_nature_style()
 
     rendered: list[dict[str, Any]] = []
     for idx, spec in enumerate(specs):
@@ -79,7 +80,7 @@ def render_chart_specs(
             continue
 
         try:
-            png = _render_one(plt, spec, rows, x, y, out_dir, idx)
+            png = _render_one(plt, spec, rows, x, y, out_dir, idx, style)
             spec["figure_path"] = str(png)
             spec.pop("render_skipped", None)
         except Exception as exc:  # rendering must never sink the caller
@@ -101,9 +102,104 @@ def _import_matplotlib():
         matplotlib.use("Agg")  # headless, no display needed
         import matplotlib.pyplot as plt
 
+        # Arial/Helvetica are usually absent on servers; DejaVu Sans is the
+        # deterministic fallback. Silence the per-figure findfont warning spam.
+        import logging as _logging
+        _logging.getLogger("matplotlib.font_manager").setLevel(_logging.ERROR)
         return plt
     except Exception:
         return None
+
+
+# --- nature-figure design tokens (single source of truth: the vendored skill) ---
+# Mirrored here as a deterministic fallback; the live values are read from the
+# vendored skill when present so the host-rendered charts and any agent-authored
+# figures share ONE visual language.
+_NATURE_RC_FALLBACK: dict[str, Any] = {
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans", "sans-serif"],
+    "axes.spines.right": False,
+    "axes.spines.top": False,
+    "axes.linewidth": 0.8,
+    "legend.frameon": False,
+    "pdf.fonttype": 42,
+    "svg.fonttype": "none",
+}
+_NATURE_COLORS_FALLBACK = ["#0F4D92", "#8BCF8B", "#B64342", "#42949E", "#9A4D8E", "#CFCECE"]
+# On-screen single panels: keep nature's clean frame but a readable size (the
+# skill reserves font.size 7 for dense multi-panel print figures).
+_SCREEN_RC: dict[str, Any] = {
+    "font.size": 9.0, "axes.titlesize": 11.0, "axes.labelsize": 9.5,
+    "xtick.labelsize": 8.5, "ytick.labelsize": 8.5,
+}
+
+_SKILL_DIR = Path(__file__).resolve().parent / "skills" / "nature-figure"
+_NATURE_STYLE_CACHE: dict[str, Any] | None = None
+
+
+def _balanced(text: str, open_idx: int, open_ch: str, close_ch: str) -> str | None:
+    """Return the balanced ``open_ch..close_ch`` group starting at *open_idx*."""
+    depth = 0
+    for j in range(open_idx, len(text)):
+        if text[j] == open_ch:
+            depth += 1
+        elif text[j] == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[open_idx:j + 1]
+    return None
+
+
+def _literal_after(text: str, marker: str, open_ch: str, close_ch: str):
+    """ast.literal_eval the first balanced literal after *marker* (or None)."""
+    import ast
+
+    k = text.find(marker)
+    if k < 0:
+        return None
+    o = text.find(open_ch, k)
+    if o < 0:
+        return None
+    blob = _balanced(text, o, open_ch, close_ch)
+    if blob is None:
+        return None
+    try:
+        return ast.literal_eval(blob)
+    except Exception:
+        return None
+
+
+def _load_nature_style() -> dict[str, Any]:
+    """Render style sourced from the vendored nature-figure skill (rcParams +
+    PALETTE), with a hardcoded fallback. Cached. Never raises."""
+    global _NATURE_STYLE_CACHE
+    if _NATURE_STYLE_CACHE is not None:
+        return _NATURE_STYLE_CACHE
+
+    rc = dict(_NATURE_RC_FALLBACK)
+    colors = list(_NATURE_COLORS_FALLBACK)
+    try:
+        import re
+
+        py = (_SKILL_DIR / "static" / "fragments" / "backend" / "python.md").read_text(encoding="utf-8")
+        loaded_rc = _literal_after(py, "rcParams.update(", "{", "}")
+        if isinstance(loaded_rc, dict):
+            rc = {str(k): v for k, v in loaded_rc.items() if k != "font.size"}
+
+        api = (_SKILL_DIR / "references" / "api.md").read_text(encoding="utf-8")
+        palette = _literal_after(api, "PALETTE = {", "{", "}")
+        m = api.find("DEFAULT_COLORS")
+        if isinstance(palette, dict) and m >= 0:
+            blob = _balanced(api, api.find("[", m), "[", "]") or ""
+            keys = re.findall(r'PALETTE\["([^"]+)"\]', blob)
+            resolved = [palette[k] for k in keys if k in palette]
+            if resolved:
+                colors = resolved
+    except Exception:
+        pass  # fall back to the mirrored tokens
+
+    _NATURE_STYLE_CACHE = {"rc": {**rc, **_SCREEN_RC}, "colors": colors}
+    return _NATURE_STYLE_CACHE
 
 
 def _load_table(
@@ -172,7 +268,7 @@ def _to_float(value: str) -> float | None:
         return None
 
 
-def _render_one(plt, spec, rows, x, y, out_dir, idx) -> Path:
+def _render_one(plt, spec, rows, x, y, out_dir, idx, style) -> Path:
     kind = str(spec.get("kind", "bar")).lower()
     if kind not in _KINDS:
         kind = "bar"
@@ -187,37 +283,49 @@ def _render_one(plt, spec, rows, x, y, out_dir, idx) -> Path:
     xs_num = [_to_float(v) for v in xs_raw]
     x_is_num = all(v is not None for v in xs_num)
 
-    fig, ax = plt.subplots(figsize=(6.4, 4.0))
+    rc = (style or {}).get("rc", {})
+    colors = (style or {}).get("colors") or _NATURE_COLORS_FALLBACK
+    primary = colors[0]
     title = str(spec.get("title") or spec.get("name") or f"chart_{idx}")
-    if kind == "scatter":
-        ax.scatter(xs_num if x_is_num else range(len(xs_raw)), ys, s=24)
-        if not x_is_num:
-            ax.set_xticks(range(len(xs_raw)))
-            ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
-    elif kind in {"line", "timeseries"}:
-        ax.plot(xs_num if x_is_num else range(len(xs_raw)), ys, marker="o")
-        if not x_is_num:
-            ax.set_xticks(range(len(xs_raw)))
-            ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
-    else:  # bar
-        positions = range(len(xs_raw))
-        ax.bar(positions, ys)
-        ax.set_xticks(list(positions))
-        ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
-
-    ax.set_xlabel(str(x))
-    ax.set_ylabel(str(y))
-    ax.set_title(title)
-    fig.tight_layout()
 
     figures = out_dir / "figures"
     figures.mkdir(parents=True, exist_ok=True)
     name = _safe_filename(spec.get("name") or spec.get("title") or f"chart_{idx}")
     png = figures / f"{idx:02d}_{name}.png"
-    # Pin metadata so the same spec + CSV yields byte-identical PNGs (no embedded
-    # timestamp/version) — the determinism guarantee the audit relies on.
-    fig.savefig(png, dpi=110, metadata={"Software": "evalvitals", "Creation Time": None})
-    plt.close(fig)
+
+    # Apply the nature-figure style in a scoped rc_context (no global leak; fully
+    # deterministic → same spec + CSV yields byte-identical PNGs).
+    with plt.rc_context(rc):
+        fig, ax = plt.subplots(figsize=(6.4, 4.0))
+        if kind == "scatter":
+            ax.scatter(xs_num if x_is_num else range(len(xs_raw)), ys, s=26,
+                       color=primary, edgecolor="white", linewidth=0.4, zorder=3)
+            if not x_is_num:
+                ax.set_xticks(range(len(xs_raw)))
+                ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
+        elif kind in {"line", "timeseries"}:
+            ax.plot(xs_num if x_is_num else range(len(xs_raw)), ys, marker="o",
+                    color=primary, linewidth=1.8, markersize=5, zorder=3)
+            if not x_is_num:
+                ax.set_xticks(range(len(xs_raw)))
+                ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
+        else:  # bar
+            positions = range(len(xs_raw))
+            ax.bar(positions, ys, color=primary, width=0.72, zorder=3)
+            ax.set_xticks(list(positions))
+            ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
+
+        if kind in {"bar", "line", "timeseries"}:
+            ax.grid(axis="y", linewidth=0.6, alpha=0.25, zorder=0)
+            ax.set_axisbelow(True)
+
+        ax.set_xlabel(str(x))
+        ax.set_ylabel(str(y))
+        ax.set_title(title, fontweight="bold")
+        fig.tight_layout()
+        # Pin metadata so the same spec + CSV yields byte-identical PNGs.
+        fig.savefig(png, dpi=130, metadata={"Software": "evalvitals", "Creation Time": None})
+        plt.close(fig)
     return png
 
 

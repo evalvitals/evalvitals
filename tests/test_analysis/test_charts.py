@@ -64,6 +64,34 @@ def test_renders_png_for_each_kind(tmp_path):
         assert "render_skipped" not in spec
 
 
+def test_nature_style_loaded_from_vendored_skill():
+    # The host render style is sourced from the vendored nature-figure skill:
+    # the palette (blue_main) and the spines-off rcParams.
+    charts_mod._NATURE_STYLE_CACHE = None
+    style = charts_mod._load_nature_style()
+    assert style["colors"][0] == "#0F4D92"            # PALETTE["blue_main"]
+    assert style["rc"]["axes.spines.right"] is False
+    assert style["rc"]["axes.spines.top"] is False
+    assert style["rc"]["legend.frameon"] is False
+
+
+def test_style_falls_back_when_skill_absent(monkeypatch, tmp_path):
+    charts_mod._NATURE_STYLE_CACHE = None
+    monkeypatch.setattr(charts_mod, "_SKILL_DIR", tmp_path / "nope")
+    style = charts_mod._load_nature_style()
+    assert style["colors"] == charts_mod._NATURE_COLORS_FALLBACK
+    assert style["rc"]["axes.spines.top"] is False     # fallback still nature-clean
+    charts_mod._NATURE_STYLE_CACHE = None               # reset for other tests
+
+
+@pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
+def test_styled_render_still_produces_png(tmp_path):
+    charts = _write_table(tmp_path)
+    out = render_chart_specs(charts, tmp_path / "tables", tmp_path / "out")
+    from pathlib import Path
+    assert Path(out[0]["figure_path"]).exists()
+
+
 @pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
 def test_render_is_deterministic(tmp_path):
     from pathlib import Path

@@ -83,7 +83,7 @@
       "y": "count",
       "title": "FAIL vs PASS",
       "description": "FAIL vs PASS: bar of count by outcome (2 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/00_class_balance.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/00_class_balance.png"
     },
     {
       "name": "groupstats_generated_probe1_false_detection",
@@ -93,7 +93,7 @@
       "y": "mean",
       "title": "generated_probe1_false_detection: mean by outcome",
       "description": "generated_probe1_false_detection: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/01_groupstats_generated_probe1_false_detection.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/01_groupstats_generated_probe1_false_detection.png"
     },
     {
       "name": "failrate_by_generated_probe1_false_detection",
@@ -103,7 +103,7 @@
       "y": "fail_rate",
       "title": "Fail rate by generated_probe1_false_detection",
       "description": "Fail rate by generated_probe1_false_detection: line of fail_rate by generated_probe1_false_detection_bin (1 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/02_failrate_by_generated_probe1_false_detection.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/02_failrate_by_generated_probe1_false_detection.png"
     },
     {
       "name": "groupstats_relative_attention_max_relative_weight",
@@ -113,7 +113,7 @@
       "y": "mean",
       "title": "relative_attention_max_relative_weight: mean by outcome",
       "description": "relative_attention_max_relative_weight: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/03_groupstats_relative_attention_max_relative_weigh.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/03_groupstats_relative_attention_max_relative_weigh.png"
     },
     {
       "name": "failrate_by_relative_attention_max_relative_weight",
@@ -123,7 +123,7 @@
       "y": "fail_rate",
       "title": "Fail rate by relative_attention_max_relative_weight",
       "description": "Fail rate by relative_attention_max_relative_weight: line of fail_rate by relative_attention_max_relative_weight_bin (6 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/04_failrate_by_relative_attention_max_relative_weig.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/04_failrate_by_relative_attention_max_relative_weig.png"
     },
     {
       "name": "groupstats_relative_attention_mean_relative_weight",
@@ -133,7 +133,7 @@
       "y": "mean",
       "title": "relative_attention_mean_relative_weight: mean by outcome",
       "description": "relative_attention_mean_relative_weight: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/05_groupstats_relative_attention_mean_relative_weig.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/05_groupstats_relative_attention_mean_relative_weig.png"
     },
     {
       "name": "failrate_by_relative_attention_mean_relative_weight",
@@ -143,7 +143,7 @@
       "y": "fail_rate",
       "title": "Fail rate by relative_attention_mean_relative_weight",
       "description": "Fail rate by relative_attention_mean_relative_weight: line of fail_rate by relative_attention_mean_relative_weight_bin (6 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/06_failrate_by_relative_attention_mean_relative_wei.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/06_failrate_by_relative_attention_mean_relative_wei.png"
     },
     {
       "name": "groupstats_relative_attention_focus_share",
@@ -153,7 +153,7 @@
       "y": "mean",
       "title": "relative_attention_focus_share: mean by outcome",
       "description": "relative_attention_focus_share: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/07_groupstats_relative_attention_focus_share.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/07_groupstats_relative_attention_focus_share.png"
     },
     {
       "name": "failrate_by_relative_attention_focus_share",
@@ -163,7 +163,7 @@
       "y": "fail_rate",
       "title": "Fail rate by relative_attention_focus_share",
       "description": "Fail rate by relative_attention_focus_share: line of fail_rate by relative_attention_focus_share_bin (6 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/08_failrate_by_relative_attention_focus_share.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/08_failrate_by_relative_attention_focus_share.png"
     },
     {
       "name": "top_discriminators",
@@ -173,7 +173,7 @@
       "y": "separation",
       "title": "Top FAIL/PASS discriminators",
       "description": "Top FAIL/PASS discriminators: bar of separation by signal (4 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/09_top_discriminators.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/09_top_discriminators.png"
     },
     {
       "name": "corr_with_fail",
@@ -183,7 +183,7 @@
       "y": "corr_with_fail",
       "title": "Signal correlation with FAIL",
       "description": "Signal correlation with FAIL: bar of corr_with_fail by signal (4 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/10_corr_with_fail.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/10_corr_with_fail.png"
     },
     {
       "name": "scatter_top_pair",
@@ -193,7 +193,7 @@
       "y": "y",
       "title": "relative_attention_focus_share vs relative_attention_mean_relative_weight by outcome",
       "description": "relative_attention_focus_share vs relative_attention_mean_relative_weight by outcome: scatter of y by x (20 rows)",
-      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/11_scatter_top_pair.png"
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/11_scatter_top_pair.png"
     }
   ],
   "recommended_confirmatory_tests": [
