@@ -80,9 +80,8 @@ def _render_empty(root: Path) -> None:
 
 
 def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, Any]]) -> None:
-    """Render a diagnostic loop run as an ordered story: explore charts (Step 1)
-    → M2 stats → M3 hypotheses (each tagged with the explore charts/observations
-    it referenced) → M5 tests → fixes."""
+    """Render a diagnostic loop run with a data-rich Analysis tab (signal effects,
+    e-BH adjudication, explorer charts & tables) plus the M2→M3→M5→Fix flow."""
     st.markdown(
         f"""
         <div class="ev-header">
@@ -96,18 +95,87 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
         unsafe_allow_html=True,
     )
 
-    # Step 1 explore artifacts (charts the loop's M3 was allowed to consult). The
-    # report usually lives in a sibling dir, so load_loop_story resolves it for us.
+    # The Step-1 explore report (signals/charts/tables M2 confirmed & M3 consulted)
+    # usually lives in a sibling dir; load_loop_story resolves it for us.
     explore_report = story.get("explore_report")
     if not explore_report:
         explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
     explore_dir = Path(story.get("explore_dir") or (runs[0]["dir"] if runs else root))
+
+    analysis, flow, tables = st.tabs(["📊 Analysis", "🔬 Diagnosis flow", "🗂 Tables"])
+    with analysis:
+        _render_loop_analysis(story, explore_report, explore_dir)
+    with flow:
+        _render_loop_flow(story, explore_report, explore_dir)
+    with tables:
+        _render_explore_tables(explore_report, explore_dir, full=True)
+
+
+def _candidate_signals(explore_report: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return [s for s in ((explore_report or {}).get("candidate_signals") or []) if isinstance(s, dict)]
+
+
+def _render_loop_analysis(story, explore_report, explore_dir) -> None:
+    """The Lambda-style data panel: effect sizes, e-BH family, signal table,
+    explorer charts and the underlying tables — everything the run measured."""
+    analyses = story.get("analyses") or []
+    concl = next((a.get("conclusion") or a.get("narrative") for a in analyses
+                  if a.get("conclusion") or a.get("narrative")), "")
+    if concl:
+        st.info(str(concl))
+
+    adj = (explore_report or {}).get("adjudication") or {}
+    if adj:
+        st.markdown("#### Adjudication (e-BH, held-out)")
+        cols = st.columns(5)
+        cells = [
+            ("Method", adj.get("method", "-")),
+            ("alpha", adj.get("alpha", "-")),
+            ("Signals tested", adj.get("n_signals_tested", adj.get("n_in_family", "-"))),
+            ("Rejected (real)", adj.get("n_signals_rejected", adj.get("n_rejected", "-"))),
+            ("Split", adj.get("split", "-")),
+        ]
+        for col, (label, value) in zip(cols, cells, strict=False):
+            col.metric(label, value)
+
+    signals = _candidate_signals(explore_report)
+    if signals:
+        st.markdown("#### Signal effect sizes (failure association)")
+        fig = _signal_effect_figure(signals)
+        if fig is not None:
+            st.pyplot(fig, clear_figure=True)
+        else:
+            st.caption("No numeric effect sizes to plot.")
+        st.markdown("#### Candidate signals")
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+    # Explorer charts (rendered specs, or rendered on the fly from their CSV).
+    charts = [c for c in (explore_report or {}).get("charts", []) if isinstance(c, dict)]
+    plots = (explore_report or {}).get("plots") or []
+    if charts or plots:
+        st.markdown("#### Exploratory charts")
+        _render_charts_and_plots(explore_report, explore_dir)
+
+    # The underlying data the explorer wrote (CSV tables) — chart each.
+    _render_explore_tables(explore_report, explore_dir, full=False)
+
+    if not (signals or adj or charts or plots):
+        st.warning(
+            "This run has no explore report alongside the log, so there are no "
+            "measured signals/charts to show. Re-run Step 2 with "
+            "`--explore-report outputs/fused/fused_report.json`, or point the "
+            "dashboard at an explore-output directory."
+        )
+
+
+def _render_loop_flow(story, explore_report, explore_dir) -> None:
+    """The ordered narrative: explore notes → M2 → M3 hypotheses → M5 → Fix."""
     if explore_report:
-        with st.expander("Step 1 — exploratory charts & observations (UNCONFIRMED; fed to M3 only)", expanded=True):
-            _render_charts_and_plots(explore_report, explore_dir)
-            obs = explore_report.get("observations") or []
-            for o in obs[:8]:
+        with st.expander("Step 1 — exploratory observations (UNCONFIRMED; fed to M3 only)", expanded=False):
+            for o in (explore_report.get("observations") or [])[:10]:
                 st.markdown(f"- {o}")
+            for c in (explore_report.get("caveats") or [])[:8]:
+                st.caption(f"⚠ {c}")
 
     analyses = story.get("analyses") or []
     diagnoses = story.get("diagnoses") or []
@@ -117,18 +185,17 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
     if analyses:
         st.markdown("### M2 — stats analysis")
         for a in analyses:
-            sev = a.get("severity") or a.get("analysis_severity") or ""
+            sev = a.get("severity") or ""
+            st.markdown(f"- **Cycle {a.get('cycle')}** {('· severity ' + str(sev)) if sev else ''}")
             concl = a.get("conclusion") or a.get("narrative") or ""
-            st.markdown(f"- **Cycle {a.get('cycle')}** {('· ' + str(sev)) if sev else ''}")
             if concl:
-                st.caption(_truncate(str(concl), 280))
+                st.caption(_truncate(str(concl), 320))
 
     st.markdown("### M3 — hypotheses")
     if not diagnoses:
         st.caption("No diagnosis events in the loop log.")
     for diag in diagnoses:
-        cycle = diag.get("cycle")
-        st.markdown(f"**Cycle {cycle}** · {diag.get('n_hypotheses', 0)} hypotheses")
+        st.markdown(f"**Cycle {diag.get('cycle')}** · {diag.get('n_hypotheses', 0)} hypotheses")
         refs = diag.get("referenced_charts") or []
         if refs:
             st.caption("M3 referenced explore artifacts: " + ", ".join(str(r) for r in refs))
@@ -147,13 +214,101 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
         st.markdown("### M5 / M4 — tested interventions")
         for s in surgeries:
             tag = str(s.get("module", "")).upper()
-            status = str(s.get("status", ""))
-            st.markdown(f"- **[{tag}]** {status} · {_truncate(str(s.get('hypothesis', '')), 120)}")
+            st.markdown(f"- **[{tag}]** {s.get('status', '')} · {_truncate(str(s.get('hypothesis', '')), 120)}")
 
     if fixes:
         st.markdown("### Fix — e-BH adjudicated outcomes")
         for f in fixes:
             st.json(f)
+
+
+def _signal_effect_figure(signals: list[dict[str, Any]]):
+    """Horizontal bar of each signal's effect size, coloured by host verdict
+    (REJECT H0 = real association vs inconclusive). Returns a matplotlib Figure
+    or None when matplotlib is missing / there is nothing numeric to plot."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return None
+
+    rows = [(str(s.get("name", "?")), float(s["effect"]), bool(s.get("reject")), str(s.get("source", "")))
+            for s in signals if isinstance(s.get("effect"), (int, float))]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[1])
+    names = [f"{n}  ({src})" for n, _, _, src in rows]
+    effects = [e for _, e, _, _ in rows]
+    colors = ["#0f8a5f" if rej else "#9aa4b2" for _, _, rej, _ in rows]
+
+    fig, ax = plt.subplots(figsize=(7.2, max(1.6, 0.55 * len(rows) + 0.8)))
+    ax.barh(range(len(rows)), effects, color=colors)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels(names, fontsize=9)
+    ax.axvline(0, color="#333", linewidth=0.8)
+    ax.set_xlabel("effect size (failure association)")
+    ax.set_title("Green = REJECT H0 (real, e-BH); grey = inconclusive")
+    fig.tight_layout()
+    return fig
+
+
+def _signals_dataframe(signals: list[dict[str, Any]]):
+    def _verdict(s):
+        if s.get("reject") is True:
+            return "REJECT H0"
+        if s.get("reject") is False:
+            return "inconclusive"
+        return "descriptive"
+    rows = [{
+        "signal": s.get("name"),
+        "source": s.get("source"),
+        "effect": s.get("effect"),
+        "e_value": s.get("e_value"),
+        "verdict": _verdict(s),
+        "recipe": (s.get("recipe") or {}).get("expr") if isinstance(s.get("recipe"), dict) else None,
+    } for s in signals]
+    return pd.DataFrame(rows)
+
+
+def _explore_table_dirs(explore_dir: Path) -> list[Path]:
+    return [d for d in (explore_dir / "tables", explore_dir / "sandbox" / "tables") if d.is_dir()]
+
+
+def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
+    """Surface the CSV tables the explorer wrote as charts (+ the table itself).
+    These are the actual data behind the analysis (e.g. fail rate by signal)."""
+    explore_dir = Path(explore_dir)
+    csvs: list[Path] = []
+    for tdir in _explore_table_dirs(explore_dir):
+        csvs.extend(sorted(tdir.glob("*.csv")))
+    # de-dup by name (tables/ vs sandbox/tables/)
+    seen: set[str] = set()
+    uniq = [p for p in csvs if not (p.name in seen or seen.add(p.name))]
+
+    if not uniq:
+        if full:
+            st.caption("No CSV tables found for this run.")
+        return
+
+    if not full:
+        st.markdown("#### Data tables")
+    for path in uniq:
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        st.markdown(f"**{path.name}**")
+        num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        if len(df.columns) >= 2 and num_cols:
+            x = df.columns[0]
+            y = num_cols[0] if num_cols[0] != x else (num_cols[1] if len(num_cols) > 1 else num_cols[0])
+            try:
+                st.bar_chart(df, x=x, y=y, height=260)
+            except Exception:
+                st.dataframe(df, width="stretch", height=240)
+        if full:
+            st.dataframe(df, width="stretch", height=240)
 
 
 def _render_header(root: Path, turn: dict[str, Any], report: dict[str, Any]) -> None:
@@ -419,6 +574,8 @@ def _resolve_artifact_path(value: Any, turn_dir: Path) -> Path:
         turn_dir / "figures" / path.name,
         turn_dir / "tables" / path.name,
         turn_dir / "sandbox" / path.name,
+        turn_dir / "sandbox" / "tables" / path.name,
+        turn_dir / "sandbox" / "figures" / path.name,
     ]
     return next((p for p in candidates if p.exists()), candidates[0])
 
