@@ -1,7 +1,0 @@
-column,label,n,mean,min,median,max
-relative_attention_max_relative_weight,pass,10,65.5452,4.1984,24.4062,475.474
-relative_attention_max_relative_weight,fail,10,195.99,14.254,188.783,791.774
-relative_attention_mean_relative_weight,pass,10,2.61352,0.6559,2.0225,10.1081
-relative_attention_mean_relative_weight,fail,10,5.77802,1.5389,4.8347,18.9851
-relative_attention_focus_share,pass,10,0.19,0.0852,0.1376,0.5351
-relative_attention_focus_share,fail,10,0.35591,0.1459,0.3549,0.5934

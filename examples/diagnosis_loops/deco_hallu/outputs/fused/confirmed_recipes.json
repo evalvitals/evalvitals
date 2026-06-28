@@ -1,12 +1,12 @@
 [
   {
-    "name": "probe1_flag",
+    "name": "probe1_positive",
     "kind": "expr",
-    "expr": "generated_probe1_false_detection >= 0.5"
+    "expr": "generated_probe1_false_detection > 0.5"
   },
   {
-    "name": "probe1_or_diffuse",
+    "name": "low_focus_share",
     "kind": "expr",
-    "expr": "(generated_probe1_false_detection >= 0.5) or (relative_attention_focus_share < 0.2)"
+    "expr": "relative_attention_focus_share > 0.244825"
   }
 ]

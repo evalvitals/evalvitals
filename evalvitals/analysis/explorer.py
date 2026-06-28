@@ -36,14 +36,40 @@ A JSON file named "{input_filename}" is in the current working directory.
 It contains a list of row dictionaries. Data profile:
 {data_profile}
 
-Write a self-contained Python script that:
+Write a self-contained Python script that performs a THOROUGH, Lambda-style
+exploratory failure analysis and PRODUCES A RICH SET OF CHARTS BY DEFAULT.
+
+Setup:
 - reads "{input_filename}" from the current working directory
-- explores patterns relevant to the question
-- may use only local Python packages; no network and no repo mutation
-- when useful, writes summary tables under a local "tables/" directory as CSV
-- when useful, writes plots under a local "figures/" directory as PNG
-- when useful, returns chart specs in "charts": each spec should include
-  {{"name", "kind", "data", "x", "y", "title"}} where data points to a CSV table
+- may use only local Python packages (pandas / numpy / matplotlib are fine); no
+  network and no repo mutation
+- identify the outcome column (label / is_correct / is_fail / pass-fail) and call
+  the two groups FAIL and PASS. Identify the numeric signal columns and any
+  categorical group columns (model, source_dir, probe_type, ...).
+
+VISUAL ANALYSIS — produce a COMPREHENSIVE set of charts, NOT one. Aim for 6-12
+charts that together tell the FAIL-vs-PASS story. Build this standard battery for
+whichever columns exist (skip a chart only if its columns are absent):
+  1. Class balance: count of FAIL vs PASS overall (and per model/group if present).
+  2. Per numeric signal — how it separates FAIL vs PASS: group mean/median per
+     outcome (grouped bar), AND a binned fail-rate curve (bin -> fail_rate).
+  3. Top discriminators: a ranked bar of each signal's FAIL-vs-PASS separation
+     (e.g. standardized mean difference / |meanFAIL - meanPASS| / s), largest first.
+  4. Fail rate by each categorical group column (bar).
+  5. Signal correlations: a correlation table (and optionally a heatmap PNG).
+  6. 1-2 scatter plots of the most discriminative signal pairs, coloured by outcome.
+
+For EVERY chart you report in "charts":
+- write its plotted data as a CSV under "tables/<name>.csv"
+- add a spec {{"name","kind","data","x","y","title"}} with data="tables/<name>.csv"
+  and kind in {{"bar","line","scatter"}}. The HOST renders these deterministically,
+  so PRE-AGGREGATE distributions into the CSV (histogram = bin->count; fail rate =
+  bin->fail_rate; group comparison = group->value) — never rely on a raw dump.
+ADDITIONALLY you MAY draw richer figures (box / violin / heatmap / scatter-matrix)
+directly as PNG under "figures/" and list them in "plots"; a figure-styling skill
+(when available) will make these publication-quality.
+
+Discovery outputs:
 - does NOT claim causal/statistical confirmation; this is exploratory only
 - PREFERRED: for any composite / threshold / interaction signal that is a
   DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
@@ -62,8 +88,9 @@ Write a self-contained Python script that:
   Do NOT emit "reject"/"e_value"/"p_value" anywhere — the HOST recomputes the
   verdict from "recipe"/"sufficient" with its validated, multiplicity-aware core; a
   self-declared verdict is ignored. Omit both for descriptive-only signals.
-- prints the final result as the LAST stdout line exactly like:
-  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "recipe": {{"name": "...", "kind": "expr", "expr": "(col_a < 40) and (col_b < 0.3)"}}}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+- prints the final result as the LAST stdout line exactly like (note "charts" is a
+  RICH list here, one entry per CSV you wrote):
+  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "recipe": {{"name": "...", "kind": "expr", "expr": "(col_a < 40) and (col_b < 0.3)"}}}}], "plots": ["figures/corr_heatmap.png"], "tables": {{}}, "charts": [{{"name": "class_balance", "kind": "bar", "data": "tables/class_balance.csv", "x": "outcome", "y": "count", "title": "FAIL vs PASS"}}, {{"name": "failrate_by_objsize", "kind": "line", "data": "tables/failrate_by_objsize.csv", "x": "obj_size_bin", "y": "fail_rate", "title": "Fail rate by object size"}}, {{"name": "top_discriminators", "kind": "bar", "data": "tables/top_discriminators.csv", "x": "signal", "y": "separation", "title": "Top FAIL/PASS discriminators"}}], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
 {skills_hint}
 Return ONLY the Python code{fences_hint}."""
 
