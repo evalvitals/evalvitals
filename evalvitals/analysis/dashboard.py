@@ -114,6 +114,8 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
     for ev in events:
         by_event.setdefault(str(ev.get("event", "")), []).append(ev)
 
+    explore_report, explore_dir = _find_explore_report(root, log_path)
+
     return {
         "log_path": str(log_path),
         "analyses": by_event.get("analysis", []),
@@ -121,4 +123,32 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
         "surgeries": by_event.get("surgery", []),
         "fixes": by_event.get("fix", []),
         "n_events": len(events),
+        # The Step-1 explorer report (charts/observations M3 was allowed to consult)
+        # usually lives in a SIBLING dir (e.g. OUT/fused/) — not next to the log —
+        # so resolve it across the run tree rather than requiring co-location.
+        "explore_report": explore_report,
+        "explore_dir": explore_dir,
     }
+
+
+def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Locate the Step-1 explore/fused report for a loop run.
+
+    The loop writes ``run_log.jsonl`` under ``logs*/`` while the fused pipeline
+    writes ``fused_report.json`` under a separate ``fused/`` dir. Search the run
+    tree and its parents/siblings so the dashboard can show what M3 consulted."""
+    bases = [root, log_path.parent, log_path.parent.parent, root.parent]
+    seen: set[Path] = set()
+    for base in bases:
+        if base in seen or not base.exists():
+            continue
+        seen.add(base)
+        for pattern in (
+            "fused_report.json", "exploratory_report.json",
+            "fused/fused_report.json", "*/fused_report.json", "*/exploratory_report.json",
+        ):
+            for cand in sorted(base.glob(pattern)):
+                report = _read_json(cand)
+                if report is not None and (report.get("charts") or report.get("observations")):
+                    return report, str(cand.parent)
+    return None, None

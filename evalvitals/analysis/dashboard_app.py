@@ -96,18 +96,32 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
         unsafe_allow_html=True,
     )
 
-    # Step 1 explore artifacts (charts the loop's M3 was allowed to consult).
-    explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
+    # Step 1 explore artifacts (charts the loop's M3 was allowed to consult). The
+    # report usually lives in a sibling dir, so load_loop_story resolves it for us.
+    explore_report = story.get("explore_report")
+    if not explore_report:
+        explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
+    explore_dir = Path(story.get("explore_dir") or (runs[0]["dir"] if runs else root))
     if explore_report:
         with st.expander("Step 1 — exploratory charts & observations (UNCONFIRMED; fed to M3 only)", expanded=True):
-            _render_charts_and_plots(explore_report, Path(runs[0]["dir"]) if runs else root)
+            _render_charts_and_plots(explore_report, explore_dir)
             obs = explore_report.get("observations") or []
             for o in obs[:8]:
                 st.markdown(f"- {o}")
 
+    analyses = story.get("analyses") or []
     diagnoses = story.get("diagnoses") or []
     surgeries = story.get("surgeries") or []
     fixes = story.get("fixes") or []
+
+    if analyses:
+        st.markdown("### M2 — stats analysis")
+        for a in analyses:
+            sev = a.get("severity") or a.get("analysis_severity") or ""
+            concl = a.get("conclusion") or a.get("narrative") or ""
+            st.markdown(f"- **Cycle {a.get('cycle')}** {('· ' + str(sev)) if sev else ''}")
+            if concl:
+                st.caption(_truncate(str(concl), 280))
 
     st.markdown("### M3 — hypotheses")
     if not diagnoses:
@@ -395,15 +409,16 @@ def _table_to_dataframe(value: Any, turn_dir: Path) -> pd.DataFrame | None:
 
 def _resolve_artifact_path(value: Any, turn_dir: Path) -> Path:
     path = Path(str(value))
-    if path.is_absolute():
-        if path.exists():
-            return path
-        return turn_dir / path.name
+    if path.is_absolute() and path.exists():
+        return path
+    # Relative path, or an absolute path that no longer exists (run dir moved to
+    # another machine): fall back through the local layout by basename.
     candidates = [
-        turn_dir / path,
-        turn_dir / "sandbox" / path,
+        turn_dir / path if not path.is_absolute() else turn_dir / path.name,
+        turn_dir / path.name,
         turn_dir / "figures" / path.name,
         turn_dir / "tables" / path.name,
+        turn_dir / "sandbox" / path.name,
     ]
     return next((p for p in candidates if p.exists()), candidates[0])
 

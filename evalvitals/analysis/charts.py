@@ -139,9 +139,13 @@ def _load_table(
     if resolved.suffix.lower() != ".csv":
         return None, f"not a CSV: {resolved.name}"
     try:
-        with resolved.open("r", encoding="utf-8", newline="") as fh:
+        # errors="replace" tolerates non-UTF-8 cells (VL logs carry latin-1/binary
+        # text); the broad except covers csv.Error (oversized field) so a malformed
+        # CSV degrades to a (None, reason) annotation instead of raising — the
+        # module's "never raises into a pipeline" contract.
+        with resolved.open("r", encoding="utf-8", errors="replace", newline="") as fh:
             rows = list(csv.DictReader(fh))
-    except OSError as exc:
+    except (OSError, UnicodeError, csv.Error) as exc:
         return None, f"could not read {resolved.name}: {exc}"
     if not rows:
         return None, "empty CSV"

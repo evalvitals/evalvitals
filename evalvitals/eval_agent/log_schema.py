@@ -134,6 +134,11 @@ _EVENTS: dict[str, dict[str, Any]] = {
             "n_hypotheses": {"type": "integer"},
             "hypotheses": {"type": "array", "items": _HYPOTHESIS},
             "raw_judge_output": {"type": ["string", "null"]},
+            # Provenance of the (UNCONFIRMED) explorer mechanism notes M3 was shown.
+            # Descriptive/display-only — never enters M2/M5/fix.
+            "referenced_charts": {"type": "array", "items": {"type": "string"}},
+            "explore_context_used": {"type": "boolean"},
+            "explore_figures": {"type": "array", "items": {"type": "string"}},
             "judge_io": _JUDGE_IO,
             "duration_sec": {"type": "number"},
         },

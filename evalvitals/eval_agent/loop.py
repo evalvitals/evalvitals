@@ -1038,11 +1038,16 @@ class VLDiagnoseLoop:
             self._tokens_used += _tok
 
             if self.run_logger:
-                _explore_figs = (
-                    self._explore_context.figure_paths
-                    if self._explore_context is not None
-                    else None
-                )
+                # Log only the figures that actually existed (the same existence
+                # filter M3 applies when attaching them) so the audit trail reflects
+                # what the judge truly saw, not every chart with a figure_path key.
+                _explore_figs = None
+                if self._explore_context is not None:
+                    from pathlib import Path as _P
+
+                    _explore_figs = [
+                        f for f in self._explore_context.figure_paths if _P(f).exists()
+                    ]
                 self.run_logger.log_diagnosis(
                     cycle, diag, duration_sec=_dt, explore_figures=_explore_figs or None
                 )

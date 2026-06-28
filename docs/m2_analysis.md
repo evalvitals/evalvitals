@@ -6,10 +6,11 @@ directory.
 
 There are two standalone modes:
 
-- `evalvitals chat`: no-code exploratory analysis over JSON/JSONL logs.
+- `evalvitals explore`: no-code exploratory analysis over JSON/JSONL logs (a
+  single-shot run; there is no interactive REPL).
 - `StatsAnalysisAgent`: confirmatory statistical tests over standardized records.
 
-Use the chat mode first when you do not yet know which signals matter. Promote
+Use `explore` first when you do not yet know which signals matter. Promote
 the useful candidate signals into `StatsAnalysisAgent` when you need effect
 sizes, confidence intervals, e-values, and FDR-aware decisions.
 
@@ -28,25 +29,26 @@ pip install -e ".[dashboard]"
 ```
 
 EvalVitals does not require changing your PyTorch install. For example, the
-dashboard/chat dependencies can run in an existing `torch==2.6.*` environment.
+dashboard/viz dependencies can run in an existing `torch==2.6.*` environment.
 
-## No-Code Chat
+## No-Code Explore
 
-Point the chat CLI at a file or directory containing JSON/JSONL results:
+Point the explore CLI at a file or directory containing JSON/JSONL results and
+pass a single analysis question:
 
 ```bash
-evalvitals chat /path/to/results \
+evalvitals explore /path/to/results \
   --backend antigravity \
-  --out m2_chat_output \
+  -q "Which features distinguish incorrect cases from correct cases?" \
+  --out evalvitals_explore_output \
   --max-rows 2000 \
-  --max-files 200
+  --max-files 200 \
+  --dashboard          # optional: open the dashboard when done
 ```
 
 The input path may be a single `.json` or `.jsonl` file, or a directory tree.
 EvalVitals recursively samples records across files and writes a normalized
-`records.json` artifact for each turn.
-
-Inside the chat, ask direct analysis questions:
+`records.json` artifact. Example questions:
 
 ```text
 Compare accuracy across model directories.
@@ -55,44 +57,37 @@ Does tool usage correlate with failures?
 Find candidate signals I should confirm with StatsAnalysisAgent.
 ```
 
-Useful REPL commands:
+The run asks the local coding agent to write one analysis script, executes it in
+EvalVitals' sandbox, host-adjudicates any host-checkable candidate statistics,
+renders the chart specs to PNG, and writes the artifacts. It is a single shot —
+re-run with a new `-q` question for a new analysis. (The standalone console
+script `evalvitals-explore` is equivalent.)
+
+## Explore Outputs
+
+A typical output directory looks like this:
 
 ```text
-:help      show commands
-:status    show loaded data and output directory
-:history   show prior turns
-:quit      exit
-```
-
-Each user turn asks the local coding agent to write an analysis script, executes
-that script in EvalVitals' sandbox, and stores the artifacts under a numbered
-turn directory.
-
-## Chat Outputs
-
-A typical session looks like this:
-
-```text
-m2_chat_output/
-  chat_history.json
-  turn_001/
-    records.json
-    analysis.py
-    stdout.txt
-    stderr.txt
-    agent_raw_output.txt
-    exploratory_report.json
-    figures/
-    tables/
+evalvitals_explore_output/
+  records.json
+  analysis.py
+  stdout.txt
+  stderr.txt
+  agent_raw_output.txt
+  exploratory_report.json
+  figures/
+  tables/
 ```
 
 Important files:
 
-- `exploratory_report.json`: structured answer for the turn, including summary,
-  metrics, candidate signals, charts, tables, limitations, and next questions.
+- `exploratory_report.json`: structured answer, including summary, metrics,
+  candidate signals (with host-adjudicated verdicts when applicable), charts,
+  tables, limitations, and next questions.
 - `analysis.py`: generated analysis code that was actually executed.
 - `records.json`: sampled records given to the generated script.
-- `figures/` and `tables/`: generated visual or tabular artifacts, if any.
+- `figures/` and `tables/`: rendered charts (host-side, from spec + CSV) and
+  tabular artifacts, if any.
 
 The exploratory report is intentionally discovery-oriented. It is allowed to
 surface hypotheses, patterns, suspicious correlations, and suggested follow-up
@@ -100,29 +95,16 @@ tests. It is not the final confirmatory statistics layer.
 
 ## Dashboard
 
-Open a Streamlit dashboard over a chat output directory:
+Open a Streamlit dashboard over an explore output directory:
 
 ```bash
-evalvitals dashboard m2_chat_output --port 8501
+evalvitals dashboard evalvitals_explore_output --port 8501
 ```
 
 The dashboard reads the saved artifacts; it does not re-run the agent. Use it to
-review multi-turn analyses, generated figures, tables, and the exact generated
-code for each turn.
-
-## One-Shot Explore
-
-For a non-interactive run:
-
-```bash
-evalvitals-m2-explore /path/to/results \
-  --question "Compare failure patterns across model directories." \
-  --coder-provider antigravity \
-  --out m2_explore_output
-```
-
-This uses the same exploratory backend as the chat CLI, but runs only one
-question and exits.
+review the analysis, rendered figures, tables, and the exact generated code. The
+same loader also renders a diagnostic loop run (`run_log.jsonl`) as an
+M2 → M3 → M5 → Fix story.
 
 ## Confirmatory Statistics
 
@@ -157,7 +139,7 @@ single-rate e-values. It applies e-BH FDR correction and returns a
 
 ## Standardization Boundary
 
-Standalone chat mode does not require a standardized `StatsInput`. It accepts
+Standalone explore mode does not require a standardized `StatsInput`. It accepts
 messy logs and uses a local coding agent to inspect their shape.
 
 The full diagnosis loop and confirmatory `StatsAnalysisAgent` do benefit from
@@ -175,7 +157,7 @@ M1 findings / user records
 
 Use this rule of thumb:
 
-- For exploratory questions, use `evalvitals chat` directly on result logs.
+- For exploratory questions, use `evalvitals explore` directly on result logs.
 - For claims you want the loop to consume, standardize and run
   `StatsAnalysisAgent`.
 - For M1-M5 automation, keep the standardized contract so M2/M5 can share

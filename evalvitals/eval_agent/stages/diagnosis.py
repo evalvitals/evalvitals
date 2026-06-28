@@ -187,21 +187,27 @@ def _format_explore_section(ctx: "ExploreContext | None") -> str:
 
 
 def _extract_referenced(raw: str, ctx: "ExploreContext | None") -> list[str]:
-    """Best-effort list of explore artifacts M3's output actually referenced.
+    """Best-effort, DISPLAY-ONLY list of explore artifacts M3's output referenced.
 
-    Matches chart titles/names mentioned in the judge output. Used only for
-    provenance/dashboard display — it has no effect on which hypotheses survive.
+    Matches chart titles/names mentioned in the judge output as a whole phrase
+    (word boundaries, min length) to avoid crediting a chart just because a short
+    generic title like "rate"/"loss" happens to be a substring of unrelated prose.
+    Used only for provenance/dashboard display — no effect on hypothesis survival.
     """
     if ctx is None or ctx.is_empty:
         return []
+    import re
+
     low = str(raw).lower()
     referenced: list[str] = []
     for c in ctx.charts:
         for key in ("title", "name"):
             label = str(c.get(key) or "").strip()
-            if len(label) >= 4 and label.lower() in low and label not in referenced:
-                referenced.append(label)
-                break
+            # Require a reasonably specific label matched on word boundaries.
+            if len(label) >= 6 and label not in referenced:
+                if re.search(rf"\b{re.escape(label.lower())}\b", low):
+                    referenced.append(label)
+                    break
     return referenced
 
 

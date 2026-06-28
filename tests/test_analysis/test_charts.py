@@ -75,6 +75,26 @@ def test_render_is_deterministic(tmp_path):
     assert Path(a).read_bytes() == Path(b).read_bytes()
 
 
+def test_non_utf8_and_oversized_csv_never_raise(tmp_path):
+    # Contract: render_chart_specs NEVER raises into the pipeline, even on a CSV
+    # with non-UTF-8 bytes or a field larger than csv.field_size_limit().
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables" / "bin.csv").write_bytes(b"grp,val\n\xff\xfe,3\nb,7\n")
+    huge = "x" * 200_000
+    (tmp_path / "tables" / "huge.csv").write_text(
+        f"grp,val\n{huge},3\nb,7\n", encoding="utf-8"
+    )
+    specs = [
+        {"name": "bin", "kind": "bar", "data": "tables/bin.csv", "x": "grp", "y": "val"},
+        {"name": "huge", "kind": "bar", "data": "tables/huge.csv", "x": "grp", "y": "val"},
+    ]
+    # Must return annotated specs, not raise.
+    out = render_chart_specs(specs, tmp_path / "tables", tmp_path / "out")
+    assert len(out) == 2
+    for spec in out:
+        assert "description" in spec  # always degrades gracefully
+
+
 @pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
 def test_unknown_x_column_skips_without_raising(tmp_path):
     _write_table(tmp_path)

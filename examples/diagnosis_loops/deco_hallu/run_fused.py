@@ -110,9 +110,12 @@ def main() -> None:
     #    fused_report.json carries figure_path for Step 2's M3 and the dashboard ──
     from evalvitals.analysis.charts import render_chart_specs
 
-    report.charts = render_chart_specs(report.charts, FUSED_DIR / "sandbox", FUSED_DIR)
-    n_rendered = sum(1 for c in report.charts if c.get("figure_path"))
-    print(f"rendered {n_rendered}/{len(report.charts)} chart(s) -> {FUSED_DIR / 'figures'}")
+    try:
+        report.charts = render_chart_specs(report.charts, FUSED_DIR / "sandbox", FUSED_DIR)
+        n_rendered = sum(1 for c in report.charts if c.get("figure_path"))
+        print(f"rendered {n_rendered}/{len(report.charts)} chart(s) -> {FUSED_DIR / 'figures'}")
+    except Exception as exc:  # rendering must never block persisting the report below
+        print(f"[WARN] chart rendering failed ({exc}); persisting report without figures")
 
     # ── persist full report + the CONFIRMED recipes for Step 2 ──
     (FUSED_DIR / "fused_report.json").write_text(

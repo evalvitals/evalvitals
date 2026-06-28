@@ -39,7 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         choices=["antigravity", "codex", "claude_code", "opencode", "gemini_cli", "kimi_cli"],
         help="Local CLI coding-agent backend.",
     )
-    parser.add_argument("--coder-model", default="", help="Optional model flag for the CLI agent.")
+    parser.add_argument("--coder-model", "--model", dest="coder_model", default="",
+                        help="Optional model flag for the CLI agent.")
     parser.add_argument("--coder-binary", default="", help="Explicit path to the CLI binary.")
     parser.add_argument("--max-rows", type=int, default=2000, help="Maximum loaded records.")
     parser.add_argument("--max-files", type=int, default=200, help="Maximum JSON files to scan.")
