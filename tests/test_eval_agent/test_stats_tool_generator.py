@@ -22,17 +22,17 @@ import json
 data = json.load(open("m2_stats_input.json"))
 labels = data["labels"]
 sig = next(iter(data["per_case"].values()), {})
-s = [labels[c] for c in labels if sig.get(c, 0)]
-ctl = [labels[c] for c in labels if not sig.get(c, 0)]
+s = [int(labels[c]) for c in labels if sig.get(c, 0)]
+ctl = [int(labels[c]) for c in labels if not sig.get(c, 0)]
 rs = sum(s)/len(s) if s else 0.0
 rc = sum(ctl)/len(ctl) if ctl else 0.0
 eff = rs - rc
 print("computed effect", eff)
 print('STATS_RESULT_JSON=' + json.dumps({
     "summary": f"custom fail-rate diff = {eff:.2f}",
-    "effect": eff, "ci": None, "reject": bool(eff > 0.5),
-    "e_value": None, "p_value": None, "underpowered": False,
+    "effect": eff, "ci": None, "underpowered": False,
     "details": {"n_signal": len(s), "n_control": len(ctl)},
+    "sufficient": {"kind": "two_group", "a": ctl, "b": s},
 }))
 '''
 
@@ -46,11 +46,22 @@ labels = data["labels"]
 sig = next(iter(data["per_case"].values()), {})
 s = [int(labels[c]) for c in labels if sig.get(c, 0)]
 ctl = [int(labels[c]) for c in labels if not sig.get(c, 0)]
-r = compare(ctl, s, paired=False)
+r = compare(ctl, s, paired=False)   # generated code may use evalvitals.stats
 print('STATS_RESULT_JSON=' + json.dumps({
     "summary": r.summary(), "effect": r.effect, "ci": list(r.ci),
-    "reject": r.reject, "e_value": r.e_value, "p_value": None,
     "underpowered": r.underpowered, "details": {},
+    "sufficient": {"kind": "two_group", "a": ctl, "b": s},
+}))
+'''
+
+# A tool that does NO real test but self-declares a rejection with a fabricated
+# e-value: the host must IGNORE the self-declared verdict (descriptive only).
+_LIES_SCRIPT = '''
+import json
+print('STATS_RESULT_JSON=' + json.dumps({
+    "summary": "I claim significance with no statistic",
+    "effect": 0.9, "ci": [0.8, 1.0], "reject": True, "e_value": 9999.0,
+    "p_value": 0.0001, "underpowered": False, "details": {}, "sufficient": None,
 }))
 '''
 
@@ -112,6 +123,38 @@ def test_generate_missing_marker_is_not_ok():
     result, tool = gen.generate("bad", _inp(), name="bad")
     assert not result.ok and "STATS_RESULT_JSON" in (result.error or "")
     assert tool is None
+
+
+def test_self_declared_reject_is_ignored():
+    """A generated tool that self-declares reject/e_value but supplies no
+    adjudicable sufficient statistic is treated as DESCRIPTIVE: the host never
+    trusts the LLM's verdict, so it cannot reach M5's headline."""
+    gen = StatsToolGenerator(judge=ScriptedJudge(_LIES_SCRIPT))
+    result, _ = gen.generate("lie", _inp(), name="liar")
+    assert result.ok
+    assert result.reject is False          # self-declared True was ignored
+    assert result.e_value is None          # fabricated e-value dropped
+    assert result.p_value is None
+    assert result.details.get("descriptive_only") is True
+
+
+def test_host_reconstructs_e_value_from_paired_binary():
+    """A paired_binary sufficient statistic is adjudicated host-side: the host
+    computes the e-value from (b, c) and decides reject — not the script."""
+    script = '''
+import json
+print('STATS_RESULT_JSON=' + json.dumps({
+    "summary": "paired flip", "effect": None, "ci": None,
+    "underpowered": False, "details": {},
+    "sufficient": {"kind": "paired_binary", "b": 20, "c": 0},
+}))
+'''
+    gen = StatsToolGenerator(judge=ScriptedJudge(script))
+    result, _ = gen.generate("paired", _inp(), name="mc")
+    assert result.ok
+    assert result.reject is True
+    assert result.e_value is not None and result.e_value > 20  # host-computed
+    assert result.details.get("host_adjudicated") is True
 
 
 def test_generator_unavailable_without_backend():

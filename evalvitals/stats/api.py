@@ -59,8 +59,13 @@ def compare(
     seed: int = 0,
 ) -> StatResult:
     """Compare two per-example success vectors. Returns a :class:`StatResult`."""
+    # The bootstrap CI level must track alpha: on the unpaired path `reject` is
+    # "CI excludes 0", so a smaller alpha (e.g. a Bonferroni alpha/m) has to
+    # WIDEN the CI. For the default alpha=0.05 this is 1-0.05=0.95 — identical to
+    # the previous hard-coded level, so existing callers are unchanged.
     boot = clustered_bootstrap_diff(success_a, success_b, clusters=cluster_by,
-                                    n_boot=n_boot, seed=seed, paired=paired)
+                                    n_boot=n_boot, ci=1.0 - alpha, seed=seed,
+                                    paired=paired)
     effect = boot["effect"]
     ci = (boot["ci_low"], boot["ci_high"])
     ci_includes_zero = ci[0] <= 0 <= ci[1]

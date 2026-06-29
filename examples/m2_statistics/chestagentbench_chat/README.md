@@ -1,8 +1,8 @@
-# ChestAgentBench M2 Chat
+# ChestAgentBench M2 Explore
 
-This example starts a Lambda/Codex-style M2 chat over an existing results
-directory. You do not write analysis code; the local coding agent writes and
-runs exploratory analysis scripts inside EvalVitals' sandbox.
+This example runs a Lambda/Codex-style single-shot M2 exploration over an
+existing results directory. You do not write analysis code; the local coding
+agent writes and runs one exploratory analysis script inside EvalVitals' sandbox.
 
 For the general standalone M2 workflow, see
 [`docs/m2_analysis.md`](../../../docs/m2_analysis.md).
@@ -23,14 +23,15 @@ bash examples/m2_statistics/chestagentbench_chat/run.sh
 Or run directly:
 
 ```bash
-evalvitals chat /tealab-data/rjin02/MedRAX/logs/202607/chestagentbench \
+evalvitals explore /tealab-data/rjin02/MedRAX/logs/202607/chestagentbench \
   --backend antigravity \
+  -q "Which features distinguish incorrect cases from correct cases?" \
   --out /tealab-data/rjin02/MedRAX/logs/202607/chestagentbench_m2_chat \
   --max-rows 2000 \
   --max-files 20
 ```
 
-Inside the chat, ask questions like:
+Pass the analysis question with `-q`; example questions:
 
 ```text
 Which features distinguish incorrect cases from correct cases?
@@ -39,13 +40,14 @@ Does tool usage correlate with failures?
 What candidate signals should I confirm with StatsAnalysisAgent?
 ```
 
-Each turn writes:
+The run writes:
 
 ```text
-<out>/turn_001/exploratory_report.json
-<out>/turn_001/analysis.py
-<out>/turn_001/stdout.txt
-<out>/turn_001/agent_raw_output.txt
+<out>/exploratory_report.json
+<out>/analysis.py
+<out>/stdout.txt
+<out>/agent_raw_output.txt
+<out>/figures/   <out>/tables/
 ```
 
 Open the optional Streamlit dashboard:

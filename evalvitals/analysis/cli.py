@@ -1,19 +1,23 @@
-"""Command-line entrypoints for standalone analysis."""
+"""Command-line entrypoint for standalone single-shot exploration.
+
+``evalvitals-explore`` (and ``evalvitals explore``) run one exploratory analysis
+over JSON/JSONL logs: a CLI coding agent writes EDA code, the host adjudicates
+any host-checkable candidate statistics, charts are rendered, and artifacts are
+written. This replaces the retired interactive chat REPL — same backend, single
+shot, no multi-turn state.
+"""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-from evalvitals.analysis.chat import M2ChatConfig, M2ChatShell, write_report_artifacts
-from evalvitals.analysis.explorer import M2ExplorerAgent
-from evalvitals.eval_agent.cli_agent import CliAgentConfig
+from evalvitals.analysis.explore_run import run_explore
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="evalvitals-m2-explore",
-        description="Run Lambda-style local exploratory M2 analysis over JSON/JSONL logs.",
+        prog="evalvitals-explore",
+        description="Run Lambda-style local exploratory analysis over JSON/JSONL logs (single shot).",
     )
     parser.add_argument("path", help="File or directory of JSON/JSONL results.")
     parser.add_argument(
@@ -24,16 +28,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--out",
-        default="m2_explore_output",
-        help="Output directory for report/code/stdout.",
+        default="evalvitals_explore_output",
+        help="Output directory for report/code/figures/tables.",
     )
     parser.add_argument(
+        "--backend",
         "--coder-provider",
+        dest="coder_provider",
         default="antigravity",
         choices=["antigravity", "codex", "claude_code", "opencode", "gemini_cli", "kimi_cli"],
-        help="Local CLI coding agent backend.",
+        help="Local CLI coding-agent backend.",
     )
-    parser.add_argument("--coder-model", default="", help="Optional model flag for the CLI agent.")
+    parser.add_argument("--coder-model", "--model", dest="coder_model", default="",
+                        help="Optional model flag for the CLI agent.")
     parser.add_argument("--coder-binary", default="", help="Explicit path to the CLI binary.")
     parser.add_argument("--max-rows", type=int, default=2000, help="Maximum loaded records.")
     parser.add_argument("--max-files", type=int, default=200, help="Maximum JSON files to scan.")
@@ -44,94 +51,55 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--timeout-sec", type=int, default=120, help="Sandbox/agent timeout.")
     parser.add_argument("--max-attempts", type=int, default=2, help="Code repair attempts.")
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Open the Streamlit dashboard on the output directory when done.",
+    )
+    parser.add_argument("--port", type=int, default=None, help="Optional dashboard port.")
+    parser.add_argument(
+        "--skill",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Path to an Agent-Skill directory (with SKILL.md) to style the "
+             "agent-authored figures, e.g. a nature-figure skill. Repeatable. "
+             "Only the claude/agy backends use skills.",
+    )
+    parser.add_argument(
+        "--allow-skills",
+        action="store_true",
+        help="Enable the Skill tool so globally-installed (~/.claude/skills) "
+             "skills are usable too. Implied when --skill is given.",
+    )
+    parser.add_argument(
+        "--no-skills",
+        dest="use_bundled_skills",
+        action="store_false",
+        default=True,
+        help="Do not apply the package's bundled skills (e.g. nature-figure) "
+             "for this run.",
+    )
     args = parser.parse_args(argv)
 
-    out_dir = Path(args.out).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    cli_config = CliAgentConfig(
-        provider=args.coder_provider,
-        binary_path=args.coder_binary,
-        model=args.coder_model,
-        timeout_sec=args.timeout_sec,
-    )
-    agent = M2ExplorerAgent(
-        cli_config=cli_config,
-        timeout_sec=args.timeout_sec,
-        max_attempts=args.max_attempts,
-    )
-    report = agent.explore_path(
+    return run_explore(
         args.path,
         question=args.question,
+        out=args.out,
+        coder_provider=args.coder_provider,
+        coder_model=args.coder_model,
+        coder_binary=args.coder_binary,
         max_rows=args.max_rows,
         max_files=args.max_files,
         include_tool_calls=args.include_tool_calls,
+        timeout_sec=args.timeout_sec,
+        max_attempts=args.max_attempts,
+        dashboard=args.dashboard,
+        dashboard_port=args.port,
+        skills=args.skill,
+        allow_skills=args.allow_skills,
+        use_bundled_skills=args.use_bundled_skills,
     )
-
-    write_report_artifacts(report, out_dir)
-
-    print(f"ok: {report.ok}")
-    print(f"attempts: {report.attempts}")
-    print(f"rows loaded: {report.data_profile.get('loaded_rows', report.data_profile.get('n_rows'))}")
-    print(f"output: {out_dir}")
-    if report.error:
-        print(f"error: {report.error}")
-    if report.observations:
-        print("\nobservations:")
-        for obs in report.observations[:8]:
-            print(f"- {obs}")
-    if report.candidate_signals:
-        print("\ncandidate signals:")
-        for signal in report.candidate_signals[:8]:
-            print(f"- {signal.name}: {signal.rationale}")
-    return 0 if report.ok else 1
-
-
-def chat_main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="evalvitals-m2-chat",
-        description="Interactive Lambda-style M2 chat over a results directory.",
-    )
-    parser.add_argument("path", help="File or directory of JSON/JSONL results.")
-    parser.add_argument(
-        "--out",
-        default="m2_chat_output",
-        help="Output directory. Each chat turn gets a numbered subdirectory.",
-    )
-    parser.add_argument(
-        "--coder-provider",
-        default="antigravity",
-        choices=["antigravity", "codex", "claude_code", "opencode", "gemini_cli", "kimi_cli"],
-        help="Local CLI coding agent backend.",
-    )
-    parser.add_argument("--coder-model", default="", help="Optional model flag for the CLI agent.")
-    parser.add_argument("--coder-binary", default="", help="Explicit path to the CLI binary.")
-    parser.add_argument("--max-rows", type=int, default=2000, help="Maximum loaded records.")
-    parser.add_argument("--max-files", type=int, default=200, help="Maximum JSON files to scan.")
-    parser.add_argument(
-        "--include-tool-calls",
-        action="store_true",
-        help="Also load tool_calls_*.json files.",
-    )
-    parser.add_argument("--timeout-sec", type=int, default=120, help="Sandbox/agent timeout.")
-    parser.add_argument("--max-attempts", type=int, default=2, help="Code repair attempts.")
-    args = parser.parse_args(argv)
-
-    return M2ChatShell(
-        M2ChatConfig(
-            path=args.path,
-            out=args.out,
-            coder_provider=args.coder_provider,
-            coder_model=args.coder_model,
-            coder_binary=args.coder_binary,
-            max_rows=args.max_rows,
-            max_files=args.max_files,
-            include_tool_calls=args.include_tool_calls,
-            timeout_sec=args.timeout_sec,
-            max_attempts=args.max_attempts,
-            prompt="m2",
-        )
-    ).run()
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -1,0 +1,28 @@
+{
+  "tier": "L1",
+  "name": "verify_then_answer",
+  "kind": "template",
+  "source": "judge",
+  "payload": {
+    "prompt_template": "{prompt} Before answering, scan the entire image for the actual object itself, not for context that merely suggests it. Treat absence as the default and require direct visual confirmation to answer Yes."
+  },
+  "trial_root": null,
+  "n_pairs": 40,
+  "n_fixed": 1,
+  "n_broken": 1,
+  "fixed_cases": [
+    "9906d4f70c33"
+  ],
+  "broken_cases": [
+    "d1edf34bb1bb"
+  ],
+  "effect": 0.0,
+  "reject": false,
+  "fixed": false,
+  "summary": "[mcnemar + e-value (paired binary)] effect=+0.0000 (A=B) CI=-0.0750..+0.0750, e=0.67 -> inconclusive [no_effect, coverage=100%]",
+  "n_applicable": 40,
+  "coverage": 1.0,
+  "n_unstable": 0,
+  "e_value": 0.6666666666666664,
+  "verdict": "no_effect"
+}

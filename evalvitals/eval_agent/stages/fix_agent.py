@@ -75,6 +75,7 @@ from evalvitals.eval_agent.stages.fix_tools import (
 )
 from evalvitals.eval_agent.stages.probe_generator import _extract_code
 from evalvitals.stats import compare
+from evalvitals.stats.ebh import ebh
 from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
@@ -306,6 +307,11 @@ class FixOutcome:
     refine_signal: "dict[str, Any] | None" = None
     # Number of feedback-driven propose->validate rounds actually run (>= 1).
     repair_rounds: int = 0
+    # Candidate names whose e-value survives e-BH FDR control across the whole
+    # tested family (the multiplicity correction for best-of-N selection). A
+    # candidate is eligible to be `best` only if it is BOTH individually `fixed`
+    # AND in this set. Empty when no candidate carried an e-value.
+    ebh_survivors: "list[str]" = field(default_factory=list)
 
     def to_dict(self) -> "dict[str, Any]":
         return {
@@ -345,6 +351,7 @@ class FixOutcome:
             "fixed": self.fixed,
             "recommendation": self.recommendation,
             "refine_signal": self.refine_signal,
+            "ebh_survivors": self.ebh_survivors,
         }
 
 
@@ -518,15 +525,51 @@ class FixAgent:
                             round_idx + 1, len(new_candidates), round_idx + 2)
 
         outcome.refine_signal = self._refine_signal(outcome.attempted, data)
-        winners = [v for v in outcome.attempted if v.fixed]
+        # Multiplicity control over the candidate family (best-of-N): every
+        # candidate cleared only its OWN paired gate (e >= 1/alpha) against the
+        # SAME baseline, so picking the max is a multiple-comparisons hazard.
+        # e-BH composes the family's e-values into one FDR guarantee; a candidate
+        # is a winner only if it is BOTH individually `fixed` AND an e-BH survivor.
+        tested = [v for v in outcome.attempted if v.e_value is not None]
+        survivors = self._ebh_survivors(tested)
+        outcome.ebh_survivors = sorted(
+            v.candidate.name for v in tested if id(v) in survivors)
+        winners = [v for v in outcome.attempted if v.fixed and id(v) in survivors]
         if winners:
             outcome.best = max(winners, key=lambda v: (v.effect or 0.0, -v.n_broken))
             outcome.fixed = True
         else:
-            outcome.recommendation = self._no_fix_recommendation(
-                outcome.attempted, routed_tiers, data)
+            culled = [v for v in outcome.attempted if v.fixed and id(v) not in survivors]
+            if culled:
+                names = ", ".join(sorted(v.candidate.name for v in culled))
+                outcome.recommendation = {
+                    "recommend_tier": self.max_tier.label,
+                    "reason": (
+                        f"{len(culled)} candidate(s) cleared their own gate "
+                        f"({names}) but did NOT survive e-BH FDR across the "
+                        f"{len(tested)}-candidate family — best-of-N multiplicity, "
+                        "not a validated fix. Gather more failing cases (more "
+                        "power per candidate) or propose fewer, stronger candidates."),
+                }
+            else:
+                outcome.recommendation = self._no_fix_recommendation(
+                    outcome.attempted, routed_tiers, data)
         self._emit(outcome)
         return outcome
+
+    def _ebh_survivors(self, tested: "list[FixValidation]") -> "set[int]":
+        """id()s of validations whose e-value survives e-BH across the family.
+
+        The e-values come from compare() (the validated core), never from an
+        LLM, so e-BH is sound. With m candidates, the sole-survivor bar rises to
+        m/alpha (vs the per-candidate 1/alpha) — the correct best-of-N tax.
+        A single tested candidate (m=1) reduces to the per-candidate gate, so
+        non-competitive runs are unaffected.
+        """
+        if not tested:
+            return set()
+        evalues = [float(v.e_value) for v in tested]
+        return {id(tested[i]) for i in ebh(evalues, alpha=self._alpha)}
 
     # -- no-fix recommendation (escalate vs. gather data vs. retry exec) ----
 

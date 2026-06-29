@@ -1,0 +1,6 @@
+ExperimentWriter.write_and_run() started
+CLI path: provider='claude_code'
+  invoking 'claude_code'
+  CLI finished: ok=True, files=['experiment.py'], elapsed=228.5s
+  collected script: 3138 chars
+  sandbox run: rc=0, timed_out=False, metrics=['n_cases', 'metric_a', 'metric_b', 'metric_c', 'verdict']

@@ -330,31 +330,34 @@ print(report.conclusion)
 print([r.summary for r in report.stats_results])
 ```
 
-For Lambda-style no-code exploration over an existing results directory, start
-the local M2 chat backend:
+For Lambda-style no-code exploration over an existing results directory, run a
+single-shot exploration:
 
 ```bash
-evalvitals chat /path/to/results \
+evalvitals explore /path/to/results \
   --backend antigravity \
-  --out m2_chat_output
+  -q "Which failure patterns distinguish wrong answers from correct ones?" \
+  --out evalvitals_explore_output \
+  --dashboard          # optional: open the Streamlit dashboard when done
 ```
 
-Each chat turn writes `exploratory_report.json`, the generated `analysis.py`,
-stdout/stderr, and any generated figures under `turn_XXX/`. The exploratory
-report surfaces candidate signals; run `StatsAnalysisAgent` on promoted signals
-when you need confirmatory effect/CI/e-value/FDR verdicts. For one-shot batch
-mode, use `evalvitals-m2-explore`.
+The run writes `exploratory_report.json`, the generated `analysis.py`,
+stdout/stderr, and any rendered charts under `figures/` + `tables/`. The
+exploratory report surfaces candidate signals; run `StatsAnalysisAgent` on
+promoted signals when you need confirmatory effect/CI/e-value/FDR verdicts.
+(The standalone console script `evalvitals-explore` is equivalent.)
 
-To inspect a chat session as a Streamlit dashboard:
+To inspect the output as a Streamlit dashboard:
 
 ```bash
 pip install -e ".[dashboard]"
-evalvitals dashboard m2_chat_output
+evalvitals dashboard evalvitals_explore_output
 ```
 
 See [docs/m2_analysis.md](docs/m2_analysis.md) for the standalone M2 workflow,
-including chat mode, dashboard review, generated artifacts, and when to promote
-exploratory signals into confirmatory `StatsAnalysisAgent` tests.
+including the single-shot explore entry, dashboard review, generated artifacts,
+and when to promote exploratory signals into confirmatory `StatsAnalysisAgent`
+tests.
 
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 
