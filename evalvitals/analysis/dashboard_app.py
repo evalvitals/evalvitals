@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from evalvitals.analysis.dashboard import load_run
+from evalvitals.reporting.stages import stage_specs_as_dicts
 from evalvitals.viz.labels import display_name, raw_hint
 
 # Eval-chart-style house theme (FAIL-red / PASS-slate palette, distribution-first
@@ -217,6 +218,7 @@ def _render_problem_setting(
         n_features = len(columns)
 
     st.markdown("### Problem Setting")
+    _render_stage_map(active={"M1", "M2"} if not story else {"M1"})
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -294,6 +296,26 @@ def _render_problem_setting(
         st.caption(f"Run directory: {root}")
 
 
+def _render_stage_map(*, active: set[str]) -> None:
+    """Compact map of what M1-M5 mean and which stage this panel is showing."""
+    cards = []
+    for spec in stage_specs_as_dicts():
+        cls = "ev-stage-card ev-stage-active" if spec["id"] in active else "ev-stage-card"
+        cards.append(
+            f"""
+            <div class="{cls}">
+              <div class="ev-stage-id">{_html_escape(spec["id"])}</div>
+              <div class="ev-stage-name">{_html_escape(spec["name"])}</div>
+              <div class="ev-stage-question">{_html_escape(spec["question"])}</div>
+            </div>
+            """
+        )
+    st.markdown(
+        '<div class="ev-stage-map">' + "\n".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _analysis_takeaway(report: dict[str, Any] | None, story: dict[str, Any] | None = None) -> str:
     diag = (story or {}).get("diagnostic_report") or {}
     answer = str(diag.get("answer") or "").strip()
@@ -339,6 +361,7 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
     readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
 
     st.markdown("### Analysis")
+    _render_stage_map(active={"M2"})
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -416,6 +439,7 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
     """Panel 3: hypotheses, downstream tests, and artifacts needed for decisions."""
     hyps = _hypotheses_with_outcomes(story)
     st.markdown("### Hypotheses & Decision")
+    _render_stage_map(active={"M3", "M4", "M5"})
     if hyps:
         st.caption(
             "These are M3 hypotheses formed from the analysis panel. Treat them as "
@@ -453,6 +477,7 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
 def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
     signals = _candidate_signals(report)
     st.markdown("### Analysis")
+    _render_stage_map(active={"M2"})
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -478,6 +503,7 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
 
 def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
     st.markdown("### Hypotheses & Artifacts")
+    _render_stage_map(active={"M3", "M4", "M5"})
     claims = [c for c in report.get("claims") or [] if isinstance(c, dict)]
     tests = report.get("recommended_confirmatory_tests") or []
     if claims:
@@ -1823,6 +1849,41 @@ def _inject_css() -> None:
           color: var(--ev-text);
           font-size: 1rem;
           line-height: 1.45;
+        }
+        .ev-stage-map {
+          display: grid;
+          gap: 0.55rem;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          margin: 0.2rem 0 0.95rem;
+        }
+        .ev-stage-card {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          min-height: 7.3rem;
+          padding: 0.75rem;
+        }
+        .ev-stage-active {
+          border-color: #8ec8d2;
+          box-shadow: inset 0 0 0 2px var(--ev-accent-soft);
+        }
+        .ev-stage-id {
+          color: var(--ev-accent);
+          font-size: 0.78rem;
+          font-weight: 800;
+          margin-bottom: 0.25rem;
+        }
+        .ev-stage-name {
+          color: var(--ev-text);
+          font-size: 0.86rem;
+          font-weight: 760;
+          line-height: 1.25;
+          margin-bottom: 0.35rem;
+        }
+        .ev-stage-question {
+          color: var(--ev-muted);
+          font-size: 0.76rem;
+          line-height: 1.3;
         }
         .ev-analysis-card {
           background: var(--ev-panel);

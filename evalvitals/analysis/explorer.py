@@ -95,6 +95,16 @@ ADDITIONALLY you MAY draw richer figures (box / violin / heatmap / scatter-matri
 directly as PNG under "figures/" and list them in "plots"; a figure-styling skill
 (when available) will make these publication-quality.
 
+Report/dashboard contract:
+- Think in three reader-facing panels, even though you only emit JSON artifacts:
+  (1) Problem Setting = M1/run context and FAIL/PASS setup; (2) Analysis = M2
+  methods, evidence/charts, and takeaways; (3) Hypotheses & Artifacts = M3-M5
+  follow-up questions and decision evidence.
+- For each important analysis method, make the relationship explicit in
+  chart_readings or claims: method -> evidence/chart -> takeaway.
+- Use M-stage language consistently: M1=measurement/features, M2=confirmatory
+  statistics, M3=hypotheses, M4=mechanism test, M5=repair/surgery test.
+
 Discovery outputs:
 - does NOT claim causal/statistical confirmation; this is exploratory only
 - after creating charts, add "chart_readings": one short dict per important

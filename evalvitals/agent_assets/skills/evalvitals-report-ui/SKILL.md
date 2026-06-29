@@ -14,6 +14,46 @@ The reader is evaluating a model failure mode. They should not need to know
 internal probe ids, generated column names, or implementation details to
 understand the result.
 
+## Stage Semantics
+
+Use these stage names consistently:
+
+- **M1 — Measurement:** frozen per-case data, analyzer/probe outputs, attention
+  maps, and derived signals. Dashboard role: Problem Setting.
+- **M2 — Confirmatory analysis:** statistical comparisons of FAIL vs PASS,
+  effect sizes, CIs, e-values/e-BH, and deterministic charts. Dashboard role:
+  Analysis.
+- **M3 — Hypothesis generation:** falsifiable explanations formed from M2
+  evidence plus exploratory context. Dashboard role: Hypotheses.
+- **M4 — Mechanism test:** targeted experiments/interventions that test whether
+  a mechanism is real. Dashboard role: decision evidence.
+- **M5 — Repair/surgery test:** proposed repair/fix outcomes and regression
+  checks. Dashboard role: final action gate.
+
+Every dashboard/report should make clear which stage produced each claim,
+chart, hypothesis, or artifact.
+
+## Dashboard Storyboard
+
+Do not produce an artifact dump. Produce a three-panel reader path:
+
+1. **Problem Setting (M1 + run context)**
+   - What user question is being answered?
+   - What data/cases were provided?
+   - What is FAIL vs PASS?
+   - Which signals/analyzers are available?
+
+2. **Analysis (M2)**
+   - For every analysis method, write: `method`, `evidence/chart`, `takeaway`.
+   - Put the main chart next to the method it supports.
+   - Put table details below the chart, not before the takeaway.
+
+3. **Hypotheses & Artifacts (M3-M5)**
+   - List hypotheses only after M2 evidence.
+   - Link each hypothesis to cited charts/signals.
+   - Summarize M4/M5 test or fix outcomes.
+   - Keep raw artifacts in expandable drill-down sections.
+
 ## Required Output Discipline
 
 - Every `candidate_signals` item must include:
@@ -57,4 +97,3 @@ The final answer should be claim-first:
 3. Link each claim to evidence: confirmed signal, chart, or downstream test.
 4. Say what not to infer: association is not causality unless intervention tests
    support it.
-

@@ -112,6 +112,7 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     assert "Analysis takeaway" in blob
     assert "Method:" in blob
     assert "Takeaway:" in blob
+    assert "M1" in blob and "M2" in blob and "M3" in blob and "M5" in blob
 
 
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
@@ -136,8 +137,11 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     assert any("Problem Setting" in h for h in heads)
     assert any("Analysis" in h for h in heads)
     assert any("Hypotheses & Decision" in h for h in heads)
-    # the hypothesis statement + its M5 verdict appear somewhere in the page
     blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Measurement" in blob
+    assert "Confirmatory analysis" in blob
+    assert "Hypothesis generation" in blob
+    # the hypothesis statement + its M5 verdict appear somewhere in the page
     assert "language-prior hallucination" in blob
     assert "supported" in blob.lower()
     assert any(e.label == "Why these charts were chosen" for e in at.expander)
