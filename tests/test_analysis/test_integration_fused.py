@@ -13,7 +13,6 @@ from evalvitals.analysis.operationalize import SignalRecipe, bridge_recipes_to_r
 from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
 from evalvitals.eval_agent.stages.stats_tools import build_stats_input
 
-
 # A real explorer script: reads records.json, proposes a candidate that carries a
 # deterministic recipe over the existing column. The fused pipeline runs this in a
 # sandbox on EXPLORE, then compiles the recipe on the disjoint CONFIRM split.

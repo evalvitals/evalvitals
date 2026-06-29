@@ -100,11 +100,11 @@ def _import_matplotlib():
         import matplotlib
 
         matplotlib.use("Agg")  # headless, no display needed
-        import matplotlib.pyplot as plt
-
         # Arial/Helvetica are usually absent on servers; DejaVu Sans is the
         # deterministic fallback. Silence the per-figure findfont warning spam.
         import logging as _logging
+
+        import matplotlib.pyplot as plt
         _logging.getLogger("matplotlib.font_manager").setLevel(_logging.ERROR)
         return plt
     except Exception:

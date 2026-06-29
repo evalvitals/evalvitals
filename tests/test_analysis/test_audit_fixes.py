@@ -22,7 +22,6 @@ from evalvitals.analysis.operationalize import (
     per_case_to_records,
 )
 from evalvitals.eval_agent.loop import VLDiagnoseLoop
-from evalvitals.eval_agent.stages.stats_tools import build_stats_input
 
 
 class _FakeResult:

@@ -26,11 +26,13 @@ Every builder returns a plotly Figure. Nothing renders on its own.
 """
 
 from __future__ import annotations
+
 import math
+
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
+import plotly.graph_objects as go
 import plotly.io as pio
 
 # ---------------------------------------------------------------------------
@@ -54,8 +56,9 @@ FONT = "Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
 
 # Map any outcome label -> role color. Extend if labels differ.
 OUTCOME_COLORS = {
-    "FAIL": PALETTE["FAIL"], "fail": PALETTE["FAIL"], 1: PALETTE["FAIL"], True: PALETTE["FAIL"],
-    "PASS": PALETTE["PASS"], "pass": PALETTE["PASS"], 0: PALETTE["PASS"], False: PALETTE["PASS"],
+    # NB: True hashes to 1 and False to 0, so the int keys cover the bool case too.
+    "FAIL": PALETTE["FAIL"], "fail": PALETTE["FAIL"], 1: PALETTE["FAIL"],
+    "PASS": PALETTE["PASS"], "pass": PALETTE["PASS"], 0: PALETTE["PASS"],
 }
 
 def outcome_color(v):
@@ -112,8 +115,10 @@ def fmt(x, kind: str = "effect") -> str:
         return f"{int(round(x))}"
     # 'val'
     ax = abs(x)
-    if ax >= 100:   return f"{x:.0f}"
-    if ax >= 10:    return f"{x:.1f}"
+    if ax >= 100:
+        return f"{x:.0f}"
+    if ax >= 10:
+        return f"{x:.1f}"
     return f"{x:.2f}"
 
 def human_bins(edges) -> list[str]:
@@ -125,7 +130,8 @@ def human_bins(edges) -> list[str]:
     edges = list(edges)
     span = max(edges) - min(edges)
     dec = 0 if span >= 10 else (1 if span >= 1 else 2)
-    f = lambda v: f"{v:.{dec}f}"
+    def f(v):
+        return f"{v:.{dec}f}"
     return [f"{f(a)}–{f(b)}" for a, b in zip(edges[:-1], edges[1:])]
 
 
@@ -456,7 +462,8 @@ def qq_normal(df, signal, outcome="label"):
         theo = z * v.std(ddof=1) + v.mean()
         fig.add_trace(go.Scatter(x=theo, y=v, mode="markers", name=grp,
                                  marker=dict(color=outcome_color(grp), size=6, opacity=0.7)))
-        allmin.append(min(theo.min(), v.min())); allmax.append(max(theo.max(), v.max()))
+        allmin.append(min(theo.min(), v.min()))
+        allmax.append(max(theo.max(), v.max()))
     if allmin:
         lo, hi = min(allmin), max(allmax)
         fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", showlegend=False,
@@ -531,7 +538,8 @@ def quadrant(df, x_sig, y_sig, outcome="label", x_split=None, y_split=None):
 
 def _roc(score, y):
     """ROC points + AUC for a continuous score vs binary label (1=positive)."""
-    score = np.asarray(score, float); y = np.asarray(y, float)
+    score = np.asarray(score, float)
+    y = np.asarray(y, float)
     m = ~(np.isnan(score) | np.isnan(y))
     score, y = score[m], y[m]
     P, N = y.sum(), (1 - y).sum()
@@ -572,11 +580,14 @@ def roc_curves(df, signals, label_col="is_fail"):
 def confusion_matrix(y_true, y_pred, pos_label="Yes", neg_label="No", title="Confusion matrix"):
     """2×2 confusion heatmap from already-binary truth/pred arrays (1=positive).
     Cells annotated with counts; diagonal = correct."""
-    yt = np.asarray(y_true, float); yp = np.asarray(y_pred, float)
+    yt = np.asarray(y_true, float)
+    yp = np.asarray(y_pred, float)
     m = ~(np.isnan(yt) | np.isnan(yp))
     yt, yp = yt[m], yp[m]
-    tp = int(((yt == 1) & (yp == 1)).sum()); fp = int(((yt == 0) & (yp == 1)).sum())
-    fn = int(((yt == 1) & (yp == 0)).sum()); tn = int(((yt == 0) & (yp == 0)).sum())
+    tp = int(((yt == 1) & (yp == 1)).sum())
+    fp = int(((yt == 0) & (yp == 1)).sum())
+    fn = int(((yt == 1) & (yp == 0)).sum())
+    tn = int(((yt == 0) & (yp == 0)).sum())
     # rows = predicted (Yes,No), cols = actual (Yes,No)
     Z = [[tp, fp], [fn, tn]]
     fig = go.Figure(go.Heatmap(
@@ -637,7 +648,8 @@ def coef_plot(df, signals, label_col="is_fail", n_boot=400, seed=0):
 def calibration_curve(y_true, y_prob, n_bins=10, title="Calibration"):
     """Reliability diagram: mean predicted probability vs observed frequency per
     bin. Generic — pass model P(FAIL) once logit-capturing inference is run."""
-    yt = np.asarray(y_true, float); yp = np.asarray(y_prob, float)
+    yt = np.asarray(y_true, float)
+    yp = np.asarray(y_prob, float)
     m = ~(np.isnan(yt) | np.isnan(yp))
     yt, yp = yt[m], yp[m]
     edges = np.linspace(0, 1, n_bins + 1)
@@ -645,7 +657,9 @@ def calibration_curve(y_true, y_prob, n_bins=10, title="Calibration"):
     for lo, hi in zip(edges[:-1], edges[1:]):
         sel = (yp >= lo) & (yp < hi if hi < 1 else yp <= hi)
         if sel.sum():
-            xs.append(yp[sel].mean()); ys.append(yt[sel].mean()); ns.append(int(sel.sum()))
+            xs.append(yp[sel].mean())
+            ys.append(yt[sel].mean())
+            ns.append(int(sel.sum()))
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", showlegend=False,
                              line=dict(color=PALETTE["AXIS"], width=1, dash="dot")))
@@ -676,8 +690,10 @@ def groupstats_strip(df, signals, outcome="label"):
             continue
         z = (x - mu) / sd
         lab = df[outcome].astype(str).str.upper()
-        fz = z[lab == "FAIL"].mean(); pz = z[lab == "PASS"].mean()
-        fr = x[lab == "FAIL"].mean(); pr = x[lab == "PASS"].mean()
+        fz = z[lab == "FAIL"].mean()
+        pz = z[lab == "PASS"].mean()
+        fr = x[lab == "FAIL"].mean()
+        pr = x[lab == "PASS"].mean()
         y = short(s)
         fig.add_trace(go.Scatter(x=[pz, fz], y=[y, y], mode="lines",
                                  line=dict(color=PALETTE["AXIS"], width=2),
@@ -735,7 +751,7 @@ def pareto(labels, values, title="Pareto — contribution by factor"):
     """Bars (desc) + cumulative % line — ranks which factors account for most of
     the total (the 'vital few')."""
     pairs = sorted(zip(labels, [float(v) for v in values]), key=lambda t: -t[1])
-    labs = [short(str(l)) for l, _ in pairs]
+    labs = [short(str(lab)) for lab, _ in pairs]
     vals = [v for _, v in pairs]
     total = sum(vals) or 1.0
     cum = np.cumsum(vals) / total * 100

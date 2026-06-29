@@ -43,7 +43,6 @@ from evalvitals.analysis.operationalize import (
 )
 from evalvitals.eval_agent.stages.stats_tools import build_stats_input_from_records
 
-
 # ---------------------------------------------------------------------------
 # Output types
 # ---------------------------------------------------------------------------

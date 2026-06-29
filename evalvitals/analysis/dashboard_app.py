@@ -20,7 +20,7 @@ except Exception:  # plotly missing or import error — degrade to legacy render
     viz = None
 
 try:
-    from evalvitals.analysis.eval_case_matrix import load_case_matrix, continuous_signals
+    from evalvitals.analysis.eval_case_matrix import continuous_signals, load_case_matrix
 except Exception:
     load_case_matrix = None
     continuous_signals = None
@@ -607,6 +607,7 @@ def _failrate_scatter(df: pd.DataFrame, signal: str):
     """Fail rate vs a binned signal: markers at bin midpoints, size ∝ n, with
     human-readable bin labels — replaces the bar/line over machine bin edges."""
     import re
+
     import plotly.graph_objects as go
     bincol = df.columns[0]
     labels, mids, rates, ns = [], [], [], []

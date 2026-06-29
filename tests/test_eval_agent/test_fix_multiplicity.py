@@ -14,7 +14,7 @@ from evalvitals.core.capability import Capability
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
 from evalvitals.core.model import Model
 from evalvitals.eval_agent.hypothesis import Hypothesis
-from evalvitals.eval_agent.stages.fix_agent import FixAgent, FixTier
+from evalvitals.eval_agent.stages.fix_agent import FixAgent
 
 
 def _hyp(s: str) -> Hypothesis:
