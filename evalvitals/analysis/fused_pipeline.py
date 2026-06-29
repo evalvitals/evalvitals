@@ -93,10 +93,14 @@ class FusedReport:
     question: str = ""
     ok: bool = False
     observations: list[str] = field(default_factory=list)
+    visual_plan: list[dict[str, Any]] = field(default_factory=list)
+    chart_readings: list[dict[str, Any]] = field(default_factory=list)
+    claims: list[dict[str, Any]] = field(default_factory=list)
     candidate_signals: list[FusedSignal] = field(default_factory=list)
     charts: list[dict[str, Any]] = field(default_factory=list)
     recommended_confirmatory_tests: list[str] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
+    critique: list[str] = field(default_factory=list)
     adjudication: dict[str, Any] = field(default_factory=dict)
     split: dict[str, Any] = field(default_factory=dict)
     conclusion: str = ""
@@ -112,10 +116,14 @@ class FusedReport:
             "question": self.question,
             "ok": self.ok,
             "observations": self.observations,
+            "visual_plan": self.visual_plan,
+            "chart_readings": self.chart_readings,
+            "claims": self.claims,
             "candidate_signals": [s.to_dict() for s in self.candidate_signals],
             "charts": self.charts,
             "recommended_confirmatory_tests": self.recommended_confirmatory_tests,
             "caveats": self.caveats,
+            "critique": self.critique,
             "adjudication": self.adjudication,
             "split": self.split,
             "conclusion": self.conclusion,
@@ -207,8 +215,12 @@ def run_fused_analysis(
     explore_report = explorer.explore_records(explore_rows, question=question)
     report.ok = bool(getattr(explore_report, "ok", False))
     report.observations = list(getattr(explore_report, "observations", []) or [])
+    report.visual_plan = list(getattr(explore_report, "visual_plan", []) or [])
+    report.chart_readings = list(getattr(explore_report, "chart_readings", []) or [])
+    report.claims = list(getattr(explore_report, "claims", []) or [])
     report.charts = list(getattr(explore_report, "charts", []) or [])
     report.caveats = list(getattr(explore_report, "caveats", []) or [])
+    report.critique = list(getattr(explore_report, "critique", []) or [])
     report.explore_report = (
         explore_report.to_dict() if hasattr(explore_report, "to_dict") else {}
     )

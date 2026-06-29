@@ -173,6 +173,9 @@ def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None
 
     concl = next((a.get("conclusion") or a.get("narrative") for a in analyses
                   if a.get("conclusion") or a.get("narrative")), "")
+    _render_diagnostic_report(story.get("diagnostic_report") or {}, story, explore_report, concl)
+    _render_interpretation_guide()
+
     if concl:
         st.markdown("### Conclusion")
         st.info(str(concl))
@@ -189,6 +192,7 @@ def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None
     if obs:
         for o in obs[:10]:
             st.markdown(f"- {o}")
+    _render_visual_plan(explore_report)
 
     # ── ② What we found ───────────────────────────────────────────────────
     st.markdown("### ② What we found")
@@ -373,6 +377,225 @@ def _render_stat_panel(root) -> None:
                             use_container_width=True)
             st.caption("How many cases each reprompting strategy fixed vs broke — "
                        "ranks whether prompt-level fixes are worth pursuing.")
+
+
+def _render_diagnostic_report(
+    report: dict[str, Any],
+    story: dict[str, Any],
+    explore_report: dict[str, Any] | None,
+    fallback_conclusion: str,
+) -> None:
+    """Claim-first semantic report compiled from raw artifacts."""
+    if not report:
+        _render_run_briefing(story, explore_report, fallback_conclusion)
+        return
+
+    st.markdown("### Diagnostic report")
+    confidence = str(report.get("confidence") or "unknown")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">Answer first · confidence: {_html_escape(confidence)}</div>
+          <div class="ev-report-answer-text">{_html_escape(str(report.get('answer') or ''))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    claims = [c for c in (report.get("claims") or []) if isinstance(c, dict)]
+    evidence = {
+        str(e.get("id")): e for e in (report.get("evidence") or [])
+        if isinstance(e, dict) and e.get("id")
+    }
+    if claims:
+        st.markdown("#### Claims and evidence")
+        for claim in claims:
+            _render_claim_card(claim, evidence)
+
+    timeline = [s for s in (report.get("timeline") or []) if isinstance(s, dict)]
+    if timeline:
+        with st.expander("Investigation timeline", expanded=False):
+            for step in timeline:
+                st.markdown(
+                    f"**{step.get('stage', '')}: {step.get('title', '')}**  \n"
+                    f"{step.get('summary', '')}"
+                )
+
+    readings = [r for r in (report.get("chart_readings") or []) if isinstance(r, dict)]
+    if readings:
+        with st.expander("Chart readings written by the agent", expanded=False):
+            st.dataframe(pd.DataFrame(readings), width="stretch", hide_index=True)
+
+    critique = [str(c) for c in (report.get("critique") or [])]
+    if critique:
+        with st.expander("Critique and limits", expanded=True):
+            for note in critique:
+                st.markdown(f"- {note}")
+
+    actions = [str(a) for a in (report.get("next_actions") or [])]
+    if actions:
+        with st.expander("Recommended next actions", expanded=False):
+            for action in actions:
+                st.markdown(f"- {action}")
+
+
+def _render_claim_card(claim: dict[str, Any], evidence: dict[str, dict[str, Any]]) -> None:
+    status = str(claim.get("status") or "descriptive")
+    cls = {
+        "supported": "ev-claim-supported",
+        "inconclusive": "ev-claim-inconclusive",
+        "refuted": "ev-claim-refuted",
+    }.get(status, "ev-claim-descriptive")
+    st.markdown(
+        f"""
+        <div class="ev-claim-card {cls}">
+          <div class="ev-claim-top">
+            <span class="ev-pill">{_html_escape(str(claim.get('id', 'claim')))}</span>
+            <span class="ev-pill">{_html_escape(status)}</span>
+          </div>
+          <div class="ev-claim-text">{_html_escape(str(claim.get('text') or ''))}</div>
+          <div class="ev-signal-body">{_html_escape(str(claim.get('interpretation') or ''))}</div>
+          <div class="ev-signal-test">Do not infer: {_html_escape(str(claim.get('do_not_infer') or ''))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    rows = []
+    for ev_id in claim.get("evidence_ids") or []:
+        ev = evidence.get(str(ev_id))
+        if ev:
+            rows.append({
+                "id": ev.get("id"),
+                "kind": ev.get("kind"),
+                "title": ev.get("title"),
+                "summary": ev.get("summary"),
+            })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    downstream = [str(x) for x in (claim.get("downstream") or [])]
+    if downstream:
+        st.caption("Downstream: " + " · ".join(downstream))
+
+
+def _render_run_briefing(
+    story: dict[str, Any],
+    explore_report: dict[str, Any] | None,
+    conclusion: str,
+) -> None:
+    """A human-first summary before the dense plots. The dashboard has many
+    diagnostics; this pins the reader to what was actually done and what evidence
+    is allowed to support a claim."""
+    signals = _candidate_signals(explore_report)
+    supported = [
+        str(s.get("name"))
+        for s in signals
+        if s.get("reject") is True and not _is_leaky_signal(s)
+    ]
+    leaky = [str(s.get("name")) for s in signals if _is_leaky_signal(s)]
+    diagnoses = story.get("diagnoses") or []
+    surgeries = story.get("surgeries") or []
+    fixes = story.get("fixes") or []
+    charts = [c for c in (explore_report or {}).get("charts", []) if isinstance(c, dict)]
+    split = ((explore_report or {}).get("adjudication") or {}).get("split", "unknown")
+
+    takeaway = (
+        _truncate(str(conclusion), 220)
+        if conclusion else
+        (
+            f"Supported signals: {', '.join(supported[:3])}"
+            if supported else
+            "No held-out supported signal was found in the loaded report."
+        )
+    )
+    evidence = (
+        f"{len(supported)} non-leaky signal(s) survived held-out e-BH"
+        if supported else
+        "No non-leaky signal survived held-out e-BH"
+    )
+    if leaky:
+        evidence += f"; {len(leaky)} label-like signal(s) demoted"
+    downstream = (
+        f"{sum(len(d.get('hypotheses') or []) for d in diagnoses)} hypothesis(es), "
+        f"{len(surgeries)} test/intervention event(s), {len(fixes)} fix event(s)"
+    )
+
+    st.markdown("### Run briefing")
+    st.markdown(
+        f"""
+        <div class="ev-brief-grid">
+          <div class="ev-brief-card">
+            <div class="ev-brief-label">Question answered</div>
+            <div class="ev-brief-value">{_html_escape(takeaway)}</div>
+          </div>
+          <div class="ev-brief-card">
+            <div class="ev-brief-label">Evidence you can trust</div>
+            <div class="ev-brief-value">{_html_escape(evidence)}</div>
+          </div>
+          <div class="ev-brief-card">
+            <div class="ev-brief-label">Pipeline stages loaded</div>
+            <div class="ev-brief-value">
+              Explore charts: {len(charts)} · confirm split: {_html_escape(str(split))}<br/>
+              {_html_escape(downstream)}
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_interpretation_guide() -> None:
+    with st.expander("How to interpret this page", expanded=True):
+        st.markdown(
+            """
+            - **Exploratory observations and charts** show patterns the agent found.
+              Treat them as leads, not proof.
+            - **Signal effect sizes** are the confirmatory layer. A signal matters
+              only if it survives the held-out e-BH check; grey/inconclusive rows
+              are descriptive.
+            - **Leaky signals** re-measure the label or a near-label proxy. They can
+              validate plumbing, but they should not be read as root causes.
+            - **Hypotheses** are M3's explanations formed from the confirmed signals
+              plus exploratory context. They are not accepted until M5/M4 tests
+              support them.
+            - **Fix outcomes** are the final gate. A plausible hypothesis without a
+              validated fix is still only a diagnosis candidate.
+            """
+        )
+
+
+def _render_visual_plan(explore_report: dict[str, Any] | None) -> None:
+    plan = [
+        p for p in ((explore_report or {}).get("visual_plan") or [])
+        if isinstance(p, dict)
+    ]
+    if not plan:
+        st.caption(
+            "Visualization plan: not present in this report. Newer explorer runs "
+            "record why each plot type was selected."
+        )
+        return
+    rows = []
+    for item in plan:
+        cols = item.get("required_columns") or []
+        if isinstance(cols, list):
+            cols_text = ", ".join(str(c) for c in cols)
+        else:
+            cols_text = str(cols)
+        rows.append({
+            "visual": item.get("name", ""),
+            "question": item.get("question", ""),
+            "data_shape": item.get("data_shape", ""),
+            "plot_kind": item.get("plot_kind", ""),
+            "why this plot": item.get("rationale", ""),
+            "columns": cols_text,
+        })
+    with st.expander("Why these charts were chosen", expanded=False):
+        st.caption(
+            "This is the agent's intermediate visualization plan: the chart type "
+            "decision, data shape, and rationale before code was written."
+        )
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 def _render_hypothesis_card(h: dict[str, Any]) -> None:
@@ -1195,6 +1418,77 @@ def _inject_css() -> None:
           color: var(--ev-muted);
           font-size: 0.78rem;
         }
+        .ev-brief-grid {
+          display: grid;
+          gap: 0.75rem;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          margin-bottom: 0.75rem;
+        }
+        .ev-brief-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          min-height: 7rem;
+          padding: 0.9rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-brief-label {
+          color: var(--ev-accent);
+          font-size: 0.75rem;
+          font-weight: 760;
+          margin-bottom: 0.45rem;
+          text-transform: uppercase;
+        }
+        .ev-brief-value {
+          color: var(--ev-text);
+          font-size: 0.92rem;
+          line-height: 1.45;
+        }
+        .ev-report-answer {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-accent);
+          border-radius: 8px;
+          margin-bottom: 0.9rem;
+          padding: 1rem 1.1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-report-answer-text {
+          color: var(--ev-text);
+          font-size: 1rem;
+          line-height: 1.45;
+        }
+        .ev-claim-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          margin: 0.7rem 0 0.35rem;
+          padding: 0.9rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-claim-supported {
+          border-left: 4px solid var(--ev-ok);
+        }
+        .ev-claim-inconclusive,
+        .ev-claim-descriptive {
+          border-left: 4px solid #98a2b3;
+        }
+        .ev-claim-refuted {
+          border-left: 4px solid var(--ev-fail);
+        }
+        .ev-claim-top {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.4rem;
+          margin-bottom: 0.5rem;
+        }
+        .ev-claim-text {
+          color: var(--ev-text);
+          font-size: 0.98rem;
+          font-weight: 760;
+          line-height: 1.35;
+          margin-bottom: 0.4rem;
+        }
         .ev-note {
           align-items: flex-start;
           background: var(--ev-panel);
@@ -1278,6 +1572,9 @@ def _inject_css() -> None:
           }
           .ev-header-right {
             justify-content: flex-start;
+          }
+          .ev-brief-grid {
+            grid-template-columns: 1fr;
           }
         }
         </style>

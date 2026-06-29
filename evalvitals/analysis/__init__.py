@@ -17,6 +17,8 @@ from evalvitals.analysis.fused_pipeline import (
     FusedSignal,
     run_fused_analysis,
 )
+from evalvitals.analysis.report_compiler import compile_diagnostic_report
+from evalvitals.analysis.report_model import Claim, DiagnosticReport, Evidence, ReportStep
 from evalvitals.analysis.operationalize import (
     RecipeError,
     SignalRecipe,
@@ -58,6 +60,11 @@ __all__ = [
     "run_fused_analysis",
     "FusedReport",
     "FusedSignal",
+    "DiagnosticReport",
+    "Claim",
+    "Evidence",
+    "ReportStep",
+    "compile_diagnostic_report",
     "load_records_from_path",
     "StatsInput",
     "StatsToolResult",

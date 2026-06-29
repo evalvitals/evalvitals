@@ -26,6 +26,29 @@ def _build_loop_run(root):
     )
     (fused / "fused_report.json").write_text(json.dumps({
         "observations": ["FAIL skews to small objects"],
+        "visual_plan": [{
+            "name": "fail_by_signal",
+            "question": "Does the signal alter failure rate?",
+            "data_shape": "categorical-vs-binary",
+            "plot_kind": "bar",
+            "fallback_kind": "bar",
+            "required_columns": ["signal_value", "label"],
+            "rationale": "A fail-rate bar is readable for two signal states.",
+        }],
+        "chart_readings": [{
+            "chart": "Fail rate by signal",
+            "reading": "The present state has a lower failure rate in this toy fixture.",
+            "do_not_infer": "This chart alone is not causal.",
+        }],
+        "claims": [{
+            "id": "A1",
+            "text": "The signal is lower risk when present.",
+            "status": "descriptive",
+            "evidence_ids": ["chart:fail_rate_by_signal"],
+            "interpretation": "Use as an exploratory reading.",
+            "do_not_infer": "No causal claim.",
+        }],
+        "critique": ["toy fixture; no causal interpretation"],
         "caveats": ["probe1 ~ label (circular)"],
         "charts": [{"name": "c", "kind": "bar", "data": "tables/fail_by_signal.csv",
                     "x": "signal_value", "y": "fail_rate", "title": "Fail rate by signal"}],
@@ -80,6 +103,12 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
 
     # The candidate-signals table rendered (a dataframe).
     assert len(at.dataframe) >= 1
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Diagnostic report" in blob
+    assert "Claims and evidence" in blob
+    assert any(e.label == "How to interpret this page" for e in at.expander)
+    assert any(e.label == "Chart readings written by the agent" for e in at.expander)
+    assert any(e.label == "Critique and limits" for e in at.expander)
 
 
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
@@ -108,6 +137,8 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "language-prior hallucination" in blob
     assert "supported" in blob.lower()
+    assert any(e.label == "Why these charts were chosen" for e in at.expander)
+    assert len(at.dataframe) >= 2  # signal table + visual-plan table
 
 
 def test_hypotheses_join_with_m5_outcomes():
