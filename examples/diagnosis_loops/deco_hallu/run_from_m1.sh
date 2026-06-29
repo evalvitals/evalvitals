@@ -33,7 +33,7 @@ if [[ -z "${PY:-}" ]]; then
   if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then PY="$REPO_ROOT/.venv/bin/python"; else PY="python"; fi
 fi
 
-NF="$REPO_ROOT/evalvitals/analysis/skills/nature-figure"
+NF="$REPO_ROOT/evalvitals/agent_assets/skills/nature-figure"
 SKILL_ARGS=()
 [[ -d "$NF" ]] && SKILL_ARGS=(--skill "$NF")
 

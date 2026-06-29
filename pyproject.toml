@@ -101,7 +101,7 @@ include = ["evalvitals*"]
 "evalvitals.eval_agent" = ["run_log.schema.json"]
 # Ship bundled Agent Skills (e.g. nature-figure) so `pip install` carries them
 # too, not just `git clone`. explore auto-applies them on claude/agy backends.
-"evalvitals.analysis" = ["skills/**/*"]
+"evalvitals.agent_assets" = ["skills/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

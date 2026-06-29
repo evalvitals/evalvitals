@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evalvitals.analysis.charts import render_chart_specs
 from evalvitals.analysis.explorer import M2ExplorerAgent
+from evalvitals.viz.renderer import render_chart_specs
 
 # A compliant "Lambda-style" script: pre-aggregated CSVs + one spec per CSV.
 _RICH_SCRIPT = r'''

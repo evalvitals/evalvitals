@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from evalvitals.agent_assets.skills import bundled_skill_paths
 from evalvitals.analysis import explore_run
-from evalvitals.analysis.explore_run import bundled_skill_paths
 
 
 def test_nature_figure_is_bundled_in_the_package():

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from evalvitals.analysis.dashboard import load_run
-from evalvitals.analysis.report_compiler import compile_diagnostic_report
+from evalvitals.reporting.compiler import compile_diagnostic_report
 
 
 def _explore_report():

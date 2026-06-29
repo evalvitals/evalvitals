@@ -45,7 +45,7 @@
 ```
 共享核（唯一一套）
   M2ExplorerAgent                         探索引擎（不变）
-  analysis/charts.py: render_chart_specs  spec+CSV → PNG，宿主确定性
+  viz/renderer.py: render_chart_specs  spec+CSV → PNG，宿主确定性
   analysis/dashboard.py: load_run(dir)    读单轮产物(explore 输出 / loop run) → 渲染
 
 三条单轮入口（都用上面的核）
@@ -75,7 +75,7 @@
 ### 共享核 A — 渲染 + dashboard loader
 
 ```python
-# evalvitals/analysis/charts.py（新）
+# evalvitals/viz/renderer.py（新）
 def render_chart_specs(charts, tables_dir, out_dir) -> list[dict]:
     """每个 chart spec({name,kind,data(CSV),x,y,title}) 从其 CSV 表确定性渲染 PNG
     (bar/line/scatter)。返回带 figure_path 的 chart dict。matplotlib 缺失 → 跳过渲染、
@@ -177,7 +177,7 @@ claim must still be tested downstream):
 - 0c `dashboard.py`：`load_session` → `load_run`（读单轮产物，去 turn_*）。
 
 **Phase A — 渲染共享核（M）**
-- `analysis/charts.py: render_chart_specs`（bar/line/scatter，CSV→PNG，缺 matplotlib 优雅回退）；`run_explore`/`run_fused.py` 调用 + `--dashboard`；pyproject extra。
+- `viz/renderer.py: render_chart_specs`（bar/line/scatter，CSV→PNG，缺 matplotlib 优雅回退）；`run_explore`/`run_fused.py` 调用 + `--dashboard`；pyproject extra。
 
 **Phase B — 喂 M3（M，核心）**
 - `ExploreContext` + `_format_explore_section` + `_DIAGNOSE_PROMPT` 加 `{explore_section}`；`diagnose(..., explore_context=)`；figures 合并传 `images=`。

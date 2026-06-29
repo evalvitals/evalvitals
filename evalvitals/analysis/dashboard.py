@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from evalvitals.analysis.report_compiler import compile_diagnostic_report
+from evalvitals.reporting.compiler import compile_diagnostic_report
 
 
 def launch_dashboard(run_dir: str | Path, *, port: int | None = None) -> int:

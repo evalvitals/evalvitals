@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from evalvitals.analysis import charts as charts_mod
-from evalvitals.analysis.charts import render_chart_specs
+from evalvitals.viz import renderer as charts_mod
+from evalvitals.viz import style as style_mod
+from evalvitals.viz.renderer import render_chart_specs
 
 _HAVE_MPL = charts_mod._import_matplotlib() is not None
 
@@ -68,8 +69,8 @@ def test_renders_png_for_each_kind(tmp_path):
 def test_nature_style_loaded_from_vendored_skill():
     # The host render style is sourced from the vendored nature-figure skill:
     # the palette (blue_main) and the spines-off rcParams.
-    charts_mod._NATURE_STYLE_CACHE = None
-    style = charts_mod._load_nature_style()
+    style_mod._NATURE_STYLE_CACHE = None
+    style = style_mod.load_nature_style()
     assert style["colors"][0] == "#0F4D92"            # PALETTE["blue_main"]
     assert style["rc"]["axes.spines.right"] is False
     assert style["rc"]["axes.spines.top"] is False
@@ -77,12 +78,12 @@ def test_nature_style_loaded_from_vendored_skill():
 
 
 def test_style_falls_back_when_skill_absent(monkeypatch, tmp_path):
-    charts_mod._NATURE_STYLE_CACHE = None
-    monkeypatch.setattr(charts_mod, "_SKILL_DIR", tmp_path / "nope")
-    style = charts_mod._load_nature_style()
-    assert style["colors"] == charts_mod._NATURE_COLORS_FALLBACK
+    style_mod._NATURE_STYLE_CACHE = None
+    monkeypatch.setattr(style_mod, "NATURE_SKILL_DIR", tmp_path / "nope")
+    style = style_mod.load_nature_style()
+    assert style["colors"] == style_mod.NATURE_COLORS_FALLBACK
     assert style["rc"]["axes.spines.top"] is False     # fallback still nature-clean
-    charts_mod._NATURE_STYLE_CACHE = None               # reset for other tests
+    style_mod._NATURE_STYLE_CACHE = None               # reset for other tests
 
 
 @pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
