@@ -112,7 +112,7 @@ def main() -> None:
 
     # ── render the explorer's chart specs (host-side, spec + CSV -> PNG) so the
     #    fused_report.json carries figure_path for Step 2's M3 and the dashboard ──
-    from evalvitals.analysis.charts import render_chart_specs
+    from evalvitals.viz.renderer import render_chart_specs
 
     try:
         report.charts = render_chart_specs(report.charts, FUSED_DIR / "sandbox", FUSED_DIR)

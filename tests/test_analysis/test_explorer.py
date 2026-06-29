@@ -14,6 +14,44 @@ fails = [r for r in rows if r.get("label") == "fail"]
 passes = [r for r in rows if r.get("label") == "pass"]
 payload = {
     "observations": [f"{len(fails)} fail rows and {len(passes)} pass rows"],
+    "visual_plan": [
+        {
+            "name": "flag_distribution",
+            "question": "Does flag separate fail from pass rows?",
+            "data_shape": "binary-signal-vs-binary-outcome",
+            "plot_kind": "bar",
+            "fallback_kind": "bar",
+            "required_columns": ["flag", "label"],
+            "rationale": "A binary signal is best summarized as grouped fail/pass counts.",
+        }
+    ],
+    "chart_readings": [
+        {
+            "chart": "flag_distribution",
+            "reading": "All fail rows have flag=1.",
+            "do_not_infer": "This does not prove flag causes failure.",
+        }
+    ],
+    "dashboard_storyboard": [
+        {
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": "Agent-authored storyboard summary.",
+            "items": ["Method: grouped comparison", "Takeaway: flag separates failures"],
+            "artifact_refs": ["charts"],
+        }
+    ],
+    "claims": [
+        {
+            "id": "C1",
+            "text": "flag is a descriptive correlate of failure",
+            "status": "descriptive",
+            "evidence_ids": ["chart:flag_distribution"],
+            "interpretation": "Confirm this on held-out data.",
+            "do_not_infer": "No causality.",
+        }
+    ],
     "candidate_signals": [
         {
             "name": "flag",
@@ -24,6 +62,7 @@ payload = {
     "plots": [],
     "tables": {"counts": {"fail": len(fails), "pass": len(passes)}},
     "caveats": ["exploratory only"],
+    "critique": ["small scripted fixture"],
     "recommended_confirmatory_tests": ["Run StatsAnalysisAgent.analyze_records on flag"],
 }
 print("EXPLORATORY_RESULT_JSON=" + json.dumps(payload))
@@ -60,9 +99,34 @@ def test_m2_explorer_runs_generated_local_analysis(tmp_path):
     assert report.ok
     assert report.attempts == 1
     assert report.candidate_signal_names == ["flag"]
+    assert report.visual_plan[0]["plot_kind"] == "bar"
+    assert "rationale" in report.visual_plan[0]
+    assert report.chart_readings[0]["chart"] == "flag_distribution"
+    assert report.dashboard_storyboard[0]["summary"] == "Agent-authored storyboard summary."
+    assert report.claims[0]["id"] == "C1"
+    assert report.critique == ["small scripted fixture"]
     assert report.tables["counts"] == {"fail": 3, "pass": 3}
     assert "exploratory only" in report.caveats
     assert (tmp_path / "records.json").exists()
+
+
+def test_m2_explorer_prompt_requires_visual_plan(tmp_path):
+    judge = ScriptedJudge(f"```python\n{_GOOD_CODE}\n```")
+    agent = M2ExplorerAgent(
+        judge=judge,
+        sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False),
+    )
+
+    report = agent.explore_records(_rows(), question="Find failure patterns.")
+
+    assert report.ok
+    prompt = judge.prompts[0]
+    assert "visualization plan" in prompt
+    assert '"visual_plan"' in prompt
+    assert "plot_kind" in prompt
+    assert "chart_readings" in prompt
+    assert "dashboard_storyboard" in prompt
+    assert "critique" in prompt
 
 
 def test_m2_explorer_uses_inspector_for_repair(tmp_path):

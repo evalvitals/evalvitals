@@ -98,7 +98,7 @@ tests. It is not the final confirmatory statistics layer.
 On the **claude** / **agy** backends, `explore` automatically applies the
 package-bundled **nature-figure** Agent Skill so the figures the agent writes
 under `figures/` come out publication-quality. The skill is vendored in the repo
-(`evalvitals/analysis/skills/`), so it travels with `git clone` and `pip
+(`evalvitals/agent_assets/skills/`), so it travels with `git clone` and `pip
 install` — no per-machine `~/.claude` setup needed.
 
 - `--no-skills` — skip bundled skills for a run.

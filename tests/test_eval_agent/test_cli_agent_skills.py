@@ -13,8 +13,8 @@ from pathlib import Path
 
 from evalvitals.analysis.explorer import _skills_hint
 from evalvitals.eval_agent.cli_agent import (
-    CliAgentConfig,
     ClaudeCodeAgent,
+    CliAgentConfig,
     create_cli_agent,
 )
 

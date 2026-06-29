@@ -20,7 +20,6 @@ from evalvitals.eval_agent.stages.diagnosis import (
 from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
 from tests.conftest import FakeModel
 
-
 # ---------------------------------------------------------------------------
 # ExploreContext construction
 # ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from evalvitals.viz.style import NATURE_COLORS_FALLBACK, load_nature_style
+
 logger = logging.getLogger(__name__)
 
 _KINDS = {"bar", "line", "scatter", "timeseries"}
@@ -59,7 +61,7 @@ def render_chart_specs(
     out_dir = Path(out_dir)
     tdir = Path(tables_dir) if tables_dir else None
     plt = _import_matplotlib()
-    style = _load_chart_style()
+    style = load_nature_style()
 
     rendered: list[dict[str, Any]] = []
     for idx, spec in enumerate(specs):
@@ -100,150 +102,15 @@ def _import_matplotlib():
         import matplotlib
 
         matplotlib.use("Agg")  # headless, no display needed
-        import matplotlib.pyplot as plt
-
         # Arial/Helvetica are usually absent on servers; DejaVu Sans is the
         # deterministic fallback. Silence the per-figure findfont warning spam.
         import logging as _logging
+
+        import matplotlib.pyplot as plt
         _logging.getLogger("matplotlib.font_manager").setLevel(_logging.ERROR)
         return plt
     except Exception:
         return None
-
-
-# --- nature-figure design tokens (single source of truth: the vendored skill) ---
-# Mirrored here as a deterministic fallback; the live values are read from the
-# vendored skill when present so the host-rendered charts and any agent-authored
-# figures share ONE visual language.
-_NATURE_RC_FALLBACK: dict[str, Any] = {
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans", "sans-serif"],
-    "axes.spines.right": False,
-    "axes.spines.top": False,
-    "axes.linewidth": 0.8,
-    "legend.frameon": False,
-    "pdf.fonttype": 42,
-    "svg.fonttype": "none",
-}
-_NATURE_COLORS_FALLBACK = ["#0F4D92", "#8BCF8B", "#B64342", "#42949E", "#9A4D8E", "#CFCECE"]
-# On-screen single panels: keep nature's clean frame but a readable size (the
-# skill reserves font.size 7 for dense multi-panel print figures).
-_SCREEN_RC: dict[str, Any] = {
-    "font.size": 9.0, "axes.titlesize": 11.0, "axes.labelsize": 9.5,
-    "xtick.labelsize": 8.5, "ytick.labelsize": 8.5,
-}
-
-_SKILL_DIR = Path(__file__).resolve().parent / "skills" / "nature-figure"
-_NATURE_STYLE_CACHE: dict[str, Any] | None = None
-
-
-def _balanced(text: str, open_idx: int, open_ch: str, close_ch: str) -> str | None:
-    """Return the balanced ``open_ch..close_ch`` group starting at *open_idx*."""
-    depth = 0
-    for j in range(open_idx, len(text)):
-        if text[j] == open_ch:
-            depth += 1
-        elif text[j] == close_ch:
-            depth -= 1
-            if depth == 0:
-                return text[open_idx:j + 1]
-    return None
-
-
-def _literal_after(text: str, marker: str, open_ch: str, close_ch: str):
-    """ast.literal_eval the first balanced literal after *marker* (or None)."""
-    import ast
-
-    k = text.find(marker)
-    if k < 0:
-        return None
-    o = text.find(open_ch, k)
-    if o < 0:
-        return None
-    blob = _balanced(text, o, open_ch, close_ch)
-    if blob is None:
-        return None
-    try:
-        return ast.literal_eval(blob)
-    except Exception:
-        return None
-
-
-def _load_nature_style() -> dict[str, Any]:
-    """Render style sourced from the vendored nature-figure skill (rcParams +
-    PALETTE), with a hardcoded fallback. Cached. Never raises."""
-    global _NATURE_STYLE_CACHE
-    if _NATURE_STYLE_CACHE is not None:
-        return _NATURE_STYLE_CACHE
-
-    rc = dict(_NATURE_RC_FALLBACK)
-    colors = list(_NATURE_COLORS_FALLBACK)
-    try:
-        import re
-
-        py = (_SKILL_DIR / "static" / "fragments" / "backend" / "python.md").read_text(encoding="utf-8")
-        loaded_rc = _literal_after(py, "rcParams.update(", "{", "}")
-        if isinstance(loaded_rc, dict):
-            rc = {str(k): v for k, v in loaded_rc.items() if k != "font.size"}
-
-        api = (_SKILL_DIR / "references" / "api.md").read_text(encoding="utf-8")
-        palette = _literal_after(api, "PALETTE = {", "{", "}")
-        m = api.find("DEFAULT_COLORS")
-        if isinstance(palette, dict) and m >= 0:
-            blob = _balanced(api, api.find("[", m), "[", "]") or ""
-            keys = re.findall(r'PALETTE\["([^"]+)"\]', blob)
-            resolved = [palette[k] for k in keys if k in palette]
-            if resolved:
-                colors = resolved
-    except Exception:
-        pass  # fall back to the mirrored tokens
-
-    _NATURE_STYLE_CACHE = {"rc": {**rc, **_SCREEN_RC}, "colors": colors}
-    return _NATURE_STYLE_CACHE
-
-
-# --- eval-chart-style host palette (the semantic FAIL/PASS look) --------------
-# The host static PNGs adopt the vendored eval-chart-style theme: its matplotlib
-# rcParams + a role-based palette (ACCENT for single series, FAIL red / PASS
-# slate when a chart is split by outcome, green/grey for significance). Falls
-# back to the nature-figure style, then the hardcoded tokens. Cached; never raises.
-_CHART_STYLE_CACHE: dict[str, Any] | None = None
-
-
-def _load_chart_style() -> dict[str, Any]:
-    global _CHART_STYLE_CACHE
-    if _CHART_STYLE_CACHE is not None:
-        return _CHART_STYLE_CACHE
-
-    style: dict[str, Any] | None = None
-    try:
-        from evalvitals.analysis.viz_theme import load_viz_theme
-
-        viz = load_viz_theme()
-        if viz is not None:
-            pal = viz.PALETTE
-            rc = {str(k): v for k, v in viz.matplotlib_rcparams().items()
-                  if k != "font.size"}
-            # ensure a server-present font is the final fallback (deterministic)
-            rc["font.sans-serif"] = [*rc.get("font.sans-serif", []), "DejaVu Sans", "sans-serif"]
-            style = {
-                "rc": {**rc, **_SCREEN_RC},
-                # primary (single-series) first, then the role colors
-                "colors": [pal["ACCENT"], pal["FAIL"], pal["PASS"],
-                           pal["SIGNIFICANT"], pal["INCONCLUSIVE"]],
-                "semantic": {
-                    "FAIL": pal["FAIL"], "PASS": pal["PASS"],
-                    "SIGNIFICANT": pal["SIGNIFICANT"], "INCONCLUSIVE": pal["INCONCLUSIVE"],
-                    "AXIS": pal["AXIS"],
-                },
-            }
-    except Exception:
-        style = None
-
-    if style is None:  # eval-chart-style asset unavailable -> nature-figure look
-        style = {**_load_nature_style(), "semantic": None}
-    _CHART_STYLE_CACHE = style
-    return _CHART_STYLE_CACHE
 
 
 def _load_table(
@@ -328,10 +195,8 @@ def _render_one(plt, spec, rows, x, y, out_dir, idx, style) -> Path:
     x_is_num = all(v is not None for v in xs_num)
 
     rc = (style or {}).get("rc", {})
-    colors = (style or {}).get("colors") or _NATURE_COLORS_FALLBACK
+    colors = (style or {}).get("colors") or NATURE_COLORS_FALLBACK
     primary = colors[0]
-    semantic = (style or {}).get("semantic")
-    axis_color = (semantic or {}).get("AXIS", "#333333")
     title = str(spec.get("title") or spec.get("name") or f"chart_{idx}")
 
     figures = out_dir / "figures"
@@ -357,39 +222,22 @@ def _render_one(plt, spec, rows, x, y, out_dir, idx, style) -> Path:
                 ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
         else:  # bar
             positions = range(len(xs_raw))
-            ax.bar(positions, ys, color=_bar_colors(xs_raw, semantic, primary),
-                   width=0.72, zorder=3)
+            ax.bar(positions, ys, color=primary, width=0.72, zorder=3)
             ax.set_xticks(list(positions))
             ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
 
         if kind in {"bar", "line", "timeseries"}:
             ax.grid(axis="y", linewidth=0.6, alpha=0.25, zorder=0)
             ax.set_axisbelow(True)
-        # Effect-size / separation charts straddle zero — anchor the reader.
-        if any(v < 0 for v in ys):
-            ax.axhline(0, color=axis_color, linewidth=0.8, zorder=2)
 
         ax.set_xlabel(str(x))
         ax.set_ylabel(str(y))
         ax.set_title(title, fontweight="bold")
         fig.tight_layout()
-        # Pin metadata + white facecolor so the same spec + CSV yields a
-        # byte-identical, opaque PNG.
-        fig.savefig(png, dpi=130, facecolor="white",
-                    metadata={"Software": "evalvitals", "Creation Time": None})
+        # Pin metadata so the same spec + CSV yields byte-identical PNGs.
+        fig.savefig(png, dpi=130, metadata={"Software": "evalvitals", "Creation Time": None})
         plt.close(fig)
     return png
-
-
-def _bar_colors(xs_raw, semantic, primary):
-    """Color bars by outcome role when every x category is a FAIL/PASS label
-    (e.g. a class-balance or by-outcome chart); otherwise one accent color."""
-    if not semantic:
-        return primary
-    labels = [str(v).strip().lower() for v in xs_raw]
-    if labels and all(lab in {"fail", "pass"} for lab in labels):
-        return [semantic["FAIL"] if lab == "fail" else semantic["PASS"] for lab in labels]
-    return primary
 
 
 def _safe_filename(name: Any) -> str:

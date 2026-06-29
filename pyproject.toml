@@ -52,9 +52,8 @@ data = [
 ]
 viz = ["matplotlib>=3.7"]
 dashboard = [
-    "streamlit>=1.49",
+    "streamlit>=1.30",
     "pandas>=2.0",
-    "plotly>=5.0",
 ]
 gemini = ["google-genai>=1.0"]
 all = [
@@ -66,9 +65,8 @@ all = [
     "inseq>=0.6",
     "nnsight>=0.3",
     "matplotlib>=3.7",
-    "streamlit>=1.49",
+    "streamlit>=1.30",
     "pandas>=2.0",
-    "plotly>=5.0",
 ]
 dev = [
     "pytest>=8.0",
@@ -103,7 +101,7 @@ include = ["evalvitals*"]
 "evalvitals.eval_agent" = ["run_log.schema.json"]
 # Ship bundled Agent Skills (e.g. nature-figure) so `pip install` carries them
 # too, not just `git clone`. explore auto-applies them on claude/agy backends.
-"evalvitals.analysis" = ["skills/**/*"]
+"evalvitals.agent_assets" = ["skills/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

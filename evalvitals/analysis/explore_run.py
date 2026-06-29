@@ -21,34 +21,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
-from evalvitals.analysis.charts import render_chart_specs
 from evalvitals.analysis.explorer import M2ExplorerAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
-
-# Agent Skills vendored with the package (e.g. nature-figure). They ship via both
-# `git clone` and `pip install` and are auto-applied by `explore` on claude/agy.
-_BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
-# Skills are a Claude Code / agy feature; other backends vendor-but-ignore them.
-_SKILL_BACKENDS = {"claude_code", "antigravity"}
-# Skills that ship with the package but are consumed by the HOST (the dashboard +
-# the static-PNG renderer import their asset directly), not pushed to the agent.
-# Excluded from auto-apply so they don't change explorer behaviour or collide
-# with the agent-applied figure skills; pass them explicitly via --skill to opt in.
-_HOST_ONLY_SKILLS = {"eval-chart-style"}
-
-
-def bundled_skill_paths() -> list[str]:
-    """Absolute paths of the agent-applied Agent-Skill dirs bundled with the
-    package (each a directory containing ``SKILL.md``), excluding host-only
-    skills. Empty when none are present."""
-    root = _BUNDLED_SKILLS_DIR
-    if not root.is_dir():
-        return []
-    return [
-        str(p) for p in sorted(root.iterdir())
-        if (p / "SKILL.md").is_file() and p.name not in _HOST_ONLY_SKILLS
-    ]
+from evalvitals.viz.renderer import render_chart_specs
 
 
 def run_explore(
@@ -84,7 +61,7 @@ def run_explore(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     skill_dirs = list(skills or [])
-    if use_bundled_skills and coder_provider in _SKILL_BACKENDS:
+    if use_bundled_skills and coder_provider in SKILL_BACKENDS:
         # Vendored skills first so the agent sees them; de-dup explicit repeats.
         bundled = [p for p in bundled_skill_paths() if p not in skill_dirs]
         skill_dirs = bundled + skill_dirs

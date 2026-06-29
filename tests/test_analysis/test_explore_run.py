@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import json
 
-from evalvitals.analysis import charts as charts_mod
 from evalvitals.analysis.explore_run import _verdict_suffix, write_report_artifacts
 from evalvitals.analysis.explorer import CandidateSignal, ExploratoryAnalysisReport
+from evalvitals.viz import renderer as charts_mod
 
 _HAVE_MPL = charts_mod._import_matplotlib() is not None
 

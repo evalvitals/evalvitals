@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from evalvitals.analysis import charts as charts_mod
-from evalvitals.analysis.charts import render_chart_specs
+from evalvitals.viz import renderer as charts_mod
+from evalvitals.viz import style as style_mod
+from evalvitals.viz.renderer import render_chart_specs
 
 _HAVE_MPL = charts_mod._import_matplotlib() is not None
 
@@ -31,6 +32,7 @@ def test_empty_input_returns_empty():
     assert render_chart_specs([], None, "/tmp/x") == []
 
 
+@pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
 def test_missing_csv_is_annotated_not_dropped(tmp_path):
     charts = [{"name": "m", "kind": "bar", "data": "tables/none.csv", "x": "g", "y": "v"}]
     out = render_chart_specs(charts, tmp_path / "tables", tmp_path / "out")
@@ -67,8 +69,8 @@ def test_renders_png_for_each_kind(tmp_path):
 def test_nature_style_loaded_from_vendored_skill():
     # The host render style is sourced from the vendored nature-figure skill:
     # the palette (blue_main) and the spines-off rcParams.
-    charts_mod._NATURE_STYLE_CACHE = None
-    style = charts_mod._load_nature_style()
+    style_mod._NATURE_STYLE_CACHE = None
+    style = style_mod.load_nature_style()
     assert style["colors"][0] == "#0F4D92"            # PALETTE["blue_main"]
     assert style["rc"]["axes.spines.right"] is False
     assert style["rc"]["axes.spines.top"] is False
@@ -76,12 +78,12 @@ def test_nature_style_loaded_from_vendored_skill():
 
 
 def test_style_falls_back_when_skill_absent(monkeypatch, tmp_path):
-    charts_mod._NATURE_STYLE_CACHE = None
-    monkeypatch.setattr(charts_mod, "_SKILL_DIR", tmp_path / "nope")
-    style = charts_mod._load_nature_style()
-    assert style["colors"] == charts_mod._NATURE_COLORS_FALLBACK
+    style_mod._NATURE_STYLE_CACHE = None
+    monkeypatch.setattr(style_mod, "NATURE_SKILL_DIR", tmp_path / "nope")
+    style = style_mod.load_nature_style()
+    assert style["colors"] == style_mod.NATURE_COLORS_FALLBACK
     assert style["rc"]["axes.spines.top"] is False     # fallback still nature-clean
-    charts_mod._NATURE_STYLE_CACHE = None               # reset for other tests
+    style_mod._NATURE_STYLE_CACHE = None               # reset for other tests
 
 
 @pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
@@ -121,27 +123,6 @@ def test_non_utf8_and_oversized_csv_never_raise(tmp_path):
     assert len(out) == 2
     for spec in out:
         assert "description" in spec  # always degrades gracefully
-
-
-def test_chart_style_prefers_eval_chart_style_semantic_palette():
-    # The host PNG renderer adopts the vendored eval-chart-style theme: a
-    # role-based palette (accent / FAIL red / PASS slate) is exposed for
-    # semantic coloring, on top of the nature-figure fallback.
-    charts_mod._CHART_STYLE_CACHE = None
-    style = charts_mod._load_chart_style()
-    assert style["semantic"] is not None
-    assert style["semantic"]["FAIL"] == "#C0413B"
-    assert style["semantic"]["PASS"] == "#5B7A99"
-    assert style["colors"][0] == "#3A6EA5"             # ACCENT (single-series)
-    charts_mod._CHART_STYLE_CACHE = None
-
-
-def test_bar_colors_are_outcome_aware():
-    sem = {"FAIL": "#C0413B", "PASS": "#5B7A99"}
-    # FAIL/PASS categories -> role colors; arbitrary categories -> one accent
-    assert charts_mod._bar_colors(["fail", "pass"], sem, "#3A6EA5") == ["#C0413B", "#5B7A99"]
-    assert charts_mod._bar_colors(["a", "b"], sem, "#3A6EA5") == "#3A6EA5"
-    assert charts_mod._bar_colors(["fail", "pass"], None, "#3A6EA5") == "#3A6EA5"
 
 
 @pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")

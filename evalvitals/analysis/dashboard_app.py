@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,25 +10,32 @@ import pandas as pd
 import streamlit as st
 
 from evalvitals.analysis.dashboard import load_run
+from evalvitals.reporting.stages import stage_specs_as_dicts
+from evalvitals.viz.labels import display_name, raw_hint
 
-# The vendored eval-chart-style plotly theme — loaded once, None when plotly is
-# unavailable (then the dashboard falls back to matplotlib figures).
-_VIZ_CACHE: Any = None
-_VIZ_TRIED = False
+# Eval-chart-style house theme (FAIL-red / PASS-slate palette, distribution-first
+# chart builders, short names + number/bin formatting). See eval_viz_theme.py and
+# the eval-chart-style SKILL for the chart-type policy this enforces.
+try:
+    from evalvitals.analysis import eval_viz_theme as viz
+except Exception:  # plotly missing or import error — degrade to legacy rendering
+    viz = None
+
+try:
+    from evalvitals.analysis.eval_case_matrix import continuous_signals, load_case_matrix
+except Exception:
+    load_case_matrix = None
+    continuous_signals = None
 
 
-def _get_viz():
-    global _VIZ_CACHE, _VIZ_TRIED
-    if _VIZ_TRIED:
-        return _VIZ_CACHE
-    _VIZ_TRIED = True
-    try:
-        from evalvitals.analysis.viz_theme import load_plotly_theme
-
-        _VIZ_CACHE = load_plotly_theme()
-    except Exception:
-        _VIZ_CACHE = None
-    return _VIZ_CACHE
+def _viz_ready() -> bool:
+    """Register the plotly template once per session; report whether viz is usable."""
+    if viz is None:
+        return False
+    if not st.session_state.get("_viz_applied"):
+        viz.apply()
+        st.session_state["_viz_applied"] = True
+    return True
 
 
 def main() -> None:
@@ -40,6 +46,7 @@ def main() -> None:
 
     st.set_page_config(page_title="EvalVitals", layout="wide", initial_sidebar_state="expanded")
     _inject_css()
+    _viz_ready()
 
     selected = _render_sidebar(root, session)
 
@@ -58,15 +65,17 @@ def main() -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    overview, charts, tables, artifacts = st.tabs(["Overview", "Charts", "Tables", "Artifacts"])
-    with overview:
-        _render_overview(report)
-    with charts:
-        _render_charts_and_plots(report, turn_dir)
-    with tables:
-        _render_tables(report, turn_dir)
-    with artifacts:
-        _render_artifacts(report, turn_dir)
+    setting, analysis, hypotheses = st.tabs([
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Hypotheses & Artifacts",
+    ])
+    with setting:
+        _render_problem_setting(root, report, story=None)
+    with analysis:
+        _render_standalone_analysis(report, turn_dir, root)
+    with hypotheses:
+        _render_standalone_hypotheses(report, turn_dir)
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -121,14 +130,25 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
     if not explore_report:
         explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
     explore_dir = Path(story.get("explore_dir") or (runs[0]["dir"] if runs else root))
+    if not explore_report:
+        st.warning(
+            "No explore report was found alongside this loop log, so measured "
+            "signals/charts are unavailable. Re-run with `--explore-report`, or "
+            "point the dashboard at a directory containing `fused_report.json` / "
+            "`exploratory_report.json`."
+        )
 
-    analysis, flow, tables = st.tabs(["📊 Analysis", "🔬 Diagnosis flow", "🗂 Tables"])
+    setting, analysis, hypotheses = st.tabs([
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Hypotheses & Artifacts",
+    ])
+    with setting:
+        _render_problem_setting(root, explore_report or {}, story=story)
     with analysis:
-        _render_loop_analysis(story, explore_report, explore_dir)
-    with flow:
-        _render_loop_flow(story, explore_report, explore_dir)
-    with tables:
-        _render_explore_tables(explore_report, explore_dir, full=True)
+        _render_loop_analysis_panel(story, explore_report, explore_dir, root)
+    with hypotheses:
+        _render_hypothesis_decision_panel(story, explore_report, explore_dir)
 
 
 def _candidate_signals(explore_report: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -156,7 +176,402 @@ def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _render_loop_analysis(story, explore_report, explore_dir) -> None:
+def _render_problem_setting(
+    root: Path,
+    report: dict[str, Any] | None,
+    *,
+    story: dict[str, Any] | None,
+) -> None:
+    """Panel 1: orient the user before any statistical claims."""
+    report = report or {}
+    storyboard = _storyboard_panels(report, story=story)
+    question = str(report.get("question") or "What distinguishes failures from passes?")
+    adj = report.get("adjudication") or {}
+    signals = _candidate_signals(report)
+    charts = [c for c in report.get("charts", []) if isinstance(c, dict)]
+
+    matrix = None
+    if load_case_matrix is not None:
+        try:
+            matrix = load_case_matrix(root)
+        except Exception:
+            matrix = None
+
+    n_cases = None
+    n_fail = None
+    n_pass = None
+    n_features = None
+    if matrix is not None and not matrix.empty:
+        n_cases = len(matrix)
+        if "is_fail" in matrix.columns:
+            n_fail = int(pd.to_numeric(matrix["is_fail"], errors="coerce").fillna(0).sum())
+            n_pass = n_cases - n_fail
+        try:
+            n_features = len(continuous_signals(matrix)) if continuous_signals else None
+        except Exception:
+            n_features = None
+
+    profile = report.get("data_profile") or {}
+    if n_cases is None:
+        n_cases = profile.get("loaded_rows", profile.get("n_rows"))
+    columns = profile.get("columns") or {}
+    if n_features is None and isinstance(columns, dict):
+        n_features = len(columns)
+
+    st.markdown("### Problem Setting")
+    _render_stage_map(active={"M1", "M2"} if not story else {"M1"})
+    _render_storyboard_panel(storyboard, "problem_setting")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">User question</div>
+          <div class="ev-report-answer-text">{_html_escape(question)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(5)
+    metrics = [
+        ("Cases", n_cases, "rows/cases loaded"),
+        ("FAIL", n_fail, "failure cases"),
+        ("PASS", n_pass, "passing cases"),
+        ("Signals", len(signals) or n_features, "candidate/features"),
+        ("Charts", len(charts) + len(report.get("plots") or []), "analysis visuals"),
+    ]
+    for col, (label, value, help_text) in zip(cols, metrics, strict=False):
+        col.metric(label, _format_int(value), help=help_text)
+
+    c1, c2 = st.columns([1.15, 1], gap="large")
+    with c1:
+        st.markdown("#### What data was provided")
+        if matrix is not None and not matrix.empty:
+            fields = [
+                c for c in matrix.columns
+                if c not in {"case_id", "label", "is_fail", "model_yes", "truth_yes"}
+            ]
+            st.caption(
+                "Dashboard reconstructed the per-case M1 feature matrix. "
+                "M2 analyses compare these per-case signals against FAIL/PASS labels."
+            )
+            preview = pd.DataFrame({
+                "field": fields[:12],
+                "display": [display_name(f) for f in fields[:12]],
+                "coverage": [int(matrix[f].notna().sum()) for f in fields[:12]],
+            })
+            if not preview.empty:
+                st.dataframe(preview, width="stretch", hide_index=True, height=260)
+        elif isinstance(columns, dict) and columns:
+            st.caption("Explorer data profile from the sampled input records.")
+            rows = [
+                {"field": k, "display": display_name(k), "profile": str(v)[:180]}
+                for k, v in list(columns.items())[:12]
+            ]
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=260)
+        else:
+            st.info("No structured data profile was saved with this report.")
+
+    with c2:
+        st.markdown("#### Evaluation frame")
+        split = adj.get("split") or "not recorded"
+        method = adj.get("method") or "exploratory only"
+        stages = []
+        if story:
+            stages = [
+                ("M2 analyses", len(story.get("analyses") or [])),
+                ("M3 diagnoses", len(story.get("diagnoses") or [])),
+                ("M5/M4 tests", len(story.get("surgeries") or [])),
+                ("Fix events", len(story.get("fixes") or [])),
+            ]
+        st.markdown(
+            f"""
+            <div class="ev-brief-card">
+              <div class="ev-brief-label">Confirmatory method</div>
+              <div class="ev-brief-value">{_html_escape(str(method))}</div>
+              <div class="ev-signal-test">Split: {_html_escape(str(split))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        for label, count in stages:
+            st.markdown(f"- **{label}:** {count}")
+        st.caption(f"Run directory: {root}")
+
+
+def _render_stage_map(*, active: set[str]) -> None:
+    """Compact map of what M1-M5 mean and which stage this panel is showing."""
+    cards = []
+    for spec in stage_specs_as_dicts():
+        cls = "ev-stage-card ev-stage-active" if spec["id"] in active else "ev-stage-card"
+        cards.append(
+            f"""
+            <div class="{cls}">
+              <div class="ev-stage-id">{_html_escape(spec["id"])}</div>
+              <div class="ev-stage-name">{_html_escape(spec["name"])}</div>
+              <div class="ev-stage-question">{_html_escape(spec["question"])}</div>
+            </div>
+            """
+        )
+    st.markdown(
+        '<div class="ev-stage-map">' + "\n".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _storyboard_panels(
+    report: dict[str, Any] | None,
+    *,
+    story: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Agent-authored dashboard storyboard, with compiled diagnostic fallback."""
+    report = report or {}
+    raw = report.get("dashboard_storyboard") or report.get("ui_panels")
+    if isinstance(raw, list) and all(isinstance(p, dict) for p in raw):
+        return [dict(p) for p in raw]
+    diag = (story or {}).get("diagnostic_report") or {}
+    raw = diag.get("dashboard_storyboard")
+    if isinstance(raw, list) and all(isinstance(p, dict) for p in raw):
+        return [dict(p) for p in raw]
+    return []
+
+
+def _render_storyboard_panel(panels: list[dict[str, Any]], panel_id: str) -> None:
+    panel = next((p for p in panels if str(p.get("id")) == panel_id), None)
+    if not panel:
+        return
+    stages = ", ".join(str(s) for s in (panel.get("stages") or []))
+    items = [str(x) for x in (panel.get("items") or []) if str(x).strip()]
+    refs = [str(x) for x in (panel.get("artifact_refs") or []) if str(x).strip()]
+    st.markdown(
+        f"""
+        <div class="ev-storyboard-card">
+          <div class="ev-brief-label">Agent-generated storyboard {("· " + _html_escape(stages)) if stages else ""}</div>
+          <div class="ev-storyboard-title">{_html_escape(str(panel.get('title') or panel_id))}</div>
+          <div class="ev-storyboard-summary">{_html_escape(str(panel.get('summary') or ''))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if items:
+        st.markdown("**Storyboard takeaways**")
+        for item in items[:8]:
+            st.markdown(f"- {item}")
+    if refs:
+        st.caption("Storyboard artifact refs: " + ", ".join(refs[:8]))
+
+
+def _analysis_takeaway(report: dict[str, Any] | None, story: dict[str, Any] | None = None) -> str:
+    diag = (story or {}).get("diagnostic_report") or {}
+    answer = str(diag.get("answer") or "").strip()
+    if answer:
+        return answer
+    supported = [
+        display_name(s.get("display_name") or s.get("name"))
+        for s in _candidate_signals(report)
+        if s.get("reject") is True and not _is_leaky_signal(s)
+    ]
+    if supported:
+        return f"{supported[0]} is the leading held-out supported signal."
+    conclusion = str((report or {}).get("conclusion") or "").strip()
+    return conclusion or "No supported diagnostic claim is available in the loaded report."
+
+
+def _render_method_card(title: str, method: str, evidence: str, takeaway: str) -> None:
+    st.markdown(
+        f"""
+        <div class="ev-analysis-card">
+          <div class="ev-brief-label">{_html_escape(title)}</div>
+          <div class="ev-analysis-method">Method: {_html_escape(method)}</div>
+          <div class="ev-analysis-evidence">Evidence: {_html_escape(evidence)}</div>
+          <div class="ev-analysis-takeaway">Takeaway: {_html_escape(takeaway)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -> None:
+    """Panel 2: analysis methods, evidence, charts, and takeaways."""
+    explore_report = explore_report or {}
+    if not explore_report:
+        st.warning(
+            "No explore report was found alongside this loop log, so the Analysis "
+            "panel cannot show measured signals or charts. Re-run with "
+            "`--explore-report`, or point the dashboard at a directory containing "
+            "`fused_report.json` / `exploratory_report.json`."
+        )
+    signals = _candidate_signals(explore_report)
+    adj = explore_report.get("adjudication") or {}
+    readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
+    storyboard = _storyboard_panels(explore_report, story=story)
+
+    st.markdown("### Analysis")
+    _render_stage_map(active={"M2"})
+    _render_storyboard_panel(storyboard, "analysis")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">Analysis takeaway</div>
+          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(explore_report, story))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        _render_method_card(
+            "Confirmatory signal testing",
+            str(adj.get("method") or "held-out host adjudication"),
+            "Effect sizes, confidence intervals, and e-BH/FDR verdicts.",
+            f"{adj.get('n_signals_rejected', adj.get('n_rejected', 0))} of "
+            f"{adj.get('n_signals_tested', adj.get('n_in_family', len(signals)))} tested signals survived.",
+        )
+    with c2:
+        _render_method_card(
+            "Exploratory visualization",
+            "Agent-proposed chart plan; host-rendered deterministic specs.",
+            f"{len(readings)} chart reading(s), {len(explore_report.get('charts') or [])} chart spec(s).",
+            readings[0].get("reading", "Charts are leads for hypotheses, not causal proof.")
+            if readings else "No chart readings were recorded.",
+        )
+
+    if adj:
+        cols = st.columns(5)
+        cells = [
+            ("Method", adj.get("method", "-")),
+            ("alpha", adj.get("alpha", "-")),
+            ("Signals tested", adj.get("n_signals_tested", adj.get("n_in_family", "-"))),
+            ("Rejected", adj.get("n_signals_rejected", adj.get("n_rejected", "-"))),
+            ("Split", adj.get("split", "-")),
+        ]
+        for col, (label, value) in zip(cols, cells, strict=False):
+            col.metric(label, value)
+
+    if signals:
+        st.markdown("#### Confirmatory evidence")
+        if _viz_ready():
+            st.plotly_chart(viz.forest_effects(_forest_rows(signals)), width="stretch")
+        else:
+            fig = _signal_effect_figure(signals)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
+        st.caption(
+            "Green = held-out supported. Grey = inconclusive. Label-audit rows are "
+            "sanity checks and should not be read as root causes."
+        )
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+    st.markdown("#### Charts and takeaways")
+    _render_visual_plan(explore_report)
+    if readings:
+        rows = [{
+            "chart": display_name(r.get("chart")),
+            "takeaway": r.get("reading", ""),
+            "do not infer": r.get("do_not_infer", ""),
+        } for r in readings]
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    if _viz_ready():
+        _render_explore_tables(explore_report, explore_dir, full=False, root=root)
+    else:
+        _render_charts_and_plots(explore_report, explore_dir)
+
+    with st.expander("Additional statistical diagnostics", expanded=False):
+        _render_stat_panel(root)
+
+
+def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> None:
+    """Panel 3: hypotheses, downstream tests, and artifacts needed for decisions."""
+    hyps = _hypotheses_with_outcomes(story)
+    storyboard = _storyboard_panels(explore_report or {}, story=story)
+    st.markdown("### Hypotheses & Decision")
+    _render_stage_map(active={"M3", "M4", "M5"})
+    _render_storyboard_panel(storyboard, "hypotheses_artifacts")
+    if hyps:
+        st.caption(
+            "These are M3 hypotheses formed from the analysis panel. Treat them as "
+            "decision candidates until M5/M4 tests or fix outcomes support them."
+        )
+        for h in hyps:
+            _render_hypothesis_card(h)
+    else:
+        st.warning("No M3 hypotheses were recorded for this run.")
+
+    surgeries = story.get("surgeries") or []
+    fixes = story.get("fixes") or []
+    if surgeries or fixes:
+        st.markdown("#### Downstream decision evidence")
+        for s in surgeries:
+            tag = str(s.get("module", "")).upper()
+            st.markdown(
+                f"- **[{tag}]** {s.get('status', '')}: "
+                f"{_truncate(str(s.get('hypothesis', '')), 180)}"
+            )
+        if fixes:
+            with st.expander("Fix adjudication records", expanded=False):
+                for f in fixes:
+                    st.json(f)
+
+    with st.expander("Inspect M1-M4 artifacts and flow", expanded=True):
+        _render_loop_flow(story, explore_report, explore_dir)
+    with st.expander("Inspect raw tables", expanded=False):
+        _render_explore_tables(explore_report, explore_dir, full=True)
+    if explore_report:
+        with st.expander("Explorer original charts/figures", expanded=False):
+            _render_charts_and_plots(explore_report, explore_dir)
+
+
+def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
+    signals = _candidate_signals(report)
+    storyboard = _storyboard_panels(report, story=None)
+    st.markdown("### Analysis")
+    _render_stage_map(active={"M2"})
+    _render_storyboard_panel(storyboard, "analysis")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">Analysis takeaway</div>
+          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(report))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _render_method_card(
+        "Standalone M2 exploration",
+        "Agent-authored EDA plus host-rendered deterministic chart specs.",
+        f"{len(signals)} candidate signal(s), {len(report.get('charts') or [])} chart spec(s).",
+        "Use these findings to choose confirmatory follow-up tests; exploratory charts are not causal evidence.",
+    )
+    _render_visual_plan(report)
+    if signals:
+        st.markdown("#### Candidate signal table")
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+    _render_charts_and_plots(report, turn_dir)
+    _render_tables(report, turn_dir)
+
+
+def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
+    storyboard = _storyboard_panels(report, story=None)
+    st.markdown("### Hypotheses & Artifacts")
+    _render_stage_map(active={"M3", "M4", "M5"})
+    _render_storyboard_panel(storyboard, "hypotheses_artifacts")
+    claims = [c for c in report.get("claims") or [] if isinstance(c, dict)]
+    tests = report.get("recommended_confirmatory_tests") or []
+    if claims:
+        st.markdown("#### Claims to carry forward")
+        st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
+    if tests:
+        st.markdown("#### Recommended confirmatory tests")
+        for item in tests:
+            st.markdown(f"- {item}")
+    if not claims and not tests:
+        st.info("No explicit hypotheses or confirmatory tests were recorded.")
+    with st.expander("Inspect generated artifacts", expanded=True):
+        _render_artifacts(report, turn_dir)
+
+
+def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None:
     """A connected diagnostic report: what was analysed -> what was found ->
     therefore which hypotheses were formed (each linked to its evidence + test)."""
     analyses = story.get("analyses") or []
@@ -168,6 +583,9 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
 
     concl = next((a.get("conclusion") or a.get("narrative") for a in analyses
                   if a.get("conclusion") or a.get("narrative")), "")
+    _render_diagnostic_report(story.get("diagnostic_report") or {}, story, explore_report, concl)
+    _render_interpretation_guide()
+
     if concl:
         st.markdown("### Conclusion")
         st.info(str(concl))
@@ -184,13 +602,15 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
     if obs:
         for o in obs[:10]:
             st.markdown(f"- {o}")
+    _render_visual_plan(explore_report)
 
     # ── ② What we found ───────────────────────────────────────────────────
     st.markdown("### ② What we found")
+    _render_plain_findings(story.get("diagnostic_report") or {})
     if adj:
         st.caption(
             "Each candidate signal was confirmed on a HELD-OUT split with e-BH "
-            "(FDR-controlled). Green bars below survived; grey did not."
+            "(FDR-controlled). In the chart below, green survived; grey did not."
         )
         cols = st.columns(5)
         cells = [
@@ -205,20 +625,26 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
 
     if signals:
         st.markdown("**Signal effect sizes (failure association)**")
-        _render_signal_effects(signals)
+        n_leaky = sum(1 for s in signals if _is_leaky_signal(s))
+        if _viz_ready():
+            st.plotly_chart(viz.forest_effects(_forest_rows(signals)),
+                            use_container_width=True)
+            st.caption(
+                "Dot = effect size, bar = confidence interval, dotted line = 0 (no "
+                "association). Green survived e-BH (FDR); grey did not."
+                + (" Greyed/leaky signals are the outcome re-measured (perfect "
+                   "separation) — confirmatory, not causal, so they are demoted "
+                   "from the ranking." if n_leaky else "")
+            )
+        else:
+            fig = _signal_effect_figure(signals)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
         st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
 
-    # Per-case FAIL-vs-PASS distributions (plotly) behind the signals above —
-    # violins/scatter from the explorer's per-case records, when available.
-    viz = _get_viz()
-    records = _load_records(Path(explore_dir)) if viz is not None else None
-    if viz is not None and records is not None and not records.empty:
-        st.markdown("**Per-case distributions (FAIL vs PASS)**")
-        st.caption(
-            "The full per-case distributions behind the signals above — violins "
-            "show the spread and bimodality a mean-bar would hide."
-        )
-        _render_case_distributions(records, viz)
+    # Statistical deep-dive built from the per-case matrix (model eval, distribution
+    # diagnostics, relationships, decision) — replaces the 2-group descriptive view.
+    _render_stat_panel(root)
 
     # The analyst's reasoning chain + statistical-test summaries, when logged.
     evidence = next((a.get("evidence_chain") for a in analyses if a.get("evidence_chain")), None)
@@ -235,10 +661,21 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
         for s in stat_summaries[:10]:
             st.markdown(f"- {s}")
 
-    if charts or plots:
+    # Primary: themed, distribution-first charts rebuilt from the explorer's data
+    # tables (counts→bar, two-signal→scatter, fail-rate→binned curve, group
+    # stats→dumbbell). Replaces the explorer's default bar PNGs as the lead view.
+    if _viz_ready():
         st.markdown("**Exploratory charts**")
-        _render_charts_and_plots(explore_report, explore_dir)
-    _render_explore_tables(explore_report, explore_dir, full=False)
+        _render_explore_tables(explore_report, explore_dir, full=False, root=root)
+        if charts or plots:
+            with st.expander("Explorer's original figures (as rendered during Step 1)",
+                             expanded=False):
+                _render_charts_and_plots(explore_report, explore_dir)
+    else:
+        if charts or plots:
+            st.markdown("**Exploratory charts**")
+            _render_charts_and_plots(explore_report, explore_dir)
+        _render_explore_tables(explore_report, explore_dir, full=False)
 
     # ── ③ Hypotheses formed ───────────────────────────────────────────────
     st.markdown("### ③ Hypotheses formed")
@@ -259,6 +696,342 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
             "`--explore-report outputs/fused/fused_report.json`, or point the "
             "dashboard at an explore-output directory."
         )
+
+
+def _render_stat_panel(root) -> None:
+    """Inferential / distributional panel built from the per-case feature matrix
+    reconstructed from m1_state.pkl: model-evaluation, distribution diagnostics,
+    variable relationships, and decision analysis. Silent if data unavailable."""
+    if root is None or not _viz_ready() or load_case_matrix is None:
+        return
+    try:
+        df = load_case_matrix(root)
+    except Exception:
+        df = None
+    if df is None or df.empty:
+        return
+    sigs = continuous_signals(df)
+
+    st.markdown("---")
+    st.markdown("#### 📈 Statistical analysis (per-case)")
+    cov = ", ".join(f"{s}: {int(df[s].notna().sum())}" for s in sigs) if sigs else "—"
+    st.caption(
+        f"Reconstructed from the frozen M1 state ({len(df)} cases). Continuous-signal "
+        f"coverage — {cov}. Charts below go beyond FAIL-vs-PASS means: discrimination "
+        f"(ROC/coef), error structure (confusion), distribution shape, and relationships."
+    )
+
+    # ── Model evaluation ──────────────────────────────────────────────────
+    st.markdown("**Model evaluation**")
+    c1, c2 = st.columns(2)
+    has_answers = df["model_yes"].notna().any() and df["truth_yes"].notna().any()
+    if has_answers:
+        with c1:
+            st.plotly_chart(
+                viz.confusion_matrix(df["truth_yes"], df["model_yes"],
+                                     pos_label="Yes (present)", neg_label="No (absent)",
+                                     title="Model answer vs ground truth"),
+                use_container_width=True)
+            st.caption("FP = hallucination (said Yes, object absent); FN = miss.")
+    if sigs:
+        with (c2 if has_answers else c1):
+            st.plotly_chart(viz.roc_curves(df, sigs, label_col="is_fail"),
+                            use_container_width=True)
+            st.caption("How well each signal alone separates FAIL from PASS (AUC).")
+        st.plotly_chart(viz.coef_plot(df, sigs, label_col="is_fail"),
+                        use_container_width=True)
+        st.caption("Standardized univariate logistic coefficients (bootstrap 95% CI); "
+                   "comparable across signals — CI crossing 0 ⇒ not significant.")
+
+    # ── Distribution diagnostics (interactive signal picker) ──────────────
+    if sigs:
+        st.markdown("**Distribution diagnostics**")
+        # default to the most discriminative signal (highest |AUC-0.5|)
+        aucs = {s: abs(viz._roc(df[s].to_numpy(float), df["is_fail"].to_numpy(float))[2] - 0.5)
+                for s in sigs}
+        default = max(aucs, key=aucs.get)
+        pick = st.selectbox("signal", sigs, index=sigs.index(default),
+                            format_func=lambda s: viz.short(s), key="stat_sig")
+        d1, d2 = st.columns(2)
+        with d1:
+            st.plotly_chart(viz.violin_by_outcome(df, pick), use_container_width=True)
+            st.plotly_chart(viz.ecdf_by_outcome(df, pick), use_container_width=True)
+        with d2:
+            st.plotly_chart(viz.kde_by_outcome(df, pick), use_container_width=True)
+            st.plotly_chart(viz.qq_normal(df, pick), use_container_width=True)
+
+    # ── Variable relationships ────────────────────────────────────────────
+    rel_sigs = sigs + (["probe1_fd"] if "probe1_fd" in df.columns else [])
+    if len(rel_sigs) >= 2:
+        st.markdown("**Variable relationships**")
+        r1, r2 = st.columns(2)
+        with r1:
+            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), use_container_width=True)
+        with r2:
+            if len(sigs) >= 2:
+                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), use_container_width=True)
+
+    # ── Decision analysis: which prompt strategies fix vs break cases ─────
+    pareto_items = [
+        ("describe-first fixes", "pc_fixed_describe"),
+        ("sensitive fixes", "pc_fixed_sensitive"),
+        ("describe-first breaks", "pc_broken_describe"),
+        ("sensitive breaks", "pc_broken_sensitive"),
+    ]
+    avail = [(lbl, col) for lbl, col in pareto_items if col in df.columns]
+    if avail:
+        vals = [int(df[col].fillna(False).astype(bool).sum()) for _, col in avail]
+        if sum(vals) > 0:
+            st.markdown("**Decision analysis**")
+            st.plotly_chart(viz.pareto([lbl for lbl, _ in avail], vals,
+                                       title="Prompt-strategy repairs vs regressions"),
+                            use_container_width=True)
+            st.caption("How many cases each reprompting strategy fixed vs broke — "
+                       "ranks whether prompt-level fixes are worth pursuing.")
+
+
+def _render_diagnostic_report(
+    report: dict[str, Any],
+    story: dict[str, Any],
+    explore_report: dict[str, Any] | None,
+    fallback_conclusion: str,
+) -> None:
+    """Claim-first semantic report compiled from raw artifacts."""
+    if not report:
+        _render_run_briefing(story, explore_report, fallback_conclusion)
+        return
+
+    st.markdown("### Diagnostic report")
+    confidence = str(report.get("confidence") or "unknown")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">Answer first · confidence: {_html_escape(confidence)}</div>
+          <div class="ev-report-answer-text">{_html_escape(str(report.get('answer') or ''))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    claims = [c for c in (report.get("claims") or []) if isinstance(c, dict)]
+    evidence = {
+        str(e.get("id")): e for e in (report.get("evidence") or [])
+        if isinstance(e, dict) and e.get("id")
+    }
+    if claims:
+        st.markdown("#### Claims and evidence")
+        for claim in claims:
+            _render_claim_card(claim, evidence)
+
+    timeline = [s for s in (report.get("timeline") or []) if isinstance(s, dict)]
+    if timeline:
+        with st.expander("Investigation timeline", expanded=False):
+            for step in timeline:
+                st.markdown(
+                    f"**{step.get('stage', '')}: {step.get('title', '')}**  \n"
+                    f"{step.get('summary', '')}"
+                )
+
+    readings = [r for r in (report.get("chart_readings") or []) if isinstance(r, dict)]
+    if readings:
+        with st.expander("Chart readings written by the agent", expanded=False):
+            st.dataframe(pd.DataFrame(readings), width="stretch", hide_index=True)
+
+    critique = [str(c) for c in (report.get("critique") or [])]
+    if critique:
+        with st.expander("Critique and limits", expanded=True):
+            for note in critique:
+                st.markdown(f"- {note}")
+
+    actions = [str(a) for a in (report.get("next_actions") or [])]
+    if actions:
+        with st.expander("Recommended next actions", expanded=False):
+            for action in actions:
+                st.markdown(f"- {action}")
+
+
+def _render_claim_card(claim: dict[str, Any], evidence: dict[str, dict[str, Any]]) -> None:
+    status = str(claim.get("status") or "descriptive")
+    cls = {
+        "supported": "ev-claim-supported",
+        "inconclusive": "ev-claim-inconclusive",
+        "refuted": "ev-claim-refuted",
+    }.get(status, "ev-claim-descriptive")
+    st.markdown(
+        f"""
+        <div class="ev-claim-card {cls}">
+          <div class="ev-claim-top">
+            <span class="ev-pill">{_html_escape(str(claim.get('id', 'claim')))}</span>
+            <span class="ev-pill">{_html_escape(status)}</span>
+          </div>
+          <div class="ev-claim-text">{_html_escape(str(claim.get('text') or ''))}</div>
+          <div class="ev-signal-body">{_html_escape(str(claim.get('interpretation') or ''))}</div>
+          <div class="ev-signal-test">Do not infer: {_html_escape(str(claim.get('do_not_infer') or ''))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    rows = []
+    for ev_id in claim.get("evidence_ids") or []:
+        ev = evidence.get(str(ev_id))
+        if ev:
+            rows.append({
+                "id": ev.get("id"),
+                "kind": ev.get("kind"),
+                "title": ev.get("title"),
+                "summary": ev.get("summary"),
+            })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    downstream = [str(x) for x in (claim.get("downstream") or [])]
+    if downstream:
+        st.caption("Downstream: " + " · ".join(downstream))
+
+
+def _render_plain_findings(report: dict[str, Any]) -> None:
+    claims = [c for c in (report.get("claims") or []) if isinstance(c, dict)]
+    if not claims:
+        return
+    supported = [c for c in claims if c.get("status") == "supported"]
+    descriptive = [c for c in claims if c.get("status") == "descriptive"]
+    inconclusive = [c for c in claims if c.get("status") == "inconclusive"]
+
+    cols = st.columns(3)
+    groups = [
+        ("Main supported findings", supported, "These are the findings to carry forward."),
+        ("Sanity checks / descriptive", descriptive, "Useful context, not root-cause evidence."),
+        ("Not supported", inconclusive, "Tested but not convincing in this run."),
+    ]
+    for col, (title, rows, caption) in zip(cols, groups, strict=False):
+        with col:
+            st.markdown(f"**{title}**")
+            if rows:
+                for claim in rows[:4]:
+                    st.markdown(f"- {_html_escape(str(claim.get('text') or ''))}")
+            else:
+                st.caption("None")
+            st.caption(caption)
+
+
+def _render_run_briefing(
+    story: dict[str, Any],
+    explore_report: dict[str, Any] | None,
+    conclusion: str,
+) -> None:
+    """A human-first summary before the dense plots. The dashboard has many
+    diagnostics; this pins the reader to what was actually done and what evidence
+    is allowed to support a claim."""
+    signals = _candidate_signals(explore_report)
+    supported = [
+        str(s.get("name"))
+        for s in signals
+        if s.get("reject") is True and not _is_leaky_signal(s)
+    ]
+    leaky = [str(s.get("name")) for s in signals if _is_leaky_signal(s)]
+    diagnoses = story.get("diagnoses") or []
+    surgeries = story.get("surgeries") or []
+    fixes = story.get("fixes") or []
+    charts = [c for c in (explore_report or {}).get("charts", []) if isinstance(c, dict)]
+    split = ((explore_report or {}).get("adjudication") or {}).get("split", "unknown")
+
+    takeaway = (
+        _truncate(str(conclusion), 220)
+        if conclusion else
+        (
+            f"Supported signals: {', '.join(supported[:3])}"
+            if supported else
+            "No held-out supported signal was found in the loaded report."
+        )
+    )
+    evidence = (
+        f"{len(supported)} non-leaky signal(s) survived held-out e-BH"
+        if supported else
+        "No non-leaky signal survived held-out e-BH"
+    )
+    if leaky:
+        evidence += f"; {len(leaky)} label-like signal(s) demoted"
+    downstream = (
+        f"{sum(len(d.get('hypotheses') or []) for d in diagnoses)} hypothesis(es), "
+        f"{len(surgeries)} test/intervention event(s), {len(fixes)} fix event(s)"
+    )
+
+    st.markdown("### Run briefing")
+    st.markdown(
+        f"""
+        <div class="ev-brief-grid">
+          <div class="ev-brief-card">
+            <div class="ev-brief-label">Question answered</div>
+            <div class="ev-brief-value">{_html_escape(takeaway)}</div>
+          </div>
+          <div class="ev-brief-card">
+            <div class="ev-brief-label">Evidence you can trust</div>
+            <div class="ev-brief-value">{_html_escape(evidence)}</div>
+          </div>
+          <div class="ev-brief-card">
+            <div class="ev-brief-label">Pipeline stages loaded</div>
+            <div class="ev-brief-value">
+              Explore charts: {len(charts)} · confirm split: {_html_escape(str(split))}<br/>
+              {_html_escape(downstream)}
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_interpretation_guide() -> None:
+    with st.expander("How to interpret this page", expanded=True):
+        st.markdown(
+            """
+            - **Exploratory observations and charts** show patterns the agent found.
+              Treat them as leads, not proof.
+            - **Signal effect sizes** are the confirmatory layer. A signal matters
+              only if it survives the held-out e-BH check; grey/inconclusive rows
+              are descriptive.
+            - **Leaky signals** re-measure the label or a near-label proxy. They can
+              validate plumbing, but they should not be read as root causes.
+            - **Hypotheses** are M3's explanations formed from the confirmed signals
+              plus exploratory context. They are not accepted until M5/M4 tests
+              support them.
+            - **Fix outcomes** are the final gate. A plausible hypothesis without a
+              validated fix is still only a diagnosis candidate.
+            """
+        )
+
+
+def _render_visual_plan(explore_report: dict[str, Any] | None) -> None:
+    plan = [
+        p for p in ((explore_report or {}).get("visual_plan") or [])
+        if isinstance(p, dict)
+    ]
+    if not plan:
+        st.caption(
+            "Visualization plan: not present in this report. Newer explorer runs "
+            "record why each plot type was selected."
+        )
+        return
+    rows = []
+    for item in plan:
+        cols = item.get("required_columns") or []
+        if isinstance(cols, list):
+            cols_text = ", ".join(str(c) for c in cols)
+        else:
+            cols_text = str(cols)
+        rows.append({
+            "visual": item.get("name", ""),
+            "question": item.get("question", ""),
+            "data_shape": item.get("data_shape", ""),
+            "plot_kind": item.get("plot_kind", ""),
+            "why this plot": item.get("rationale", ""),
+            "columns": cols_text,
+        })
+    with st.expander("Why these charts were chosen", expanded=False):
+        st.caption(
+            "This is the agent's intermediate visualization plan: the chart type "
+            "decision, data shape, and rationale before code was written."
+        )
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 def _render_hypothesis_card(h: dict[str, Any]) -> None:
@@ -343,89 +1116,6 @@ def _render_loop_flow(story, explore_report, explore_dir) -> None:
             st.json(f)
 
 
-def _render_signal_effects(signals: list[dict[str, Any]]) -> None:
-    """Forest plot (plotly, crisp) of each signal's effect size, colored by its
-    held-out e-BH verdict; falls back to the matplotlib bar when plotly is absent."""
-    viz = _get_viz()
-    if viz is not None:
-        rows = [{
-            "signal": f"{s.get('name', '?')} ({s.get('source', '')})",
-            "effect": float(s["effect"]),
-            "significant": bool(s.get("reject")),
-        } for s in signals if isinstance(s.get("effect"), (int, float))]
-        if rows:
-            try:
-                st.plotly_chart(viz.forest_effects(rows), width="stretch")
-                return
-            except Exception:
-                pass
-    fig = _signal_effect_figure(signals)
-    if fig is not None:
-        st.pyplot(fig, clear_figure=True)
-
-
-def _load_records(explore_dir: Path) -> "pd.DataFrame | None":
-    """The explorer's per-case table (one row per case: raw signals + outcome
-    label) — the correct source for distribution charts. Searched across the
-    run layout (the explorer writes it to its sandbox)."""
-    for p in (
-        explore_dir / "sandbox" / "records.json",
-        explore_dir / "records.json",
-        explore_dir / "sandbox" / "tables" / "records.json",
-    ):
-        if p.exists():
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if isinstance(data, list) and data:
-                try:
-                    return pd.DataFrame(data)
-                except Exception:
-                    continue
-    return None
-
-
-def _render_case_distributions(df: "pd.DataFrame", viz) -> None:
-    """Per-case FAIL-vs-PASS distributions via the eval-chart-style plotly
-    builders: class balance, a violin per continuous signal, and a joint scatter
-    of the two most-populated signals. Degenerate (binary/constant) signals are
-    skipped, not rendered as misleading spikes."""
-    label_col = "label" if "label" in df.columns else None
-    if label_col is None:
-        return
-    try:
-        st.plotly_chart(viz.counts_bar(df, outcome=label_col), width="stretch")
-    except Exception:
-        pass
-
-    # continuous signals only (>=3 distinct non-null values), most-populated first
-    plottable: list[tuple[str, int]] = []
-    for col in df.columns:
-        if col in {label_col, "case_id"} or not pd.api.types.is_numeric_dtype(df[col]):
-            continue
-        sub = df[[label_col, col]].dropna()
-        if sub[col].nunique() >= 3 and len(sub) >= 4:
-            plottable.append((col, len(sub)))
-    plottable.sort(key=lambda t: -t[1])
-
-    for col, n in plottable:
-        try:
-            st.plotly_chart(viz.violin_by_outcome(df, col, outcome=label_col),
-                            width="stretch")
-            st.caption(f"{col} · n={n} non-null")
-        except Exception:
-            continue
-
-    if len(plottable) >= 2:
-        try:
-            st.plotly_chart(
-                viz.joint_scatter(df, plottable[0][0], plottable[1][0], outcome=label_col),
-                width="stretch")
-        except Exception:
-            pass
-
-
 def _signal_effect_figure(signals: list[dict[str, Any]]):
     """Horizontal bar of each signal's effect size, coloured by host verdict
     (REJECT H0 = real association vs inconclusive). Returns a matplotlib Figure
@@ -437,14 +1127,15 @@ def _signal_effect_figure(signals: list[dict[str, Any]]):
     except Exception:
         return None
 
-    rows = [(str(s.get("name", "?")), float(s["effect"]), bool(s.get("reject")), str(s.get("source", "")))
+    rows = [(str(s.get("display_name") or s.get("name", "?")), str(s.get("name", "?")),
+             float(s["effect"]), bool(s.get("reject")), str(s.get("source", "")))
             for s in signals if isinstance(s.get("effect"), (int, float))]
     if not rows:
         return None
-    rows.sort(key=lambda r: r[1])
-    names = [f"{n}  ({src})" for n, _, _, src in rows]
-    effects = [e for _, e, _, _ in rows]
-    colors = ["#0f8a5f" if rej else "#9aa4b2" for _, _, rej, _ in rows]
+    rows.sort(key=lambda r: r[2])
+    names = [f"{display_name(label or raw, compact=True)}  ({src})" for label, raw, _, _, src in rows]
+    effects = [e for _, _, e, _, _ in rows]
+    colors = ["#0f8a5f" if rej else "#9aa4b2" for _, _, _, rej, _ in rows]
 
     fig, ax = plt.subplots(figsize=(7.2, max(1.6, 0.55 * len(rows) + 0.8)))
     ax.barh(range(len(rows)), effects, color=colors)
@@ -457,18 +1148,63 @@ def _signal_effect_figure(signals: list[dict[str, Any]]):
     return fig
 
 
+def _is_leaky_signal(s: dict[str, Any]) -> bool:
+    """Target leakage = the outcome re-measured. Signature: perfect separation
+    (effect ~1.0 with a zero-width CI), or a signal derived from the probe that
+    defines the failure label. Such a signal must never be ranked #1 (skill §4)."""
+    name = str(s.get("name", "")).lower()
+    if name.startswith("probe1") or "false_detection" in name:
+        return True
+    eff = s.get("effect")
+    ci = s.get("ci") or [None, None]
+    try:
+        lo, hi = float(ci[0]), float(ci[1])
+        if eff is not None and abs(float(eff)) >= 0.999 and (hi - lo) <= 1e-6:
+            return True
+    except (TypeError, ValueError, IndexError):
+        pass
+    return False
+
+
+def _forest_rows(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Adapt host signal dicts to eval_viz_theme.forest_effects row schema."""
+    rows = []
+    for s in signals:
+        if not isinstance(s.get("effect"), (int, float)):
+            continue
+        ci = s.get("ci") or [None, None]
+        raw = str(s.get("name", "?"))
+        rows.append({
+            "signal": str(s.get("display_name") or display_name(raw)),
+            "raw_signal": raw,
+            "effect": float(s["effect"]),
+            "ci_lo": ci[0] if isinstance(ci, (list, tuple)) and len(ci) == 2 else None,
+            "ci_hi": ci[1] if isinstance(ci, (list, tuple)) and len(ci) == 2 else None,
+            "significant": bool(s.get("reject")),
+            "leaky": _is_leaky_signal(s),
+        })
+    return rows
+
+
 def _signals_dataframe(signals: list[dict[str, Any]]):
     def _verdict(s):
+        if _is_leaky_signal(s):
+            return "leaky (re-measured label)"
         if s.get("reject") is True:
             return "REJECT H0"
         if s.get("reject") is False:
             return "inconclusive"
         return "descriptive"
+
+    def _fmt(x, kind):
+        return viz.fmt(x, kind) if viz is not None else x
+
     rows = [{
-        "signal": s.get("name"),
+        "signal": display_name(s.get("display_name") or s.get("name"), compact=True),
+        "raw field": s.get("name"),
         "source": s.get("source"),
-        "effect": s.get("effect"),
-        "e_value": s.get("e_value"),
+        "effect": _fmt(s.get("effect"), "effect"),
+        "e_value": _fmt(s.get("e_value"), "stat") if s.get("e_value") is not None else "—",
         "verdict": _verdict(s),
         "recipe": (s.get("recipe") or {}).get("expr") if isinstance(s.get("recipe"), dict) else None,
     } for s in signals]
@@ -479,14 +1215,100 @@ def _explore_table_dirs(explore_dir: Path) -> list[Path]:
     return [d for d in (explore_dir / "tables", explore_dir / "sandbox" / "tables") if d.is_dir()]
 
 
-def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
-    """Surface the CSV tables the explorer wrote as charts (+ the table itself).
-    These are the actual data behind the analysis (e.g. fail rate by signal)."""
+def _scatter_axis_names(explore_report, csv_name: str) -> tuple[str | None, str | None]:
+    """Recover (x_signal, y_signal) for a scatter CSV from the report chart whose
+    title is '<xsig> vs <ysig> by outcome'. Returns (None, None) if not found."""
+    stem = csv_name.replace(".csv", "")
+    for c in (explore_report or {}).get("charts", []):
+        if not isinstance(c, dict):
+            continue
+        if c.get("name") == stem or str(c.get("data", "")).endswith(csv_name):
+            title = str(c.get("title", ""))
+            if " vs " in title:
+                left, _, right = title.partition(" vs ")
+                right = right.split(" by outcome")[0].strip()
+                return left.strip() or None, right or None
+    return None, None
+
+
+def _counts_bar_agg(df: pd.DataFrame):
+    """Class balance from an aggregated (outcome, count) table → a single slim
+    100%-stacked composition strip (not two fat bars for two numbers)."""
+    rowmap = {str(r["outcome"]).upper(): int(r["count"]) for _, r in df.iterrows()}
+    order = [g for g in ("FAIL", "PASS") if g in rowmap] or list(rowmap)
+    return viz.composition_bar(order, [rowmap[g] for g in order])
+
+
+def _groupstats_dumbbell(df: pd.DataFrame, signal: str):
+    """FAIL vs PASS group means as a dumbbell (not a two-bar). Only mean/median are
+    persisted, so spread cannot be shown — labelled honestly as means."""
+    import plotly.graph_objects as go
+    rowmap = {str(r["outcome"]).upper(): r for _, r in df.iterrows()}
+    fig = go.Figure()
+    present = [g for g in ("FAIL", "PASS") if g in rowmap]
+    if {"FAIL", "PASS"} <= set(rowmap):
+        fig.add_trace(go.Scatter(
+            x=[rowmap["FAIL"]["mean"], rowmap["PASS"]["mean"]], y=[signal, signal],
+            mode="lines", line=dict(color=viz.PALETTE["AXIS"], width=2),
+            showlegend=False, hoverinfo="skip"))
+    for g in present:
+        m = rowmap[g]
+        fig.add_trace(go.Scatter(
+            x=[m["mean"]], y=[signal], mode="markers+text",
+            marker=dict(color=viz.outcome_color(g), size=14),
+            text=[f"{g} {viz.fmt(m['mean'], 'val')}"],
+            textposition="top center", textfont=dict(size=11),
+            name=g, hovertext=f"{g}: mean={viz.fmt(m['mean'],'val')} median={viz.fmt(m.get('median'),'val')}",
+            hoverinfo="text"))
+    fig.update_layout(title=f"{viz.short(signal)} — group means (FAIL vs PASS)",
+                      xaxis_title=viz.short(signal), yaxis_title="", showlegend=False,
+                      height=180, yaxis=dict(showticklabels=False))
+    return fig
+
+
+def _failrate_scatter(df: pd.DataFrame, signal: str):
+    """Fail rate vs a binned signal: markers at bin midpoints, size ∝ n, with
+    human-readable bin labels — replaces the bar/line over machine bin edges."""
+    import re
+
+    import plotly.graph_objects as go
+    bincol = df.columns[0]
+    labels, mids, rates, ns = [], [], [], []
+    for _, r in df.iterrows():
+        nums = re.findall(r"-?\d+\.?\d*", str(r[bincol]))
+        if len(nums) >= 2:
+            lo, hi = float(nums[0]), float(nums[1])
+            labels.append(viz.human_bins([lo, hi])[0])
+            mids.append((lo + hi) / 2)
+        else:
+            labels.append(str(r[bincol]))
+            mids.append(len(mids))
+        rates.append(float(r.get("fail_rate", 0)))
+        ns.append(int(r.get("n", 0)) if pd.notna(r.get("n")) else 0)
+    sizes = [8 + 28 * (n / max(ns)) for n in ns] if ns and max(ns) else [10] * len(ns)
+    fig = go.Figure(go.Scatter(
+        x=mids, y=rates, mode="lines+markers+text",
+        line=dict(color=viz.PALETTE["FAIL"], width=2),
+        marker=dict(color=viz.PALETTE["FAIL"], size=sizes,
+                    line=dict(color="white", width=1)),
+        text=[f"n={n}" for n in ns], textposition="top center",
+        textfont=dict(size=10), hovertext=labels, hoverinfo="text+y"))
+    fig.update_layout(title=f"Fail rate vs {viz.short(signal)} (by bin; marker size ∝ n)",
+                      xaxis_title=viz.short(signal), yaxis_title="fail rate",
+                      yaxis=dict(range=[-0.05, 1.05]), height=320)
+    return fig
+
+
+def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None) -> None:
+    """Surface the CSV tables the explorer wrote. In the Analysis tab (full=False)
+    each table is shown as the chart its content calls for (counts→bar, two-signal
+    →scatter, fail-rate→binned curve, group stats→dumbbell), per the eval-chart-
+    style policy. In the Tables tab (full=True) they are sortable dataframes only —
+    one home per fact, no re-plotting."""
     explore_dir = Path(explore_dir)
     csvs: list[Path] = []
     for tdir in _explore_table_dirs(explore_dir):
         csvs.extend(sorted(tdir.glob("*.csv")))
-    # de-dup by name (tables/ vs sandbox/tables/)
     seen: set[str] = set()
     uniq = [p for p in csvs if not (p.name in seen or seen.add(p.name))]
 
@@ -495,8 +1317,108 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
             st.caption("No CSV tables found for this run.")
         return
 
-    if not full:
+    # Tables tab: real sortable tables, no charts (don't re-plot Analysis findings).
+    if full:
         st.markdown("#### Data tables")
+        for path in uniq:
+            try:
+                df = pd.read_csv(path)
+            except Exception:
+                continue
+            st.markdown(f"**{path.name}**")
+            st.dataframe(df, width="stretch", height=240)
+        return
+
+    # Analysis tab: prefer ONE combined chart per family over per-signal small-
+    # multiples. When the per-case matrix is available, all signals' group means
+    # and fail-rate curves collapse into one chart each (skill §2).
+    if not _viz_ready():
+        return _render_explore_tables_legacy(uniq)
+
+    st.markdown("#### Data behind the analysis")
+
+    matrix = None
+    if root is not None and load_case_matrix is not None:
+        try:
+            matrix = load_case_matrix(root)
+        except Exception:
+            matrix = None
+    sigs = continuous_signals(matrix) if (matrix is not None and continuous_signals) else []
+
+    # Class balance — compact, unique (kept as-is).
+    for path in uniq:
+        if path.name.startswith("class_balance"):
+            try:
+                d = pd.read_csv(path)
+                if {"outcome", "count"} <= {c.lower() for c in d.columns}:
+                    st.plotly_chart(_counts_bar_agg(d), use_container_width=True)
+            except Exception:
+                pass
+            break
+
+    combined = False
+    if matrix is not None and len(sigs) >= 1:
+        combined = True
+        st.plotly_chart(viz.groupstats_strip(matrix, sigs), use_container_width=True)
+        st.caption("All signals' FAIL-vs-PASS group means on one standardized axis "
+                   "(one row per signal — replaces a panel per signal).")
+        st.plotly_chart(viz.failrate_percentile(matrix, sigs), use_container_width=True)
+        st.caption("Each signal's fail-rate curve over its own percentile range, overlaid "
+                   "on one axis.")
+
+    # Remaining CSVs: per-signal group-stats / fail-rate are now folded into the
+    # combined charts above; the binary scatter is degenerate (skill §0). Show only
+    # the genuinely tabular summaries (correlations, discriminators) as tables.
+    folded = ("groupstats", "failrate", "class_balance")
+    for path in uniq:
+        name = path.name
+        if name.startswith(folded):
+            continue
+        if name.startswith("scatter"):
+            # joint scatter with a binary axis just stacks points on two lines and
+            # overlaps the marginals — suppress (the quadrant/violin views cover it).
+            try:
+                d = pd.read_csv(path)
+            except Exception:
+                continue
+            xs, ys = _scatter_axis_names(explore_report, name)
+            binary_axis = any(d[c].nunique(dropna=True) <= 2 for c in ("x", "y") if c in d.columns)
+            if binary_axis:
+                lbl = f"{viz.short(xs) if xs else 'x'} vs {viz.short(ys) if ys else 'y'}"
+                st.caption(f"↳ scatter {lbl}: one axis is binary — suppressed "
+                           f"(see the quadrant / distribution views above).")
+            else:
+                d2 = d.rename(columns={"x": xs, "y": ys}) if xs and ys else d
+                st.plotly_chart(viz.joint_scatter(d2, xs or "x", ys or "y", outcome="outcome"),
+                                use_container_width=True)
+            continue
+        try:
+            d = pd.read_csv(path)
+        except Exception:
+            continue
+        st.markdown(f"**{name}**")
+        st.dataframe(d, width="stretch", height=200)
+
+    # No matrix → fall back to per-signal panels so nothing is lost.
+    if not combined:
+        for path in uniq:
+            name = path.name
+            try:
+                d = pd.read_csv(path)
+            except Exception:
+                continue
+            cols = {c.lower() for c in d.columns}
+            if name.startswith("groupstats") and {"outcome", "mean"} <= cols:
+                st.plotly_chart(_groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
+                                use_container_width=True)
+            elif name.startswith("failrate") and "fail_rate" in cols and len(d) > 1:
+                st.plotly_chart(_failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
+                                use_container_width=True)
+
+
+def _render_explore_tables_legacy(uniq: list[Path]) -> None:
+    """Fallback when plotly/viz is unavailable: the original bar-chart rendering."""
+    st.markdown("#### Data tables")
     for path in uniq:
         try:
             df = pd.read_csv(path)
@@ -511,8 +1433,6 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
                 st.bar_chart(df, x=x, y=y, height=260)
             except Exception:
                 st.dataframe(df, width="stretch", height=240)
-        if full:
-            st.dataframe(df, width="stretch", height=240)
 
 
 def _render_header(root: Path, turn: dict[str, Any], report: dict[str, Any]) -> None:
@@ -608,15 +1528,18 @@ def _render_overview(report: dict[str, Any]) -> None:
                 if not isinstance(signal, dict):
                     st.markdown(f"- {signal}")
                     continue
-                name = str(signal.get("name") or "Signal")
+                raw = str(signal.get("name") or "Signal")
+                name = str(signal.get("display_name") or display_name(raw))
                 rationale = str(signal.get("rationale") or "")
                 suggested = str(signal.get("suggested_test") or "")
+                raw = raw_hint(raw)
                 st.markdown(
                     f"""
                     <div class="ev-signal">
                       <div class="ev-signal-title">{_html_escape(name)}</div>
                       <div class="ev-signal-body">{_html_escape(rationale)}</div>
                       <div class="ev-signal-test">{_html_escape(suggested)}</div>
+                      <div class="ev-signal-test">{_html_escape(raw)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -655,7 +1578,8 @@ def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
 
 
 def _render_chart_card(chart: dict[str, Any], turn_dir: Path) -> None:
-    title = str(chart.get("title") or chart.get("name") or "Chart")
+    title = str(chart.get("display_name") or chart.get("title") or chart.get("name") or "Chart")
+    title = display_name(title)
     df = _table_to_dataframe(chart.get("data"), turn_dir)
 
     st.markdown(f'<div class="ev-card-title">{_html_escape(title)}</div>', unsafe_allow_html=True)
@@ -938,6 +1862,154 @@ def _inject_css() -> None:
           color: var(--ev-muted);
           font-size: 0.78rem;
         }
+        .ev-brief-grid {
+          display: grid;
+          gap: 0.75rem;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          margin-bottom: 0.75rem;
+        }
+        .ev-brief-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          min-height: 7rem;
+          padding: 0.9rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-brief-label {
+          color: var(--ev-accent);
+          font-size: 0.75rem;
+          font-weight: 760;
+          margin-bottom: 0.45rem;
+          text-transform: uppercase;
+        }
+        .ev-brief-value {
+          color: var(--ev-text);
+          font-size: 0.92rem;
+          line-height: 1.45;
+        }
+        .ev-report-answer {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-accent);
+          border-radius: 8px;
+          margin-bottom: 0.9rem;
+          padding: 1rem 1.1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-report-answer-text {
+          color: var(--ev-text);
+          font-size: 1rem;
+          line-height: 1.45;
+        }
+        .ev-stage-map {
+          display: grid;
+          gap: 0.55rem;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          margin: 0.2rem 0 0.95rem;
+        }
+        .ev-stage-card {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          min-height: 7.3rem;
+          padding: 0.75rem;
+        }
+        .ev-stage-active {
+          border-color: #8ec8d2;
+          box-shadow: inset 0 0 0 2px var(--ev-accent-soft);
+        }
+        .ev-stage-id {
+          color: var(--ev-accent);
+          font-size: 0.78rem;
+          font-weight: 800;
+          margin-bottom: 0.25rem;
+        }
+        .ev-stage-name {
+          color: var(--ev-text);
+          font-size: 0.86rem;
+          font-weight: 760;
+          line-height: 1.25;
+          margin-bottom: 0.35rem;
+        }
+        .ev-stage-question {
+          color: var(--ev-muted);
+          font-size: 0.76rem;
+          line-height: 1.3;
+        }
+        .ev-analysis-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          min-height: 9.2rem;
+          padding: 0.95rem 1rem;
+          margin-bottom: 0.8rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-analysis-method,
+        .ev-analysis-evidence,
+        .ev-analysis-takeaway {
+          color: #344054;
+          font-size: 0.9rem;
+          line-height: 1.45;
+          margin-top: 0.35rem;
+        }
+        .ev-analysis-takeaway {
+          border-left: 3px solid var(--ev-ok);
+          background: #f6fef9;
+          padding: 0.45rem 0.6rem;
+        }
+        .ev-storyboard-card {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-ok);
+          border-radius: 8px;
+          margin: 0.35rem 0 0.85rem;
+          padding: 0.9rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-storyboard-title {
+          color: var(--ev-text);
+          font-size: 1rem;
+          font-weight: 760;
+          margin-bottom: 0.35rem;
+        }
+        .ev-storyboard-summary {
+          color: #344054;
+          font-size: 0.92rem;
+          line-height: 1.45;
+        }
+        .ev-claim-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          margin: 0.7rem 0 0.35rem;
+          padding: 0.9rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-claim-supported {
+          border-left: 4px solid var(--ev-ok);
+        }
+        .ev-claim-inconclusive,
+        .ev-claim-descriptive {
+          border-left: 4px solid #98a2b3;
+        }
+        .ev-claim-refuted {
+          border-left: 4px solid var(--ev-fail);
+        }
+        .ev-claim-top {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.4rem;
+          margin-bottom: 0.5rem;
+        }
+        .ev-claim-text {
+          color: var(--ev-text);
+          font-size: 0.98rem;
+          font-weight: 760;
+          line-height: 1.35;
+          margin-bottom: 0.4rem;
+        }
         .ev-note {
           align-items: flex-start;
           background: var(--ev-panel);
@@ -1021,6 +2093,9 @@ def _inject_css() -> None:
           }
           .ev-header-right {
             justify-content: flex-start;
+          }
+          .ev-brief-grid {
+            grid-template-columns: 1fr;
           }
         }
         </style>

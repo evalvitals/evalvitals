@@ -26,6 +26,37 @@ def _build_loop_run(root):
     )
     (fused / "fused_report.json").write_text(json.dumps({
         "observations": ["FAIL skews to small objects"],
+        "visual_plan": [{
+            "name": "fail_by_signal",
+            "question": "Does the signal alter failure rate?",
+            "data_shape": "categorical-vs-binary",
+            "plot_kind": "bar",
+            "fallback_kind": "bar",
+            "required_columns": ["signal_value", "label"],
+            "rationale": "A fail-rate bar is readable for two signal states.",
+        }],
+        "chart_readings": [{
+            "chart": "Fail rate by signal",
+            "reading": "The present state has a lower failure rate in this toy fixture.",
+            "do_not_infer": "This chart alone is not causal.",
+        }],
+        "dashboard_storyboard": [{
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": "Agent-authored dashboard narrative for this run.",
+            "items": ["Method: held-out comparison", "Takeaway: inspect the signal"],
+            "artifact_refs": ["candidate_signals", "charts"],
+        }],
+        "claims": [{
+            "id": "A1",
+            "text": "The signal is lower risk when present.",
+            "status": "descriptive",
+            "evidence_ids": ["chart:fail_rate_by_signal"],
+            "interpretation": "Use as an exploratory reading.",
+            "do_not_infer": "No causal claim.",
+        }],
+        "critique": ["toy fixture; no causal interpretation"],
         "caveats": ["probe1 ~ label (circular)"],
         "charts": [{"name": "c", "kind": "bar", "data": "tables/fail_by_signal.csv",
                     "x": "signal_value", "y": "fail_rate", "title": "Fail rate by signal"}],
@@ -70,16 +101,27 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     at = _run_app(tmp_path)
 
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["📊 Analysis", "🔬 Diagnosis flow", "🗂 Tables"]
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Hypotheses & Artifacts",
+    ]
 
     # e-BH adjudication metrics surfaced as a metric row.
     metric_labels = {m.label for m in at.metric}
-    assert {"Method", "Signals tested", "Rejected (real)", "Split"} <= metric_labels
+    assert {"Method", "Signals tested", "Rejected", "Split"} <= metric_labels
     vals = {m.label: m.value for m in at.metric}
-    assert vals["Rejected (real)"] in ("2", 2)
+    assert vals["Rejected"] in ("2", 2)
 
     # The candidate-signals table rendered (a dataframe).
     assert len(at.dataframe) >= 1
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Problem Setting" in blob
+    assert "Analysis takeaway" in blob
+    assert "Method:" in blob
+    assert "Takeaway:" in blob
+    assert "Agent-authored dashboard narrative for this run." in blob
+    assert "M1" in blob and "M2" in blob and "M3" in blob and "M5" in blob
 
 
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
@@ -100,14 +142,19 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     at = _run_app(tmp_path)
     assert not at.exception
     heads = [m.value for m in at.markdown if isinstance(m.value, str) and m.value.startswith("###")]
-    # the three narrative sections are present
-    assert any("What we analysed" in h for h in heads)
-    assert any("What we found" in h for h in heads)
-    assert any("Hypotheses formed" in h for h in heads)
-    # the hypothesis statement + its M5 verdict appear somewhere in the page
+    # the three-panel narrative sections are present
+    assert any("Problem Setting" in h for h in heads)
+    assert any("Analysis" in h for h in heads)
+    assert any("Hypotheses & Decision" in h for h in heads)
     blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Measurement" in blob
+    assert "Confirmatory analysis" in blob
+    assert "Hypothesis generation" in blob
+    # the hypothesis statement + its M5 verdict appear somewhere in the page
     assert "language-prior hallucination" in blob
     assert "supported" in blob.lower()
+    assert any(e.label == "Why these charts were chosen" for e in at.expander)
+    assert len(at.dataframe) >= 2  # signal table + visual-plan table
 
 
 def test_hypotheses_join_with_m5_outcomes():
@@ -124,48 +171,6 @@ def test_hypotheses_join_with_m5_outcomes():
     assert [h["statement"] for h in out] == ["H one", "H two"]
     assert len(out[0]["tests"]) == 2          # joined both tests by statement
     assert out[1]["tests"] == []              # H two was never tested
-
-
-def _build_loop_run_with_records(root):
-    """A loop run that also ships the explorer's per-case records.json, so the
-    dashboard can draw the plotly violin/scatter distributions."""
-    _build_loop_run(root)
-    sandbox = root / "fused" / "sandbox"
-    rows = []
-    for i in range(15):
-        rows.append({"case_id": f"f{i}", "label": "fail", "attn": 0.7 + i * 0.01, "probe": 1})
-    for i in range(40):
-        rows.append({"case_id": f"p{i}", "label": "pass", "attn": 0.1 + i * 0.005, "probe": 0})
-    (sandbox / "records.json").write_text(json.dumps(rows), encoding="utf-8")
-    return root
-
-
-def test_loop_dashboard_renders_per_case_distributions(tmp_path):
-    pytest.importorskip("plotly")
-    _build_loop_run_with_records(tmp_path)
-    at = _run_app(tmp_path)
-    assert not at.exception
-    blob = " ".join(str(m.value) for m in at.markdown)
-    assert "Per-case distributions" in blob   # the records path executed
-
-
-def test_load_records_reads_per_case_table(tmp_path):
-    from evalvitals.analysis.dashboard_app import _load_records
-
-    assert _load_records(tmp_path) is None            # nothing there yet
-    _build_loop_run_with_records(tmp_path)
-    df = _load_records(tmp_path / "fused")
-    assert df is not None
-    assert len(df) == 55 and set(df["label"]) == {"fail", "pass"}
-
-
-def test_render_signal_effects_falls_back_without_plotly(monkeypatch):
-    # With plotly unavailable the forest renderer degrades to the matplotlib bar.
-    import evalvitals.analysis.dashboard_app as app
-    monkeypatch.setattr(app, "_VIZ_TRIED", True, raising=False)
-    monkeypatch.setattr(app, "_VIZ_CACHE", None, raising=False)
-    fig = app._signal_effect_figure([{"name": "a", "effect": 0.5, "reject": True}])
-    assert fig is not None
 
 
 def test_signals_dataframe_and_effect_figure_helpers():
