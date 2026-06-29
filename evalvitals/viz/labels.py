@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 DISPLAY_NAMES = {
-    "generated_probe1_false_detection": "Label audit: probe false-detection flag",
-    "probe1_false_detection": "Label audit: probe false-detection flag",
+    "generated_probe1_false_detection": "Sanity check: probe false-detection flag",
+    "probe1_false_detection": "Sanity check: probe false-detection flag",
     "probe1_positive": "Probe says object is present",
     "relative_attention_focus_share": "Attention focus share",
     "relative_attention_max_relative_weight": "Maximum relative attention",
@@ -15,8 +15,8 @@ DISPLAY_NAMES = {
 }
 
 COMPACT_NAMES = {
-    "generated_probe1_false_detection": "Label audit",
-    "probe1_false_detection": "Label audit",
+    "generated_probe1_false_detection": "Sanity check",
+    "probe1_false_detection": "Sanity check",
     "probe1_positive": "Probe positive",
     "relative_attention_focus_share": "Attention focus",
     "relative_attention_max_relative_weight": "Max attention",
@@ -57,7 +57,7 @@ def display_name(value: Any, *, compact: bool = False) -> str:
             return phrase + display_name(suffix, compact=compact)
 
     if "false_detection" in base:
-        return "Label audit: false-detection flag" if not compact else "Label audit"
+        return "Sanity check: false-detection flag" if not compact else "Sanity check"
     if base.startswith("generated_"):
         return display_name(base.removeprefix("generated_"), compact=compact)
     if base.startswith("probe") and "positive" in base:
@@ -70,4 +70,3 @@ def display_name(value: Any, *, compact: bool = False) -> str:
 def raw_hint(value: Any) -> str:
     text = raw_name(value)
     return f"Raw field: {text}" if text else ""
-

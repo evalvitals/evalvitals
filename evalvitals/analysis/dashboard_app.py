@@ -44,7 +44,7 @@ def main() -> None:
     root = Path(session["root"])
     runs = session["runs"]
 
-    st.set_page_config(page_title="EvalVitals", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="EvalVitals", layout="wide", initial_sidebar_state="collapsed")
     _inject_css()
     _viz_ready()
 
@@ -71,7 +71,7 @@ def main() -> None:
         "3 Hypotheses & Artifacts",
     ])
     with setting:
-        _render_problem_setting(root, report, story=None)
+        _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
     with analysis:
         _render_standalone_analysis(report, turn_dir, root)
     with hypotheses:
@@ -144,7 +144,7 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
         "3 Hypotheses & Artifacts",
     ])
     with setting:
-        _render_problem_setting(root, explore_report or {}, story=story)
+        _render_problem_setting(root, explore_report or {}, story=story, artifact_dir=explore_dir)
     with analysis:
         _render_loop_analysis_panel(story, explore_report, explore_dir, root)
     with hypotheses:
@@ -181,6 +181,7 @@ def _render_problem_setting(
     report: dict[str, Any] | None,
     *,
     story: dict[str, Any] | None,
+    artifact_dir: Path | None = None,
 ) -> None:
     """Panel 1: orient the user before any statistical claims."""
     report = report or {}
@@ -217,25 +218,36 @@ def _render_problem_setting(
     columns = profile.get("columns") or {}
     if n_features is None and isinstance(columns, dict):
         n_features = len(columns)
+    split = report.get("split") or {}
+    if n_cases is None:
+        n_cases = split.get("n_total")
+    n_explore = split.get("n_explore")
+    n_confirm = split.get("n_confirm")
+    if n_fail is None or n_pass is None:
+        cb = _class_balance_from_report(report, artifact_dir)
+        if cb:
+            n_fail = cb.get("FAIL", n_fail)
+            n_pass = cb.get("PASS", n_pass)
 
     st.markdown("### Problem Setting")
     _render_stage_map(active={"M1", "M2"} if not story else {"M1"})
     _render_storyboard_panel(storyboard, "problem_setting")
-    st.markdown(
-        f"""
-        <div class="ev-report-answer">
-          <div class="ev-brief-label">User question</div>
-          <div class="ev-report-answer-text">{_html_escape(question)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if not _has_storyboard_panel(storyboard, "problem_setting"):
+        st.markdown(
+            f"""
+            <div class="ev-report-answer">
+              <div class="ev-brief-label">User question</div>
+              <div class="ev-report-answer-text">{_html_escape(question)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     cols = st.columns(5)
     metrics = [
         ("Cases", n_cases, "rows/cases loaded"),
-        ("FAIL", n_fail, "failure cases"),
-        ("PASS", n_pass, "passing cases"),
+        ("Explore", n_explore, "agent discovery split"),
+        ("Confirm", n_confirm, "held-out confirmation split"),
         ("Signals", len(signals) or n_features, "candidate/features"),
         ("Charts", len(charts) + len(report.get("plots") or []), "analysis visuals"),
     ]
@@ -245,6 +257,22 @@ def _render_problem_setting(
     c1, c2 = st.columns([1.15, 1], gap="large")
     with c1:
         st.markdown("#### What data was provided")
+        if n_fail is not None or n_pass is not None:
+            st.markdown(
+                f"""
+                <div class="ev-brief-grid ev-brief-grid-two">
+                  <div class="ev-brief-card">
+                    <div class="ev-brief-label">FAIL cases</div>
+                    <div class="ev-metric-value">{_html_escape(_format_int(n_fail))}</div>
+                  </div>
+                  <div class="ev-brief-card">
+                    <div class="ev-brief-label">PASS cases</div>
+                    <div class="ev-metric-value">{_html_escape(_format_int(n_pass))}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         if matrix is not None and not matrix.empty:
             fields = [
                 c for c in matrix.columns
@@ -299,23 +327,46 @@ def _render_problem_setting(
 
 
 def _render_stage_map(*, active: set[str]) -> None:
-    """Compact map of what M1-M5 mean and which stage this panel is showing."""
-    cards = []
+    """Small stage strip: context, not content."""
+    chips = []
     for spec in stage_specs_as_dicts():
-        cls = "ev-stage-card ev-stage-active" if spec["id"] in active else "ev-stage-card"
-        cards.append(
-            f"""
-            <div class="{cls}">
-              <div class="ev-stage-id">{_html_escape(spec["id"])}</div>
-              <div class="ev-stage-name">{_html_escape(spec["name"])}</div>
-              <div class="ev-stage-question">{_html_escape(spec["question"])}</div>
-            </div>
-            """
+        cls = "ev-stage-chip ev-stage-active" if spec["id"] in active else "ev-stage-chip"
+        chips.append(
+            f'<span class="{cls}"><b>{_html_escape(spec["id"])}</b> '
+            f'{_html_escape(spec["name"])}</span>'
         )
-    st.markdown(
-        '<div class="ev-stage-map">' + "\n".join(cards) + "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="ev-stage-strip">' + "".join(chips) + "</div>", unsafe_allow_html=True)
+
+
+def _class_balance_from_report(
+    report: dict[str, Any] | None,
+    artifact_dir: Path | None,
+) -> dict[str, int]:
+    if not report or artifact_dir is None:
+        return {}
+    for chart in report.get("charts") or []:
+        if not isinstance(chart, dict):
+            continue
+        name = str(chart.get("name") or "").lower()
+        if "class_balance" not in name:
+            continue
+        df = _table_to_dataframe(chart.get("data"), artifact_dir)
+        if df is None or df.empty:
+            continue
+        cols = {c.lower(): c for c in df.columns}
+        outcome_col = cols.get("outcome") or df.columns[0]
+        count_col = cols.get("count")
+        if count_col is None:
+            continue
+        out: dict[str, int] = {}
+        for _, row in df.iterrows():
+            key = str(row[outcome_col]).upper()
+            try:
+                out[key] = int(row[count_col])
+            except Exception:
+                pass
+        return out
+    return {}
 
 
 def _storyboard_panels(
@@ -335,19 +386,23 @@ def _storyboard_panels(
     return []
 
 
+def _has_storyboard_panel(panels: list[dict[str, Any]], panel_id: str) -> bool:
+    return any(str(p.get("id")) == panel_id for p in panels)
+
+
 def _render_storyboard_panel(panels: list[dict[str, Any]], panel_id: str) -> None:
     panel = next((p for p in panels if str(p.get("id")) == panel_id), None)
     if not panel:
         return
     stages = ", ".join(str(s) for s in (panel.get("stages") or []))
-    items = [str(x) for x in (panel.get("items") or []) if str(x).strip()]
+    items = [_humanize_storyboard_text(str(x)) for x in (panel.get("items") or []) if str(x).strip()]
     refs = [str(x) for x in (panel.get("artifact_refs") or []) if str(x).strip()]
     st.markdown(
         f"""
         <div class="ev-storyboard-card">
-          <div class="ev-brief-label">Agent-generated storyboard {("· " + _html_escape(stages)) if stages else ""}</div>
+          <div class="ev-brief-label">Run-specific narrative {("· " + _html_escape(stages)) if stages else ""}</div>
           <div class="ev-storyboard-title">{_html_escape(str(panel.get('title') or panel_id))}</div>
-          <div class="ev-storyboard-summary">{_html_escape(str(panel.get('summary') or ''))}</div>
+          <div class="ev-storyboard-summary">{_html_escape(_humanize_storyboard_text(str(panel.get('summary') or '')))}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -358,6 +413,22 @@ def _render_storyboard_panel(panels: list[dict[str, Any]], panel_id: str) -> Non
             st.markdown(f"- {item}")
     if refs:
         st.caption("Storyboard artifact refs: " + ", ".join(refs[:8]))
+
+
+def _humanize_storyboard_text(text: str) -> str:
+    replacements = {
+        "generated_probe1_false_detection": "sanity-check probe false-detection flag",
+        "probe1_false_detection": "sanity-check probe false-detection flag",
+        "relative_attention_max_relative_weight": "maximum relative attention",
+        "relative_attention_mean_relative_weight": "mean relative attention",
+        "relative_attention_focus_share": "attention focus share",
+        "low_focus_share": "low attention focus",
+        "probe1_positive": "probe positive flag",
+    }
+    out = str(text)
+    for raw, label in replacements.items():
+        out = out.replace(raw, label)
+    return out
 
 
 def _analysis_takeaway(report: dict[str, Any] | None, story: dict[str, Any] | None = None) -> str:
@@ -407,77 +478,62 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
 
     st.markdown("### Analysis")
     _render_stage_map(active={"M2"})
-    _render_storyboard_panel(storyboard, "analysis")
     st.markdown(
         f"""
         <div class="ev-report-answer">
-          <div class="ev-brief-label">Analysis takeaway</div>
+          <div class="ev-brief-label">Bottom line</div>
           <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(explore_report, story))}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    c1, c2 = st.columns(2, gap="large")
-    with c1:
-        _render_method_card(
-            "Confirmatory signal testing",
-            str(adj.get("method") or "held-out host adjudication"),
-            "Effect sizes, confidence intervals, and e-BH/FDR verdicts.",
-            f"{adj.get('n_signals_rejected', adj.get('n_rejected', 0))} of "
-            f"{adj.get('n_signals_tested', adj.get('n_in_family', len(signals)))} tested signals survived.",
-        )
-    with c2:
-        _render_method_card(
-            "Exploratory visualization",
-            "Agent-proposed chart plan; host-rendered deterministic specs.",
-            f"{len(readings)} chart reading(s), {len(explore_report.get('charts') or [])} chart spec(s).",
-            readings[0].get("reading", "Charts are leads for hypotheses, not causal proof.")
-            if readings else "No chart readings were recorded.",
-        )
-
-    if adj:
-        cols = st.columns(5)
-        cells = [
-            ("Method", adj.get("method", "-")),
-            ("alpha", adj.get("alpha", "-")),
-            ("Signals tested", adj.get("n_signals_tested", adj.get("n_in_family", "-"))),
-            ("Rejected", adj.get("n_signals_rejected", adj.get("n_rejected", "-"))),
-            ("Split", adj.get("split", "-")),
-        ]
-        for col, (label, value) in zip(cols, cells, strict=False):
-            col.metric(label, value)
-
     if signals:
-        st.markdown("#### Confirmatory evidence")
+        st.markdown("#### Evidence you can use")
+        _render_confirmatory_evidence(signals)
+
+    with st.expander("Method details and generated storyboard", expanded=False):
+        _render_storyboard_panel(storyboard, "analysis")
+        c1, c2 = st.columns(2, gap="large")
+        with c1:
+            _render_method_card(
+                "Confirmatory signal testing",
+                str(adj.get("method") or "held-out host adjudication"),
+                "Effect sizes, confidence intervals, and e-BH/FDR verdicts.",
+                f"{adj.get('n_signals_rejected', adj.get('n_rejected', 0))} of "
+                f"{adj.get('n_signals_tested', adj.get('n_in_family', len(signals)))} tested signals survived.",
+            )
+        with c2:
+            _render_method_card(
+                "Exploratory visualization",
+                "Agent-proposed chart plan; host-rendered deterministic specs.",
+                f"{len(readings)} chart reading(s), {len(explore_report.get('charts') or [])} chart spec(s).",
+                readings[0].get("reading", "Charts are leads for hypotheses, not causal proof.")
+                if readings else "No chart readings were recorded.",
+            )
+        if adj:
+            st.dataframe(pd.DataFrame([{
+                "method": adj.get("method", "-"),
+                "alpha": adj.get("alpha", "-"),
+                "signals tested": adj.get("n_signals_tested", adj.get("n_in_family", "-")),
+                "rejected": adj.get("n_signals_rejected", adj.get("n_rejected", "-")),
+                "split": adj.get("split", "-"),
+            }]), width="stretch", hide_index=True)
+
+    with st.expander("Charts, tables, and extra diagnostics", expanded=False):
+        _render_visual_plan(explore_report)
+        if readings:
+            rows = [{
+                "chart": display_name(r.get("chart")),
+                "takeaway": r.get("reading", ""),
+                "do not infer": r.get("do_not_infer", ""),
+            } for r in readings]
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
         if _viz_ready():
-            st.plotly_chart(viz.forest_effects(_forest_rows(signals)), width="stretch")
+            _render_explore_tables(explore_report, explore_dir, full=False, root=root)
         else:
-            fig = _signal_effect_figure(signals)
-            if fig is not None:
-                st.pyplot(fig, clear_figure=True)
-        st.caption(
-            "Green = held-out supported. Grey = inconclusive. Label-audit rows are "
-            "sanity checks and should not be read as root causes."
-        )
-        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
-
-    st.markdown("#### Charts and takeaways")
-    _render_visual_plan(explore_report)
-    if readings:
-        rows = [{
-            "chart": display_name(r.get("chart")),
-            "takeaway": r.get("reading", ""),
-            "do not infer": r.get("do_not_infer", ""),
-        } for r in readings]
-        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-
-    if _viz_ready():
-        _render_explore_tables(explore_report, explore_dir, full=False, root=root)
-    else:
-        _render_charts_and_plots(explore_report, explore_dir)
-
-    with st.expander("Additional statistical diagnostics", expanded=False):
+            _render_charts_and_plots(explore_report, explore_dir)
         _render_stat_panel(root)
 
 
@@ -628,7 +684,7 @@ def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None
         n_leaky = sum(1 for s in signals if _is_leaky_signal(s))
         if _viz_ready():
             st.plotly_chart(viz.forest_effects(_forest_rows(signals)),
-                            use_container_width=True)
+                            width="stretch")
             st.caption(
                 "Dot = effect size, bar = confidence interval, dotted line = 0 (no "
                 "association). Green survived e-BH (FDR); grey did not."
@@ -731,15 +787,15 @@ def _render_stat_panel(root) -> None:
                 viz.confusion_matrix(df["truth_yes"], df["model_yes"],
                                      pos_label="Yes (present)", neg_label="No (absent)",
                                      title="Model answer vs ground truth"),
-                use_container_width=True)
+                width="stretch")
             st.caption("FP = hallucination (said Yes, object absent); FN = miss.")
     if sigs:
         with (c2 if has_answers else c1):
             st.plotly_chart(viz.roc_curves(df, sigs, label_col="is_fail"),
-                            use_container_width=True)
+                            width="stretch")
             st.caption("How well each signal alone separates FAIL from PASS (AUC).")
         st.plotly_chart(viz.coef_plot(df, sigs, label_col="is_fail"),
-                        use_container_width=True)
+                        width="stretch")
         st.caption("Standardized univariate logistic coefficients (bootstrap 95% CI); "
                    "comparable across signals — CI crossing 0 ⇒ not significant.")
 
@@ -754,11 +810,11 @@ def _render_stat_panel(root) -> None:
                             format_func=lambda s: viz.short(s), key="stat_sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.plotly_chart(viz.violin_by_outcome(df, pick), use_container_width=True)
-            st.plotly_chart(viz.ecdf_by_outcome(df, pick), use_container_width=True)
+            st.plotly_chart(viz.violin_by_outcome(df, pick), width="stretch")
+            st.plotly_chart(viz.ecdf_by_outcome(df, pick), width="stretch")
         with d2:
-            st.plotly_chart(viz.kde_by_outcome(df, pick), use_container_width=True)
-            st.plotly_chart(viz.qq_normal(df, pick), use_container_width=True)
+            st.plotly_chart(viz.kde_by_outcome(df, pick), width="stretch")
+            st.plotly_chart(viz.qq_normal(df, pick), width="stretch")
 
     # ── Variable relationships ────────────────────────────────────────────
     rel_sigs = sigs + (["probe1_fd"] if "probe1_fd" in df.columns else [])
@@ -766,10 +822,10 @@ def _render_stat_panel(root) -> None:
         st.markdown("**Variable relationships**")
         r1, r2 = st.columns(2)
         with r1:
-            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), use_container_width=True)
+            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), width="stretch")
         with r2:
             if len(sigs) >= 2:
-                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), use_container_width=True)
+                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), width="stretch")
 
     # ── Decision analysis: which prompt strategies fix vs break cases ─────
     pareto_items = [
@@ -785,7 +841,7 @@ def _render_stat_panel(root) -> None:
             st.markdown("**Decision analysis**")
             st.plotly_chart(viz.pareto([lbl for lbl, _ in avail], vals,
                                        title="Prompt-strategy repairs vs regressions"),
-                            use_container_width=True)
+                            width="stretch")
             st.caption("How many cases each reprompting strategy fixed vs broke — "
                        "ranks whether prompt-level fixes are worth pursuing.")
 
@@ -949,7 +1005,8 @@ def _render_run_briefing(
         "No non-leaky signal survived held-out e-BH"
     )
     if leaky:
-        evidence += f"; {len(leaky)} label-like signal(s) demoted"
+        label = "sanity check" if len(leaky) == 1 else "sanity checks"
+        evidence += f"; {len(leaky)} {label} demoted"
     downstream = (
         f"{sum(len(d.get('hypotheses') or []) for d in diagnoses)} hypothesis(es), "
         f"{len(surgeries)} test/intervention event(s), {len(fixes)} fix event(s)"
@@ -1186,6 +1243,122 @@ def _forest_rows(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _render_confirmatory_evidence(signals: list[dict[str, Any]]) -> None:
+    rows = _evidence_rows(signals)
+    supported = [r for r in rows if r["decision"] == "Supported" and r["role"] == "diagnostic signal"]
+    audits = [r for r in rows if r["role"] == "sanity check"]
+    lead = supported[0] if supported else None
+
+    if lead:
+        summary = (
+            f"{lead['finding']} is the main usable finding. FAIL cases have higher values "
+            f"for this signal on the confirmation split (effect {lead['effect']}, CI {lead['ci']})."
+        )
+    elif audits:
+        summary = (
+            "Only sanity-check signals were supported. That validates the plumbing, "
+            "but it does not explain the model failure."
+        )
+    else:
+        summary = "No non-leaky signal was supported on the confirmation split."
+
+    st.markdown(
+        f"""
+        <div class="ev-evidence-summary">
+          <div class="ev-brief-label">How to read this evidence</div>
+          <div class="ev-storyboard-summary">{_html_escape(summary)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    for row in rows:
+        kind = "ev-evidence-audit" if row["role"] == "sanity check" else "ev-evidence-signal"
+        st.markdown(
+            f"""
+            <div class="ev-evidence-card {kind}">
+              <div class="ev-evidence-card-top">
+                <span class="ev-evidence-name">{_html_escape(row['finding'])}</span>
+                <span class="ev-evidence-pill">{_html_escape(row['decision'])}</span>
+              </div>
+              <div class="ev-evidence-meaning">{_html_escape(row['plain meaning'])}</div>
+              <div class="ev-evidence-meta">
+                <span>{_html_escape(row['role'])}</span>
+                <span>effect {_html_escape(row['effect'])}</span>
+                <span>CI {_html_escape(row['ci'])}</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.caption(
+        "Cards are computed by the host on the confirmation split. Positive effect means the "
+        "signal is more common/larger in FAIL than PASS; CI crossing 0 means weak evidence. "
+        "Sanity checks validate the pipeline and are not root-cause explanations."
+    )
+
+    with st.expander("Technical forest plot", expanded=False):
+        if _viz_ready():
+            st.plotly_chart(viz.forest_effects(_forest_rows(signals)), width="stretch")
+        else:
+            fig = _signal_effect_figure(signals)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+
+def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for s in signals:
+        leaky = _is_leaky_signal(s)
+        label = display_name(s.get("name") if leaky else (s.get("display_name") or s.get("name")))
+        reject = s.get("reject")
+        effect = _fmt_effect(s.get("effect"))
+        ci = _fmt_ci(s.get("ci"))
+        if leaky:
+            role = "sanity check"
+            if not label.lower().startswith("sanity check"):
+                label = f"Sanity check: {label[:1].lower()}{label[1:]}"
+            meaning = (
+                "This mostly mirrors the known FAIL/PASS label. It confirms the measurement "
+                "pipeline, but it should not be treated as an explanation."
+            )
+        else:
+            role = "diagnostic signal"
+            meaning = (
+                f"{label} separates FAIL from PASS in this run."
+                if reject is True else
+                f"{label} was tested but did not clearly separate FAIL from PASS."
+            )
+        decision = "Supported" if reject is True else ("Not supported" if reject is False else "Descriptive")
+        rows.append({
+            "finding": label,
+            "role": role,
+            "decision": decision,
+            "effect": effect,
+            "ci": ci,
+            "plain meaning": meaning,
+        })
+    rows.sort(key=lambda r: (r["role"] != "diagnostic signal", r["decision"] != "Supported", r["finding"]))
+    return rows
+
+
+def _fmt_effect(value: Any) -> str:
+    try:
+        return f"{float(value):+.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_ci(value: Any) -> str:
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return f"{float(value[0]):+.2f} to {float(value[1]):+.2f}"
+        except (TypeError, ValueError):
+            return "—"
+    return "—"
+
+
 def _signals_dataframe(signals: list[dict[str, Any]]):
     def _verdict(s):
         if _is_leaky_signal(s):
@@ -1351,7 +1524,7 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
             try:
                 d = pd.read_csv(path)
                 if {"outcome", "count"} <= {c.lower() for c in d.columns}:
-                    st.plotly_chart(_counts_bar_agg(d), use_container_width=True)
+                    st.plotly_chart(_counts_bar_agg(d), width="stretch")
             except Exception:
                 pass
             break
@@ -1359,10 +1532,10 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
     combined = False
     if matrix is not None and len(sigs) >= 1:
         combined = True
-        st.plotly_chart(viz.groupstats_strip(matrix, sigs), use_container_width=True)
+        st.plotly_chart(viz.groupstats_strip(matrix, sigs), width="stretch")
         st.caption("All signals' FAIL-vs-PASS group means on one standardized axis "
                    "(one row per signal — replaces a panel per signal).")
-        st.plotly_chart(viz.failrate_percentile(matrix, sigs), use_container_width=True)
+        st.plotly_chart(viz.failrate_percentile(matrix, sigs), width="stretch")
         st.caption("Each signal's fail-rate curve over its own percentile range, overlaid "
                    "on one axis.")
 
@@ -1390,7 +1563,7 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
             else:
                 d2 = d.rename(columns={"x": xs, "y": ys}) if xs and ys else d
                 st.plotly_chart(viz.joint_scatter(d2, xs or "x", ys or "y", outcome="outcome"),
-                                use_container_width=True)
+                                width="stretch")
             continue
         try:
             d = pd.read_csv(path)
@@ -1410,10 +1583,10 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
             cols = {c.lower() for c in d.columns}
             if name.startswith("groupstats") and {"outcome", "mean"} <= cols:
                 st.plotly_chart(_groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
-                                use_container_width=True)
+                                width="stretch")
             elif name.startswith("failrate") and "fail_rate" in cols and len(d) > 1:
                 st.plotly_chart(_failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
-                                use_container_width=True)
+                                width="stretch")
 
 
 def _render_explore_tables_legacy(uniq: list[Path]) -> None:
@@ -1768,7 +1941,7 @@ def _inject_css() -> None:
           color: var(--ev-muted);
         }
         .block-container {
-          padding-top: 1.4rem;
+          padding-top: 0.75rem;
           padding-bottom: 2.5rem;
           max-width: 1440px;
         }
@@ -1786,15 +1959,15 @@ def _inject_css() -> None:
           display: flex;
           justify-content: space-between;
           gap: 1rem;
-          padding: 1.15rem 1.25rem;
-          margin-bottom: 1rem;
+          padding: 0.75rem 1rem;
+          margin-bottom: 0.65rem;
           box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
         }
         .ev-header h1 {
           color: var(--ev-text);
-          font-size: 1.45rem;
+          font-size: 1.2rem;
           line-height: 1.25;
-          margin: 0.12rem 0 0.35rem;
+          margin: 0.08rem 0 0.25rem;
           font-weight: 760;
           letter-spacing: 0;
         }
@@ -1868,12 +2041,15 @@ def _inject_css() -> None:
           grid-template-columns: repeat(3, minmax(0, 1fr));
           margin-bottom: 0.75rem;
         }
+        .ev-brief-grid-two {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
         .ev-brief-card {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
           border-radius: 8px;
-          min-height: 7rem;
-          padding: 0.9rem 1rem;
+          min-height: 5rem;
+          padding: 0.75rem 0.85rem;
           box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
         }
         .ev-brief-label {
@@ -1912,8 +2088,9 @@ def _inject_css() -> None:
           background: #ffffff;
           border: 1px solid var(--ev-border);
           border-radius: 8px;
-          min-height: 7.3rem;
-          padding: 0.75rem;
+          min-height: 3.4rem;
+          padding: 0.55rem 0.65rem;
+          margin-bottom: 0.65rem;
         }
         .ev-stage-active {
           border-color: #8ec8d2;
@@ -1927,15 +2104,32 @@ def _inject_css() -> None:
         }
         .ev-stage-name {
           color: var(--ev-text);
-          font-size: 0.86rem;
+          font-size: 0.82rem;
           font-weight: 760;
           line-height: 1.25;
-          margin-bottom: 0.35rem;
         }
-        .ev-stage-question {
+        .ev-stage-strip {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.4rem;
+          margin: 0.1rem 0 0.75rem;
+        }
+        .ev-stage-chip {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-radius: 999px;
           color: var(--ev-muted);
-          font-size: 0.76rem;
-          line-height: 1.3;
+          display: inline-flex;
+          font-size: 0.78rem;
+          gap: 0.25rem;
+          line-height: 1.2;
+          padding: 0.32rem 0.65rem;
+          white-space: nowrap;
+        }
+        .ev-stage-chip.ev-stage-active {
+          background: var(--ev-accent-soft);
+          border-color: #8ec8d2;
+          color: var(--ev-accent);
         }
         .ev-analysis-card {
           background: var(--ev-panel);
@@ -1978,6 +2172,63 @@ def _inject_css() -> None:
           color: #344054;
           font-size: 0.92rem;
           line-height: 1.45;
+        }
+        .ev-evidence-summary {
+          background: #f6fef9;
+          border: 1px solid #abefc6;
+          border-left: 4px solid var(--ev-ok);
+          border-radius: 8px;
+          margin: 0.25rem 0 0.75rem;
+          padding: 0.85rem 1rem;
+        }
+        .ev-evidence-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-info);
+          border-radius: 8px;
+          margin: 0.55rem 0;
+          padding: 0.85rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-evidence-card.ev-evidence-audit {
+          border-left-color: #98a2b3;
+          background: #fcfcfd;
+        }
+        .ev-evidence-card-top {
+          align-items: center;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          justify-content: space-between;
+          margin-bottom: 0.35rem;
+        }
+        .ev-evidence-name {
+          color: var(--ev-text);
+          font-size: 0.98rem;
+          font-weight: 760;
+        }
+        .ev-evidence-pill {
+          background: #ecfdf3;
+          border: 1px solid #abefc6;
+          border-radius: 999px;
+          color: #067647;
+          font-size: 0.72rem;
+          font-weight: 760;
+          padding: 0.15rem 0.5rem;
+          text-transform: uppercase;
+        }
+        .ev-evidence-meaning {
+          color: #344054;
+          font-size: 0.92rem;
+          line-height: 1.45;
+          margin-bottom: 0.5rem;
+        }
+        .ev-evidence-meta {
+          color: var(--ev-muted);
+          display: flex;
+          flex-wrap: wrap;
+          font-size: 0.78rem;
+          gap: 0.45rem 0.75rem;
         }
         .ev-claim-card {
           background: var(--ev-panel);
@@ -2070,6 +2321,13 @@ def _inject_css() -> None:
           border: 1px solid var(--ev-border);
           border-radius: 8px;
           padding: 0.65rem 0.75rem;
+        }
+        div[data-testid="stMetricValue"] {
+          font-size: 1.45rem;
+          line-height: 1.15;
+        }
+        div[data-testid="stMetricLabel"] {
+          font-size: 0.78rem;
         }
         div[data-testid="stTabs"] button {
           font-weight: 680;

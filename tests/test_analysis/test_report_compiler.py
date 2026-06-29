@@ -39,10 +39,10 @@ def test_compile_diagnostic_report_is_claim_first():
     report = compile_diagnostic_report(story, _explore_report())
 
     assert report.answer.startswith("Low focus is associated with FAIL cases")
-    assert "label-like" in report.answer
+    assert "sanity check" in report.answer
     by_text = {c.text: c for c in report.claims}
     assert any("Low focus is associated" in text for text in by_text)
-    leaky = next(c for c in report.claims if "Label audit" in c.text)
+    leaky = next(c for c in report.claims if "Sanity check" in c.text)
     assert leaky.status == "descriptive"
     assert report.chart_readings == [{"chart": "C", "reading": "read"}]
     assert report.dashboard_storyboard[0]["summary"] == "Agent-owned panel text"

@@ -119,8 +119,8 @@ Discovery outputs:
 - add "critique": agent self-audit notes about leakage, small n, double-dipping,
   missingness, misleading plot choices, or alternative explanations.
 - Never use raw internal IDs like "generated_probe1_false_detection" as user-facing
-  chart titles or claim text. Use display names such as "Label audit: probe
-  false-detection flag", and demote label-like/probe-derived fields to audit
+  chart titles or claim text. Use display names such as "Sanity check: probe
+  false-detection flag", and demote probe-derived fields to sanity-check
   evidence rather than explanatory findings.
 - PREFERRED: for any composite / threshold / interaction signal that is a
   DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
