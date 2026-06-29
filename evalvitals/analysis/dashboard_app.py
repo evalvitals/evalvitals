@@ -11,6 +11,30 @@ import streamlit as st
 
 from evalvitals.analysis.dashboard import load_run
 
+# Eval-chart-style house theme (FAIL-red / PASS-slate palette, distribution-first
+# chart builders, short names + number/bin formatting). See eval_viz_theme.py and
+# the eval-chart-style SKILL for the chart-type policy this enforces.
+try:
+    from evalvitals.analysis import eval_viz_theme as viz
+except Exception:  # plotly missing or import error — degrade to legacy rendering
+    viz = None
+
+try:
+    from evalvitals.analysis.eval_case_matrix import load_case_matrix, continuous_signals
+except Exception:
+    load_case_matrix = None
+    continuous_signals = None
+
+
+def _viz_ready() -> bool:
+    """Register the plotly template once per session; report whether viz is usable."""
+    if viz is None:
+        return False
+    if not st.session_state.get("_viz_applied"):
+        viz.apply()
+        st.session_state["_viz_applied"] = True
+    return True
+
 
 def main() -> None:
     run_arg = sys.argv[1] if len(sys.argv) > 1 else "."
@@ -20,6 +44,7 @@ def main() -> None:
 
     st.set_page_config(page_title="EvalVitals", layout="wide", initial_sidebar_state="expanded")
     _inject_css()
+    _viz_ready()
 
     selected = _render_sidebar(root, session)
 
@@ -104,7 +129,7 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
 
     analysis, flow, tables = st.tabs(["📊 Analysis", "🔬 Diagnosis flow", "🗂 Tables"])
     with analysis:
-        _render_loop_analysis(story, explore_report, explore_dir)
+        _render_loop_analysis(story, explore_report, explore_dir, root)
     with flow:
         _render_loop_flow(story, explore_report, explore_dir)
     with tables:
@@ -136,7 +161,7 @@ def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _render_loop_analysis(story, explore_report, explore_dir) -> None:
+def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None:
     """A connected diagnostic report: what was analysed -> what was found ->
     therefore which hypotheses were formed (each linked to its evidence + test)."""
     analyses = story.get("analyses") or []
@@ -170,7 +195,7 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
     if adj:
         st.caption(
             "Each candidate signal was confirmed on a HELD-OUT split with e-BH "
-            "(FDR-controlled). Green bars below survived; grey did not."
+            "(FDR-controlled). In the chart below, green survived; grey did not."
         )
         cols = st.columns(5)
         cells = [
@@ -185,10 +210,26 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
 
     if signals:
         st.markdown("**Signal effect sizes (failure association)**")
-        fig = _signal_effect_figure(signals)
-        if fig is not None:
-            st.pyplot(fig, clear_figure=True)
+        n_leaky = sum(1 for s in signals if _is_leaky_signal(s))
+        if _viz_ready():
+            st.plotly_chart(viz.forest_effects(_forest_rows(signals)),
+                            use_container_width=True)
+            st.caption(
+                "Dot = effect size, bar = confidence interval, dotted line = 0 (no "
+                "association). Green survived e-BH (FDR); grey did not."
+                + (" Greyed/leaky signals are the outcome re-measured (perfect "
+                   "separation) — confirmatory, not causal, so they are demoted "
+                   "from the ranking." if n_leaky else "")
+            )
+        else:
+            fig = _signal_effect_figure(signals)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
         st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+    # Statistical deep-dive built from the per-case matrix (model eval, distribution
+    # diagnostics, relationships, decision) — replaces the 2-group descriptive view.
+    _render_stat_panel(root)
 
     # The analyst's reasoning chain + statistical-test summaries, when logged.
     evidence = next((a.get("evidence_chain") for a in analyses if a.get("evidence_chain")), None)
@@ -205,10 +246,21 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
         for s in stat_summaries[:10]:
             st.markdown(f"- {s}")
 
-    if charts or plots:
+    # Primary: themed, distribution-first charts rebuilt from the explorer's data
+    # tables (counts→bar, two-signal→scatter, fail-rate→binned curve, group
+    # stats→dumbbell). Replaces the explorer's default bar PNGs as the lead view.
+    if _viz_ready():
         st.markdown("**Exploratory charts**")
-        _render_charts_and_plots(explore_report, explore_dir)
-    _render_explore_tables(explore_report, explore_dir, full=False)
+        _render_explore_tables(explore_report, explore_dir, full=False, root=root)
+        if charts or plots:
+            with st.expander("Explorer's original figures (as rendered during Step 1)",
+                             expanded=False):
+                _render_charts_and_plots(explore_report, explore_dir)
+    else:
+        if charts or plots:
+            st.markdown("**Exploratory charts**")
+            _render_charts_and_plots(explore_report, explore_dir)
+        _render_explore_tables(explore_report, explore_dir, full=False)
 
     # ── ③ Hypotheses formed ───────────────────────────────────────────────
     st.markdown("### ③ Hypotheses formed")
@@ -229,6 +281,98 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
             "`--explore-report outputs/fused/fused_report.json`, or point the "
             "dashboard at an explore-output directory."
         )
+
+
+def _render_stat_panel(root) -> None:
+    """Inferential / distributional panel built from the per-case feature matrix
+    reconstructed from m1_state.pkl: model-evaluation, distribution diagnostics,
+    variable relationships, and decision analysis. Silent if data unavailable."""
+    if root is None or not _viz_ready() or load_case_matrix is None:
+        return
+    try:
+        df = load_case_matrix(root)
+    except Exception:
+        df = None
+    if df is None or df.empty:
+        return
+    sigs = continuous_signals(df)
+
+    st.markdown("---")
+    st.markdown("#### 📈 Statistical analysis (per-case)")
+    cov = ", ".join(f"{s}: {int(df[s].notna().sum())}" for s in sigs) if sigs else "—"
+    st.caption(
+        f"Reconstructed from the frozen M1 state ({len(df)} cases). Continuous-signal "
+        f"coverage — {cov}. Charts below go beyond FAIL-vs-PASS means: discrimination "
+        f"(ROC/coef), error structure (confusion), distribution shape, and relationships."
+    )
+
+    # ── Model evaluation ──────────────────────────────────────────────────
+    st.markdown("**Model evaluation**")
+    c1, c2 = st.columns(2)
+    has_answers = df["model_yes"].notna().any() and df["truth_yes"].notna().any()
+    if has_answers:
+        with c1:
+            st.plotly_chart(
+                viz.confusion_matrix(df["truth_yes"], df["model_yes"],
+                                     pos_label="Yes (present)", neg_label="No (absent)",
+                                     title="Model answer vs ground truth"),
+                use_container_width=True)
+            st.caption("FP = hallucination (said Yes, object absent); FN = miss.")
+    if sigs:
+        with (c2 if has_answers else c1):
+            st.plotly_chart(viz.roc_curves(df, sigs, label_col="is_fail"),
+                            use_container_width=True)
+            st.caption("How well each signal alone separates FAIL from PASS (AUC).")
+        st.plotly_chart(viz.coef_plot(df, sigs, label_col="is_fail"),
+                        use_container_width=True)
+        st.caption("Standardized univariate logistic coefficients (bootstrap 95% CI); "
+                   "comparable across signals — CI crossing 0 ⇒ not significant.")
+
+    # ── Distribution diagnostics (interactive signal picker) ──────────────
+    if sigs:
+        st.markdown("**Distribution diagnostics**")
+        # default to the most discriminative signal (highest |AUC-0.5|)
+        aucs = {s: abs(viz._roc(df[s].to_numpy(float), df["is_fail"].to_numpy(float))[2] - 0.5)
+                for s in sigs}
+        default = max(aucs, key=aucs.get)
+        pick = st.selectbox("signal", sigs, index=sigs.index(default),
+                            format_func=lambda s: viz.short(s), key="stat_sig")
+        d1, d2 = st.columns(2)
+        with d1:
+            st.plotly_chart(viz.violin_by_outcome(df, pick), use_container_width=True)
+            st.plotly_chart(viz.ecdf_by_outcome(df, pick), use_container_width=True)
+        with d2:
+            st.plotly_chart(viz.kde_by_outcome(df, pick), use_container_width=True)
+            st.plotly_chart(viz.qq_normal(df, pick), use_container_width=True)
+
+    # ── Variable relationships ────────────────────────────────────────────
+    rel_sigs = sigs + (["probe1_fd"] if "probe1_fd" in df.columns else [])
+    if len(rel_sigs) >= 2:
+        st.markdown("**Variable relationships**")
+        r1, r2 = st.columns(2)
+        with r1:
+            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), use_container_width=True)
+        with r2:
+            if len(sigs) >= 2:
+                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), use_container_width=True)
+
+    # ── Decision analysis: which prompt strategies fix vs break cases ─────
+    pareto_items = [
+        ("describe-first fixes", "pc_fixed_describe"),
+        ("sensitive fixes", "pc_fixed_sensitive"),
+        ("describe-first breaks", "pc_broken_describe"),
+        ("sensitive breaks", "pc_broken_sensitive"),
+    ]
+    avail = [(lbl, col) for lbl, col in pareto_items if col in df.columns]
+    if avail:
+        vals = [int(df[col].fillna(False).astype(bool).sum()) for _, col in avail]
+        if sum(vals) > 0:
+            st.markdown("**Decision analysis**")
+            st.plotly_chart(viz.pareto([lbl for lbl, _ in avail], vals,
+                                       title="Prompt-strategy repairs vs regressions"),
+                            use_container_width=True)
+            st.caption("How many cases each reprompting strategy fixed vs broke — "
+                       "ranks whether prompt-level fixes are worth pursuing.")
 
 
 def _render_hypothesis_card(h: dict[str, Any]) -> None:
@@ -344,18 +488,60 @@ def _signal_effect_figure(signals: list[dict[str, Any]]):
     return fig
 
 
+def _is_leaky_signal(s: dict[str, Any]) -> bool:
+    """Target leakage = the outcome re-measured. Signature: perfect separation
+    (effect ~1.0 with a zero-width CI), or a signal derived from the probe that
+    defines the failure label. Such a signal must never be ranked #1 (skill §4)."""
+    name = str(s.get("name", "")).lower()
+    if name.startswith("probe1") or "false_detection" in name:
+        return True
+    eff = s.get("effect")
+    ci = s.get("ci") or [None, None]
+    try:
+        lo, hi = float(ci[0]), float(ci[1])
+        if eff is not None and abs(float(eff)) >= 0.999 and (hi - lo) <= 1e-6:
+            return True
+    except (TypeError, ValueError, IndexError):
+        pass
+    return False
+
+
+def _forest_rows(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Adapt host signal dicts to eval_viz_theme.forest_effects row schema."""
+    rows = []
+    for s in signals:
+        if not isinstance(s.get("effect"), (int, float)):
+            continue
+        ci = s.get("ci") or [None, None]
+        rows.append({
+            "signal": str(s.get("name", "?")),
+            "effect": float(s["effect"]),
+            "ci_lo": ci[0] if isinstance(ci, (list, tuple)) and len(ci) == 2 else None,
+            "ci_hi": ci[1] if isinstance(ci, (list, tuple)) and len(ci) == 2 else None,
+            "significant": bool(s.get("reject")),
+            "leaky": _is_leaky_signal(s),
+        })
+    return rows
+
+
 def _signals_dataframe(signals: list[dict[str, Any]]):
     def _verdict(s):
+        if _is_leaky_signal(s):
+            return "leaky (re-measured label)"
         if s.get("reject") is True:
             return "REJECT H0"
         if s.get("reject") is False:
             return "inconclusive"
         return "descriptive"
+
+    def _fmt(x, kind):
+        return viz.fmt(x, kind) if viz is not None else x
+
     rows = [{
-        "signal": s.get("name"),
+        "signal": viz.short(s.get("name", "")) if viz is not None else s.get("name"),
         "source": s.get("source"),
-        "effect": s.get("effect"),
-        "e_value": s.get("e_value"),
+        "effect": _fmt(s.get("effect"), "effect"),
+        "e_value": _fmt(s.get("e_value"), "stat") if s.get("e_value") is not None else "—",
         "verdict": _verdict(s),
         "recipe": (s.get("recipe") or {}).get("expr") if isinstance(s.get("recipe"), dict) else None,
     } for s in signals]
@@ -366,14 +552,99 @@ def _explore_table_dirs(explore_dir: Path) -> list[Path]:
     return [d for d in (explore_dir / "tables", explore_dir / "sandbox" / "tables") if d.is_dir()]
 
 
-def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
-    """Surface the CSV tables the explorer wrote as charts (+ the table itself).
-    These are the actual data behind the analysis (e.g. fail rate by signal)."""
+def _scatter_axis_names(explore_report, csv_name: str) -> tuple[str | None, str | None]:
+    """Recover (x_signal, y_signal) for a scatter CSV from the report chart whose
+    title is '<xsig> vs <ysig> by outcome'. Returns (None, None) if not found."""
+    stem = csv_name.replace(".csv", "")
+    for c in (explore_report or {}).get("charts", []):
+        if not isinstance(c, dict):
+            continue
+        if c.get("name") == stem or str(c.get("data", "")).endswith(csv_name):
+            title = str(c.get("title", ""))
+            if " vs " in title:
+                left, _, right = title.partition(" vs ")
+                right = right.split(" by outcome")[0].strip()
+                return left.strip() or None, right or None
+    return None, None
+
+
+def _counts_bar_agg(df: pd.DataFrame):
+    """Class balance from an aggregated (outcome, count) table → a single slim
+    100%-stacked composition strip (not two fat bars for two numbers)."""
+    rowmap = {str(r["outcome"]).upper(): int(r["count"]) for _, r in df.iterrows()}
+    order = [g for g in ("FAIL", "PASS") if g in rowmap] or list(rowmap)
+    return viz.composition_bar(order, [rowmap[g] for g in order])
+
+
+def _groupstats_dumbbell(df: pd.DataFrame, signal: str):
+    """FAIL vs PASS group means as a dumbbell (not a two-bar). Only mean/median are
+    persisted, so spread cannot be shown — labelled honestly as means."""
+    import plotly.graph_objects as go
+    rowmap = {str(r["outcome"]).upper(): r for _, r in df.iterrows()}
+    fig = go.Figure()
+    present = [g for g in ("FAIL", "PASS") if g in rowmap]
+    if {"FAIL", "PASS"} <= set(rowmap):
+        fig.add_trace(go.Scatter(
+            x=[rowmap["FAIL"]["mean"], rowmap["PASS"]["mean"]], y=[signal, signal],
+            mode="lines", line=dict(color=viz.PALETTE["AXIS"], width=2),
+            showlegend=False, hoverinfo="skip"))
+    for g in present:
+        m = rowmap[g]
+        fig.add_trace(go.Scatter(
+            x=[m["mean"]], y=[signal], mode="markers+text",
+            marker=dict(color=viz.outcome_color(g), size=14),
+            text=[f"{g} {viz.fmt(m['mean'], 'val')}"],
+            textposition="top center", textfont=dict(size=11),
+            name=g, hovertext=f"{g}: mean={viz.fmt(m['mean'],'val')} median={viz.fmt(m.get('median'),'val')}",
+            hoverinfo="text"))
+    fig.update_layout(title=f"{viz.short(signal)} — group means (FAIL vs PASS)",
+                      xaxis_title=viz.short(signal), yaxis_title="", showlegend=False,
+                      height=180, yaxis=dict(showticklabels=False))
+    return fig
+
+
+def _failrate_scatter(df: pd.DataFrame, signal: str):
+    """Fail rate vs a binned signal: markers at bin midpoints, size ∝ n, with
+    human-readable bin labels — replaces the bar/line over machine bin edges."""
+    import re
+    import plotly.graph_objects as go
+    bincol = df.columns[0]
+    labels, mids, rates, ns = [], [], [], []
+    for _, r in df.iterrows():
+        nums = re.findall(r"-?\d+\.?\d*", str(r[bincol]))
+        if len(nums) >= 2:
+            lo, hi = float(nums[0]), float(nums[1])
+            labels.append(viz.human_bins([lo, hi])[0])
+            mids.append((lo + hi) / 2)
+        else:
+            labels.append(str(r[bincol]))
+            mids.append(len(mids))
+        rates.append(float(r.get("fail_rate", 0)))
+        ns.append(int(r.get("n", 0)) if pd.notna(r.get("n")) else 0)
+    sizes = [8 + 28 * (n / max(ns)) for n in ns] if ns and max(ns) else [10] * len(ns)
+    fig = go.Figure(go.Scatter(
+        x=mids, y=rates, mode="lines+markers+text",
+        line=dict(color=viz.PALETTE["FAIL"], width=2),
+        marker=dict(color=viz.PALETTE["FAIL"], size=sizes,
+                    line=dict(color="white", width=1)),
+        text=[f"n={n}" for n in ns], textposition="top center",
+        textfont=dict(size=10), hovertext=labels, hoverinfo="text+y"))
+    fig.update_layout(title=f"Fail rate vs {viz.short(signal)} (by bin; marker size ∝ n)",
+                      xaxis_title=viz.short(signal), yaxis_title="fail rate",
+                      yaxis=dict(range=[-0.05, 1.05]), height=320)
+    return fig
+
+
+def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None) -> None:
+    """Surface the CSV tables the explorer wrote. In the Analysis tab (full=False)
+    each table is shown as the chart its content calls for (counts→bar, two-signal
+    →scatter, fail-rate→binned curve, group stats→dumbbell), per the eval-chart-
+    style policy. In the Tables tab (full=True) they are sortable dataframes only —
+    one home per fact, no re-plotting."""
     explore_dir = Path(explore_dir)
     csvs: list[Path] = []
     for tdir in _explore_table_dirs(explore_dir):
         csvs.extend(sorted(tdir.glob("*.csv")))
-    # de-dup by name (tables/ vs sandbox/tables/)
     seen: set[str] = set()
     uniq = [p for p in csvs if not (p.name in seen or seen.add(p.name))]
 
@@ -382,8 +653,108 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
             st.caption("No CSV tables found for this run.")
         return
 
-    if not full:
+    # Tables tab: real sortable tables, no charts (don't re-plot Analysis findings).
+    if full:
         st.markdown("#### Data tables")
+        for path in uniq:
+            try:
+                df = pd.read_csv(path)
+            except Exception:
+                continue
+            st.markdown(f"**{path.name}**")
+            st.dataframe(df, width="stretch", height=240)
+        return
+
+    # Analysis tab: prefer ONE combined chart per family over per-signal small-
+    # multiples. When the per-case matrix is available, all signals' group means
+    # and fail-rate curves collapse into one chart each (skill §2).
+    if not _viz_ready():
+        return _render_explore_tables_legacy(uniq)
+
+    st.markdown("#### Data behind the analysis")
+
+    matrix = None
+    if root is not None and load_case_matrix is not None:
+        try:
+            matrix = load_case_matrix(root)
+        except Exception:
+            matrix = None
+    sigs = continuous_signals(matrix) if (matrix is not None and continuous_signals) else []
+
+    # Class balance — compact, unique (kept as-is).
+    for path in uniq:
+        if path.name.startswith("class_balance"):
+            try:
+                d = pd.read_csv(path)
+                if {"outcome", "count"} <= {c.lower() for c in d.columns}:
+                    st.plotly_chart(_counts_bar_agg(d), use_container_width=True)
+            except Exception:
+                pass
+            break
+
+    combined = False
+    if matrix is not None and len(sigs) >= 1:
+        combined = True
+        st.plotly_chart(viz.groupstats_strip(matrix, sigs), use_container_width=True)
+        st.caption("All signals' FAIL-vs-PASS group means on one standardized axis "
+                   "(one row per signal — replaces a panel per signal).")
+        st.plotly_chart(viz.failrate_percentile(matrix, sigs), use_container_width=True)
+        st.caption("Each signal's fail-rate curve over its own percentile range, overlaid "
+                   "on one axis.")
+
+    # Remaining CSVs: per-signal group-stats / fail-rate are now folded into the
+    # combined charts above; the binary scatter is degenerate (skill §0). Show only
+    # the genuinely tabular summaries (correlations, discriminators) as tables.
+    folded = ("groupstats", "failrate", "class_balance")
+    for path in uniq:
+        name = path.name
+        if name.startswith(folded):
+            continue
+        if name.startswith("scatter"):
+            # joint scatter with a binary axis just stacks points on two lines and
+            # overlaps the marginals — suppress (the quadrant/violin views cover it).
+            try:
+                d = pd.read_csv(path)
+            except Exception:
+                continue
+            xs, ys = _scatter_axis_names(explore_report, name)
+            binary_axis = any(d[c].nunique(dropna=True) <= 2 for c in ("x", "y") if c in d.columns)
+            if binary_axis:
+                lbl = f"{viz.short(xs) if xs else 'x'} vs {viz.short(ys) if ys else 'y'}"
+                st.caption(f"↳ scatter {lbl}: one axis is binary — suppressed "
+                           f"(see the quadrant / distribution views above).")
+            else:
+                d2 = d.rename(columns={"x": xs, "y": ys}) if xs and ys else d
+                st.plotly_chart(viz.joint_scatter(d2, xs or "x", ys or "y", outcome="outcome"),
+                                use_container_width=True)
+            continue
+        try:
+            d = pd.read_csv(path)
+        except Exception:
+            continue
+        st.markdown(f"**{name}**")
+        st.dataframe(d, width="stretch", height=200)
+
+    # No matrix → fall back to per-signal panels so nothing is lost.
+    if not combined:
+        for path in uniq:
+            name = path.name
+            try:
+                d = pd.read_csv(path)
+            except Exception:
+                continue
+            cols = {c.lower() for c in d.columns}
+            if name.startswith("groupstats") and {"outcome", "mean"} <= cols:
+                st.plotly_chart(_groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
+                                use_container_width=True)
+            elif name.startswith("failrate") and "fail_rate" in cols and len(d) > 1:
+                st.plotly_chart(_failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
+                                use_container_width=True)
+
+
+def _render_explore_tables_legacy(uniq: list[Path]) -> None:
+    """Fallback when plotly/viz is unavailable: the original bar-chart rendering."""
+    st.markdown("#### Data tables")
     for path in uniq:
         try:
             df = pd.read_csv(path)
@@ -398,8 +769,6 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool) -> None:
                 st.bar_chart(df, x=x, y=y, height=260)
             except Exception:
                 st.dataframe(df, width="stretch", height=240)
-        if full:
-            st.dataframe(df, width="stretch", height=240)
 
 
 def _render_header(root: Path, turn: dict[str, Any], report: dict[str, Any]) -> None:
