@@ -17,8 +17,6 @@ from evalvitals.analysis.fused_pipeline import (
     FusedSignal,
     run_fused_analysis,
 )
-from evalvitals.analysis.report_compiler import compile_diagnostic_report
-from evalvitals.analysis.report_model import Claim, DiagnosticReport, Evidence, ReportStep
 from evalvitals.analysis.operationalize import (
     RecipeError,
     SignalRecipe,
@@ -29,6 +27,8 @@ from evalvitals.analysis.operationalize import (
     per_case_to_records,
     safe_ident,
 )
+from evalvitals.analysis.report_compiler import compile_diagnostic_report
+from evalvitals.analysis.report_model import Claim, DiagnosticReport, Evidence, ReportStep
 from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.analysis.stats_tools import (
     STATS_TOOL_CATALOG,
