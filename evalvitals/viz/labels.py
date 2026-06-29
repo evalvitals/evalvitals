@@ -11,7 +11,8 @@ DISPLAY_NAMES = {
     "relative_attention_focus_share": "Attention focus share",
     "relative_attention_max_relative_weight": "Maximum relative attention",
     "relative_attention_mean_relative_weight": "Mean relative attention",
-    "low_focus_share": "Low attention focus",
+    "low_focus": "High attention focus",
+    "low_focus_share": "High attention focus",
 }
 
 COMPACT_NAMES = {
@@ -21,7 +22,8 @@ COMPACT_NAMES = {
     "relative_attention_focus_share": "Attention focus",
     "relative_attention_max_relative_weight": "Max attention",
     "relative_attention_mean_relative_weight": "Mean attention",
-    "low_focus_share": "Low focus",
+    "low_focus": "High focus",
+    "low_focus_share": "High focus",
 }
 
 PREFIXES = (
@@ -48,6 +50,9 @@ def display_name(value: Any, *, compact: bool = False) -> str:
     lookup = COMPACT_NAMES if compact else DISPLAY_NAMES
     if base in lookup:
         return lookup[base]
+    for raw, label in sorted(lookup.items(), key=lambda item: len(item[0]), reverse=True):
+        if raw in base:
+            base = base.replace(raw, label)
 
     for prefix, phrase in PREFIXES:
         if base == prefix:

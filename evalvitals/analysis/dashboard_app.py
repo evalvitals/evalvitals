@@ -422,7 +422,7 @@ def _humanize_storyboard_text(text: str) -> str:
         "relative_attention_max_relative_weight": "maximum relative attention",
         "relative_attention_mean_relative_weight": "mean relative attention",
         "relative_attention_focus_share": "attention focus share",
-        "low_focus_share": "low attention focus",
+        "low_focus_share": "high attention focus",
         "probe1_positive": "probe positive flag",
     }
     out = str(text)
@@ -490,7 +490,7 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
 
     if signals:
         st.markdown("#### Evidence you can use")
-        _render_confirmatory_evidence(signals)
+        _render_confirmatory_evidence(signals, explore_report, explore_dir)
 
     with st.expander("Method details and generated storyboard", expanded=False):
         _render_storyboard_panel(storyboard, "analysis")
@@ -520,7 +520,7 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
                 "split": adj.get("split", "-"),
             }]), width="stretch", hide_index=True)
 
-    with st.expander("Charts, tables, and extra diagnostics", expanded=False):
+    with st.expander("Extra diagnostics and raw tables", expanded=False):
         _render_visual_plan(explore_report)
         if readings:
             rows = [{
@@ -684,7 +684,7 @@ def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None
         n_leaky = sum(1 for s in signals if _is_leaky_signal(s))
         if _viz_ready():
             st.plotly_chart(viz.forest_effects(_forest_rows(signals)),
-                            width="stretch")
+                            width="stretch", key="diagnostic_forest_effects")
             st.caption(
                 "Dot = effect size, bar = confidence interval, dotted line = 0 (no "
                 "association). Green survived e-BH (FDR); grey did not."
@@ -787,15 +787,17 @@ def _render_stat_panel(root) -> None:
                 viz.confusion_matrix(df["truth_yes"], df["model_yes"],
                                      pos_label="Yes (present)", neg_label="No (absent)",
                                      title="Model answer vs ground truth"),
-                width="stretch")
+                width="stretch",
+                key="stat_confusion_matrix",
+            )
             st.caption("FP = hallucination (said Yes, object absent); FN = miss.")
     if sigs:
         with (c2 if has_answers else c1):
             st.plotly_chart(viz.roc_curves(df, sigs, label_col="is_fail"),
-                            width="stretch")
+                            width="stretch", key="stat_roc_curves")
             st.caption("How well each signal alone separates FAIL from PASS (AUC).")
         st.plotly_chart(viz.coef_plot(df, sigs, label_col="is_fail"),
-                        width="stretch")
+                        width="stretch", key="stat_coef_plot")
         st.caption("Standardized univariate logistic coefficients (bootstrap 95% CI); "
                    "comparable across signals — CI crossing 0 ⇒ not significant.")
 
@@ -810,11 +812,11 @@ def _render_stat_panel(root) -> None:
                             format_func=lambda s: viz.short(s), key="stat_sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.plotly_chart(viz.violin_by_outcome(df, pick), width="stretch")
-            st.plotly_chart(viz.ecdf_by_outcome(df, pick), width="stretch")
+            st.plotly_chart(viz.violin_by_outcome(df, pick), width="stretch", key=f"stat_violin_{pick}")
+            st.plotly_chart(viz.ecdf_by_outcome(df, pick), width="stretch", key=f"stat_ecdf_{pick}")
         with d2:
-            st.plotly_chart(viz.kde_by_outcome(df, pick), width="stretch")
-            st.plotly_chart(viz.qq_normal(df, pick), width="stretch")
+            st.plotly_chart(viz.kde_by_outcome(df, pick), width="stretch", key=f"stat_kde_{pick}")
+            st.plotly_chart(viz.qq_normal(df, pick), width="stretch", key=f"stat_qq_{pick}")
 
     # ── Variable relationships ────────────────────────────────────────────
     rel_sigs = sigs + (["probe1_fd"] if "probe1_fd" in df.columns else [])
@@ -822,10 +824,10 @@ def _render_stat_panel(root) -> None:
         st.markdown("**Variable relationships**")
         r1, r2 = st.columns(2)
         with r1:
-            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), width="stretch")
+            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), width="stretch", key="stat_corr_heatmap")
         with r2:
             if len(sigs) >= 2:
-                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), width="stretch")
+                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), width="stretch", key="stat_quadrant")
 
     # ── Decision analysis: which prompt strategies fix vs break cases ─────
     pareto_items = [
@@ -841,7 +843,7 @@ def _render_stat_panel(root) -> None:
             st.markdown("**Decision analysis**")
             st.plotly_chart(viz.pareto([lbl for lbl, _ in avail], vals,
                                        title="Prompt-strategy repairs vs regressions"),
-                            width="stretch")
+                            width="stretch", key="stat_prompt_pareto")
             st.caption("How many cases each reprompting strategy fixed vs broke — "
                        "ranks whether prompt-level fixes are worth pursuing.")
 
@@ -1243,7 +1245,11 @@ def _forest_rows(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def _render_confirmatory_evidence(signals: list[dict[str, Any]]) -> None:
+def _render_confirmatory_evidence(
+    signals: list[dict[str, Any]],
+    explore_report: dict[str, Any] | None = None,
+    explore_dir: Path | None = None,
+) -> None:
     rows = _evidence_rows(signals)
     supported = [r for r in rows if r["decision"] == "Supported" and r["role"] == "diagnostic signal"]
     audits = [r for r in rows if r["role"] == "sanity check"]
@@ -1272,7 +1278,33 @@ def _render_confirmatory_evidence(signals: list[dict[str, Any]]) -> None:
         unsafe_allow_html=True,
     )
 
+    signal_by_name = {str(s.get("name") or ""): s for s in signals}
     for row in rows:
+        signal = signal_by_name.get(row["raw_signal"], {})
+        _render_evidence_panel(row, signal, explore_report or {}, explore_dir)
+    st.caption(
+        "Cards are computed by the host on the confirmation split. Positive effect means the "
+        "signal is more common/larger in FAIL than PASS; CI crossing 0 means weak evidence. "
+        "Sanity checks validate the pipeline and are not root-cause explanations."
+    )
+
+    with st.expander("Technical forest plot", expanded=False):
+        if _viz_ready():
+            st.plotly_chart(viz.forest_effects(_forest_rows(signals)), width="stretch", key="analysis_forest_effects")
+        else:
+            fig = _signal_effect_figure(signals)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+
+def _render_evidence_panel(
+    row: dict[str, str],
+    signal: dict[str, Any],
+    explore_report: dict[str, Any],
+    explore_dir: Path | None,
+) -> None:
+    with st.container(border=True):
         kind = "ev-evidence-audit" if row["role"] == "sanity check" else "ev-evidence-signal"
         st.markdown(
             f"""
@@ -1291,20 +1323,23 @@ def _render_confirmatory_evidence(signals: list[dict[str, Any]]) -> None:
             """,
             unsafe_allow_html=True,
         )
-    st.caption(
-        "Cards are computed by the host on the confirmation split. Positive effect means the "
-        "signal is more common/larger in FAIL than PASS; CI crossing 0 means weak evidence. "
-        "Sanity checks validate the pipeline and are not root-cause explanations."
-    )
 
-    with st.expander("Technical forest plot", expanded=False):
-        if _viz_ready():
-            st.plotly_chart(viz.forest_effects(_forest_rows(signals)), width="stretch")
+        charts = _supporting_charts_for_signal(signal, explore_report)
+        reading = _supporting_reading_for_signal(signal, explore_report, charts)
+        st.markdown("**Supporting experiment**")
+        if charts and explore_dir is not None:
+            if reading:
+                st.caption(reading)
+            for idx, chart in enumerate(charts[:2]):
+                _render_chart_card(
+                    chart,
+                    explore_dir,
+                    heading_level="caption",
+                    prefer_rendered_artifact=False,
+                    key_prefix=f"evidence_{row['raw_signal']}_{idx}",
+                )
         else:
-            fig = _signal_effect_figure(signals)
-            if fig is not None:
-                st.pyplot(fig, clear_figure=True)
-        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+            st.caption("Held-out effect estimate and confidence interval above.")
 
 
 def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1333,6 +1368,7 @@ def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
         decision = "Supported" if reject is True else ("Not supported" if reject is False else "Descriptive")
         rows.append({
             "finding": label,
+            "raw_signal": str(s.get("name") or ""),
             "role": role,
             "decision": decision,
             "effect": effect,
@@ -1341,6 +1377,69 @@ def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
         })
     rows.sort(key=lambda r: (r["role"] != "diagnostic signal", r["decision"] != "Supported", r["finding"]))
     return rows
+
+
+def _supporting_charts_for_signal(signal: dict[str, Any], explore_report: dict[str, Any]) -> list[dict[str, Any]]:
+    tokens = _signal_tokens(signal)
+    if not tokens:
+        return []
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for idx, chart in enumerate(explore_report.get("charts") or []):
+        if not isinstance(chart, dict):
+            continue
+        blob = " ".join(str(chart.get(k, "")) for k in ("name", "title", "display_name", "data", "x", "y"))
+        score = sum(1 for token in tokens if token and token in blob)
+        if score:
+            priority = 0 if str(chart.get("name", "")).startswith("failrate_by_") else 1
+            scored.append((score * 10 - priority, idx, chart))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [chart for _, _, chart in scored]
+
+
+def _supporting_reading_for_signal(
+    signal: dict[str, Any],
+    explore_report: dict[str, Any],
+    charts: list[dict[str, Any]],
+) -> str:
+    chart_blobs = [
+        " ".join(str(c.get(k) or "").lower() for k in ("name", "title", "display_name"))
+        for c in charts
+    ]
+    tokens = _signal_tokens(signal)
+    for reading in explore_report.get("chart_readings") or []:
+        if not isinstance(reading, dict):
+            continue
+        chart = str(reading.get("chart") or "").lower()
+        text = str(reading.get("reading") or "").strip()
+        if not text:
+            continue
+        if any(token in chart or token in text for token in tokens):
+            return text
+        if any(chart and chart in blob for blob in chart_blobs):
+            return text
+    return "This chart is the visual check for the same signal tested in the card above."
+
+
+def _signal_tokens(signal: dict[str, Any]) -> list[str]:
+    import re
+
+    tokens: list[str] = []
+    for value in (signal.get("name"), signal.get("display_name")):
+        text = str(value or "").strip()
+        if text:
+            tokens.append(text)
+    recipe = signal.get("recipe")
+    if isinstance(recipe, dict):
+        expr = str(recipe.get("expr") or "")
+        tokens.extend(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expr))
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if token and token not in seen and token not in {"and", "or", "not"}:
+            seen.add(token)
+            out.append(token)
+    return out
+
 
 
 def _fmt_effect(value: Any) -> str:
@@ -1524,7 +1623,7 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
             try:
                 d = pd.read_csv(path)
                 if {"outcome", "count"} <= {c.lower() for c in d.columns}:
-                    st.plotly_chart(_counts_bar_agg(d), width="stretch")
+                    st.plotly_chart(_counts_bar_agg(d), width="stretch", key=f"explore_counts_{path.name}")
             except Exception:
                 pass
             break
@@ -1532,10 +1631,10 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
     combined = False
     if matrix is not None and len(sigs) >= 1:
         combined = True
-        st.plotly_chart(viz.groupstats_strip(matrix, sigs), width="stretch")
+        st.plotly_chart(viz.groupstats_strip(matrix, sigs), width="stretch", key="explore_groupstats_combined")
         st.caption("All signals' FAIL-vs-PASS group means on one standardized axis "
                    "(one row per signal — replaces a panel per signal).")
-        st.plotly_chart(viz.failrate_percentile(matrix, sigs), width="stretch")
+        st.plotly_chart(viz.failrate_percentile(matrix, sigs), width="stretch", key="explore_failrate_combined")
         st.caption("Each signal's fail-rate curve over its own percentile range, overlaid "
                    "on one axis.")
 
@@ -1562,8 +1661,11 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
                            f"(see the quadrant / distribution views above).")
             else:
                 d2 = d.rename(columns={"x": xs, "y": ys}) if xs and ys else d
-                st.plotly_chart(viz.joint_scatter(d2, xs or "x", ys or "y", outcome="outcome"),
-                                width="stretch")
+                st.plotly_chart(
+                    viz.joint_scatter(d2, xs or "x", ys or "y", outcome="outcome"),
+                    width="stretch",
+                    key=f"explore_scatter_{name}",
+                )
             continue
         try:
             d = pd.read_csv(path)
@@ -1582,11 +1684,17 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
                 continue
             cols = {c.lower() for c in d.columns}
             if name.startswith("groupstats") and {"outcome", "mean"} <= cols:
-                st.plotly_chart(_groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
-                                width="stretch")
+                st.plotly_chart(
+                    _groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
+                    width="stretch",
+                    key=f"explore_groupstats_{name}",
+                )
             elif name.startswith("failrate") and "fail_rate" in cols and len(d) > 1:
-                st.plotly_chart(_failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
-                                width="stretch")
+                st.plotly_chart(
+                    _failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
+                    width="stretch",
+                    key=f"explore_failrate_{name}",
+                )
 
 
 def _render_explore_tables_legacy(uniq: list[Path]) -> None:
@@ -1750,16 +1858,24 @@ def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
                 _render_plot_card(item, turn_dir)
 
 
-def _render_chart_card(chart: dict[str, Any], turn_dir: Path) -> None:
+def _render_chart_card(
+    chart: dict[str, Any],
+    turn_dir: Path,
+    *,
+    heading_level: str = "title",
+    prefer_rendered_artifact: bool = True,
+    key_prefix: str = "chart",
+) -> None:
     title = str(chart.get("display_name") or chart.get("title") or chart.get("name") or "Chart")
     title = display_name(title)
     df = _table_to_dataframe(chart.get("data"), turn_dir)
 
-    st.markdown(f'<div class="ev-card-title">{_html_escape(title)}</div>', unsafe_allow_html=True)
+    cls = "ev-card-title" if heading_level == "title" else "ev-card-subtitle"
+    st.markdown(f'<div class="{cls}">{_html_escape(title)}</div>', unsafe_allow_html=True)
 
     # Prefer the host-rendered PNG (deterministic, what M3 saw) when present.
     fig_path = chart.get("figure_path")
-    if fig_path:
+    if prefer_rendered_artifact and fig_path:
         p = _resolve_artifact_path(fig_path, turn_dir)
         if p.exists() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
             st.image(str(p), width="stretch")
@@ -1771,6 +1887,26 @@ def _render_chart_card(chart: dict[str, Any], turn_dir: Path) -> None:
         st.json(chart)
         return
 
+    if not prefer_rendered_artifact and _viz_ready():
+        signal = _signal_from_chart(chart)
+        try:
+            if signal and str(chart.get("name", "")).startswith("failrate_by_"):
+                st.plotly_chart(
+                    _failrate_scatter(df, signal),
+                    width="stretch",
+                    key=f"{key_prefix}_failrate_{chart.get('name', signal)}",
+                )
+                return
+            if signal and str(chart.get("name", "")).startswith("groupstats_"):
+                st.plotly_chart(
+                    _groupstats_dumbbell(df, signal),
+                    width="stretch",
+                    key=f"{key_prefix}_groupstats_{chart.get('name', signal)}",
+                )
+                return
+        except Exception:
+            pass
+
     x = chart.get("x")
     y = chart.get("y")
     if x in df.columns and y in df.columns:
@@ -1781,6 +1917,17 @@ def _render_chart_card(chart: dict[str, Any], turn_dir: Path) -> None:
             st.bar_chart(df, x=x, y=y, height=280)
     else:
         st.dataframe(df, width="stretch", height=280)
+
+
+def _signal_from_chart(chart: dict[str, Any]) -> str | None:
+    for value in (chart.get("name"), chart.get("data"), chart.get("x"), chart.get("title")):
+        text = str(value or "").rsplit("/", 1)[-1].removesuffix(".csv")
+        for prefix in ("failrate_by_", "groupstats_"):
+            if text.startswith(prefix):
+                return text[len(prefix):]
+        if text.endswith("_bin"):
+            return text.removesuffix("_bin")
+    return None
 
 
 def _render_plot_card(item: Any, turn_dir: Path) -> None:
@@ -2315,6 +2462,12 @@ def _inject_css() -> None:
           font-size: 0.95rem;
           font-weight: 740;
           margin: 0.3rem 0 0.45rem;
+        }
+        .ev-card-subtitle {
+          color: var(--ev-text);
+          font-size: 0.9rem;
+          font-weight: 720;
+          margin: 0.6rem 0 0.25rem;
         }
         div[data-testid="stMetric"] {
           background: var(--ev-panel);

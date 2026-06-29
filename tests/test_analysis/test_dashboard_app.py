@@ -107,13 +107,14 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
         "3 Hypotheses & Artifacts",
     ]
 
-    # The candidate-signals evidence table rendered (a dataframe).
+    # The analysis tab renders claim-first evidence panels with nearby support.
     assert len(at.dataframe) >= 1
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "Problem Setting" in blob
     assert "Bottom line" in blob
     assert "Evidence you can use" in blob
     assert "How to read this evidence" in blob
+    assert "Supporting experiment" in blob
     assert "Method:" in blob
     assert "Takeaway:" in blob
     assert "Agent-authored dashboard narrative for this run." in blob

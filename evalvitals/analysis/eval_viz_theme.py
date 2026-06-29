@@ -76,7 +76,7 @@ SHORT_NAMES = {
     "relative_attention_max_relative_weight":"Max attention",
     "relative_attention_mean_relative_weight":"Mean attention",
     "generated_probe1_false_detection":      "Sanity check",
-    "low_focus_share":                       "Low focus",
+    "low_focus_share":                       "High focus",
     "probe1_positive":                       "Probe positive",
 }
 
