@@ -40,10 +40,10 @@ def test_outcome_color_normalizes_label_forms():
 
 def test_fmt_and_human_bins():
     viz = load_viz_theme()
-    assert viz.fmt(0.8665, "effect") == "0.87"
+    assert viz.fmt(0.4567, "effect") == "0.46"
     assert viz.fmt(0.41, "pct") == "41%"
     assert viz.fmt(None) == "—"
-    assert viz.human_bins([113.844, 233.066, 791.774]) == ["114–233", "233–792"]
+    assert viz.human_bins([10, 50, 200]) == ["10–50", "50–200"]
 
 
 # -- plotly builders (dashboard extra) --------------------------------------
@@ -102,3 +102,19 @@ def test_logistic_insufficient_data_returns_empty_state():
     one_class = pd.DataFrame({"label": ["fail"] * 5, "sig": [0.1, 0.2, 0.3, 0.4, 0.5]})
     fig = viz.logistic_failrate(one_class, "sig", outcome="label")
     assert len(fig.data) == 0                       # single-class y -> no fit
+
+
+def test_logistic_non_numeric_column_degrades_gracefully():
+    # builders promise "never raise" — a present-but-string column -> empty state
+    viz = load_viz_theme()
+    df = pd.DataFrame({"label": ["fail", "pass", "fail", "pass"],
+                       "sig": ["a", "b", "c", "d"]})
+    fig = viz.logistic_failrate(df, "sig", outcome="label")
+    assert len(fig.data) == 0
+
+
+def test_forest_effects_tolerates_row_without_label():
+    # a numeric-effect row missing its label_key must not KeyError
+    viz = load_viz_theme()
+    fig = viz.forest_effects([{"effect": 0.5}])
+    assert len(fig.data) >= 1                        # renders with a '?' label

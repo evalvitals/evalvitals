@@ -119,10 +119,10 @@ Use `viz.fmt(x, kind)` everywhere — tables, labels, hovers, cards:
 - `stat` / `p` → 3 dp (`0.082`)
 - `pct` → integer percent (`41%`)
 - `count` → integer
-- `val` → adaptive (`196.6 → 197`, `2.135 → 2.13`)
+- `val` → adaptive (`250.4 → 250`, `3.14159 → 3.14`)
 
-**Never display raw `pandas.cut` edges.** `(113.844, 233.066]` is machine output.
-Use `viz.human_bins(edges) → "114–233"`. Always annotate the zero / reference line
+**Never display raw `pandas.cut` edges.** `(10.0, 50.0]` is machine output.
+Use `viz.human_bins(edges) → "10–50"`. Always annotate the zero / reference line
 on effect-size axes (the builders do) so the reader can judge magnitude.
 
 ---

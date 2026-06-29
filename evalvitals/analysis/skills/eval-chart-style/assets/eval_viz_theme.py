@@ -109,7 +109,7 @@ def fmt(x, kind: str = "effect") -> str:
           'pct'            -> integer % (e.g. 41%)
           'count'          -> integer
           'val'            -> adaptive: 2 sig-ish, trims long floats
-    Small-n data cannot support 4 dp — never print 0.8665.
+    Small-n data cannot support 4 dp — never invent precision the sample lacks.
     """
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "—"
@@ -134,7 +134,7 @@ def fmt(x, kind: str = "effect") -> str:
 def human_bins(edges) -> list[str]:
     """
     Turn pandas.cut float edges into readable labels.
-    [113.844, 233.066, 791.774] -> ['114–233', '233–792']
+    [10, 50, 200] -> ['10–50', '50–200']
     Picks decimals from the smallest inter-edge gap so close edges stay distinct.
     """
     edges = list(edges)
@@ -273,7 +273,7 @@ def forest_effects(rows, label_key="signal", effect_key="effect",
             color = PALETTE["SIGNIFICANT"]
         else:
             color = PALETTE["INCONCLUSIVE"]
-        y = short(r[label_key]) + ("  (leaky)" if leaky else "")
+        y = short(r.get(label_key, "?")) + ("  (leaky)" if leaky else "")
         lo, hi = r.get(lo_key), r.get(hi_key)
         if lo is not None and hi is not None:
             fig.add_trace(go.Scatter(
@@ -285,7 +285,7 @@ def forest_effects(rows, label_key="signal", effect_key="effect",
             marker=dict(color=color, size=11),
             text=[fmt(r[effect_key], "effect")], textposition="middle right",
             textfont=dict(size=11), showlegend=False,
-            hovertext=full(r[label_key]), hoverinfo="text"))
+            hovertext=full(r.get(label_key, "?")), hoverinfo="text"))
     fig.add_vline(x=0, line=dict(color=PALETTE["AXIS"], width=1, dash="dot"))
     fig.update_layout(title="Effect size (failure association) — green = REJECT H₀",
                       xaxis_title="effect size", yaxis_title="")
@@ -304,7 +304,10 @@ def logistic_failrate(df, signal, outcome="label", n_grid=80, band=True):
 
     if not _has_cols(df, signal, outcome):
         return _empty_fig(f"no per-case column '{signal}'")
-    x = df[signal].to_numpy(dtype=float)
+    try:
+        x = df[signal].to_numpy(dtype=float)
+    except (ValueError, TypeError):
+        return _empty_fig(f"'{short(signal)}' is not numeric")
     y = (df[outcome].astype(str).str.upper() == "FAIL").to_numpy(dtype=float)
     finite = np.isfinite(x) & np.isfinite(y)
     if finite.sum() < 3 or np.unique(y[finite]).size < 2 or np.unique(x[finite]).size < 2:
