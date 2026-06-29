@@ -126,6 +126,48 @@ def test_hypotheses_join_with_m5_outcomes():
     assert out[1]["tests"] == []              # H two was never tested
 
 
+def _build_loop_run_with_records(root):
+    """A loop run that also ships the explorer's per-case records.json, so the
+    dashboard can draw the plotly violin/scatter distributions."""
+    _build_loop_run(root)
+    sandbox = root / "fused" / "sandbox"
+    rows = []
+    for i in range(15):
+        rows.append({"case_id": f"f{i}", "label": "fail", "attn": 0.7 + i * 0.01, "probe": 1})
+    for i in range(40):
+        rows.append({"case_id": f"p{i}", "label": "pass", "attn": 0.1 + i * 0.005, "probe": 0})
+    (sandbox / "records.json").write_text(json.dumps(rows), encoding="utf-8")
+    return root
+
+
+def test_loop_dashboard_renders_per_case_distributions(tmp_path):
+    pytest.importorskip("plotly")
+    _build_loop_run_with_records(tmp_path)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Per-case distributions" in blob   # the records path executed
+
+
+def test_load_records_reads_per_case_table(tmp_path):
+    from evalvitals.analysis.dashboard_app import _load_records
+
+    assert _load_records(tmp_path) is None            # nothing there yet
+    _build_loop_run_with_records(tmp_path)
+    df = _load_records(tmp_path / "fused")
+    assert df is not None
+    assert len(df) == 55 and set(df["label"]) == {"fail", "pass"}
+
+
+def test_render_signal_effects_falls_back_without_plotly(monkeypatch):
+    # With plotly unavailable the forest renderer degrades to the matplotlib bar.
+    import evalvitals.analysis.dashboard_app as app
+    monkeypatch.setattr(app, "_VIZ_TRIED", True, raising=False)
+    monkeypatch.setattr(app, "_VIZ_CACHE", None, raising=False)
+    fig = app._signal_effect_figure([{"name": "a", "effect": 0.5, "reject": True}])
+    assert fig is not None
+
+
 def test_signals_dataframe_and_effect_figure_helpers():
     from evalvitals.analysis.dashboard_app import _signal_effect_figure, _signals_dataframe
 

@@ -22,9 +22,9 @@ evalvitals dashboard outputs                       the report
 - The repo installed into a venv **with the local + viz + dashboard extras**:
   ```bash
   cd <repo-root>
-  pip install -e ".[local,viz,dashboard]"     # torch + matplotlib + streamlit
+  pip install -e ".[local,viz,dashboard]"     # torch + matplotlib + streamlit + plotly
   # (this repo's server uses a uv venv: VIRTUAL_ENV=.venv uv pip install -e . --no-deps,
-  #  then `VIRTUAL_ENV=.venv uv pip install matplotlib streamlit pandas jsonschema`)
+  #  then `VIRTUAL_ENV=.venv uv pip install matplotlib streamlit pandas plotly jsonschema`)
   ```
 - A **CUDA GPU** and the VLM weights cached (HF cache) — needed by `run_m1.py` and
   `run_m2-5.py`.
@@ -101,8 +101,11 @@ report in the **📊 Analysis** tab:
 
 1. **What we analysed** — the exploratory observations and the signals examined.
 2. **What we found** — the e-BH adjudication (which signals are *real* on the held-out
-   split), the signal effect-size chart, the signals table, the analyst's evidence chain,
-   and the exploratory charts + data tables.
+   split), an interactive **forest plot** of signal effect sizes (green = REJECT H₀), the
+   signals table, **per-case FAIL-vs-PASS distributions** (violins + a joint scatter, drawn
+   from `fused/sandbox/records.json`), the analyst's evidence chain, and the exploratory
+   charts + data tables. The charts use the bundled **eval-chart-style** theme (plotly in
+   the dashboard; the same semantic FAIL=red / PASS=slate palette on the static PNGs).
 3. **Hypotheses formed** — each M3 root-cause hypothesis, tagged with the charts it drew
    on and its downstream **M5/M4 verdict** (supported / inconclusive / refuted / fixed).
 

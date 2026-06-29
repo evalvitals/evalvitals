@@ -54,6 +54,7 @@ viz = ["matplotlib>=3.7"]
 dashboard = [
     "streamlit>=1.30",
     "pandas>=2.0",
+    "plotly>=5.0",
 ]
 gemini = ["google-genai>=1.0"]
 all = [
@@ -67,6 +68,7 @@ all = [
     "matplotlib>=3.7",
     "streamlit>=1.30",
     "pandas>=2.0",
+    "plotly>=5.0",
 ]
 dev = [
     "pytest>=8.0",

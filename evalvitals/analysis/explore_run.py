@@ -31,15 +31,24 @@ from evalvitals.eval_agent.cli_agent import CliAgentConfig
 _BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 # Skills are a Claude Code / agy feature; other backends vendor-but-ignore them.
 _SKILL_BACKENDS = {"claude_code", "antigravity"}
+# Skills that ship with the package but are consumed by the HOST (the dashboard +
+# the static-PNG renderer import their asset directly), not pushed to the agent.
+# Excluded from auto-apply so they don't change explorer behaviour or collide
+# with the agent-applied figure skills; pass them explicitly via --skill to opt in.
+_HOST_ONLY_SKILLS = {"eval-chart-style"}
 
 
 def bundled_skill_paths() -> list[str]:
-    """Absolute paths of the Agent-Skill dirs bundled with the package (each a
-    directory containing ``SKILL.md``). Empty when none are present."""
+    """Absolute paths of the agent-applied Agent-Skill dirs bundled with the
+    package (each a directory containing ``SKILL.md``), excluding host-only
+    skills. Empty when none are present."""
     root = _BUNDLED_SKILLS_DIR
     if not root.is_dir():
         return []
-    return [str(p) for p in sorted(root.iterdir()) if (p / "SKILL.md").is_file()]
+    return [
+        str(p) for p in sorted(root.iterdir())
+        if (p / "SKILL.md").is_file() and p.name not in _HOST_ONLY_SKILLS
+    ]
 
 
 def run_explore(

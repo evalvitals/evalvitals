@@ -123,6 +123,27 @@ def test_non_utf8_and_oversized_csv_never_raise(tmp_path):
         assert "description" in spec  # always degrades gracefully
 
 
+def test_chart_style_prefers_eval_chart_style_semantic_palette():
+    # The host PNG renderer adopts the vendored eval-chart-style theme: a
+    # role-based palette (accent / FAIL red / PASS slate) is exposed for
+    # semantic coloring, on top of the nature-figure fallback.
+    charts_mod._CHART_STYLE_CACHE = None
+    style = charts_mod._load_chart_style()
+    assert style["semantic"] is not None
+    assert style["semantic"]["FAIL"] == "#C0413B"
+    assert style["semantic"]["PASS"] == "#5B7A99"
+    assert style["colors"][0] == "#3A6EA5"             # ACCENT (single-series)
+    charts_mod._CHART_STYLE_CACHE = None
+
+
+def test_bar_colors_are_outcome_aware():
+    sem = {"FAIL": "#C0413B", "PASS": "#5B7A99"}
+    # FAIL/PASS categories -> role colors; arbitrary categories -> one accent
+    assert charts_mod._bar_colors(["fail", "pass"], sem, "#3A6EA5") == ["#C0413B", "#5B7A99"]
+    assert charts_mod._bar_colors(["a", "b"], sem, "#3A6EA5") == "#3A6EA5"
+    assert charts_mod._bar_colors(["fail", "pass"], None, "#3A6EA5") == "#3A6EA5"
+
+
 @pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
 def test_unknown_x_column_skips_without_raising(tmp_path):
     _write_table(tmp_path)

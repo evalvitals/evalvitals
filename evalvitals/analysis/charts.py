@@ -59,7 +59,7 @@ def render_chart_specs(
     out_dir = Path(out_dir)
     tdir = Path(tables_dir) if tables_dir else None
     plt = _import_matplotlib()
-    style = _load_nature_style()
+    style = _load_chart_style()
 
     rendered: list[dict[str, Any]] = []
     for idx, spec in enumerate(specs):
@@ -202,6 +202,50 @@ def _load_nature_style() -> dict[str, Any]:
     return _NATURE_STYLE_CACHE
 
 
+# --- eval-chart-style host palette (the semantic FAIL/PASS look) --------------
+# The host static PNGs adopt the vendored eval-chart-style theme: its matplotlib
+# rcParams + a role-based palette (ACCENT for single series, FAIL red / PASS
+# slate when a chart is split by outcome, green/grey for significance). Falls
+# back to the nature-figure style, then the hardcoded tokens. Cached; never raises.
+_CHART_STYLE_CACHE: dict[str, Any] | None = None
+
+
+def _load_chart_style() -> dict[str, Any]:
+    global _CHART_STYLE_CACHE
+    if _CHART_STYLE_CACHE is not None:
+        return _CHART_STYLE_CACHE
+
+    style: dict[str, Any] | None = None
+    try:
+        from evalvitals.analysis.viz_theme import load_viz_theme
+
+        viz = load_viz_theme()
+        if viz is not None:
+            pal = viz.PALETTE
+            rc = {str(k): v for k, v in viz.matplotlib_rcparams().items()
+                  if k != "font.size"}
+            # ensure a server-present font is the final fallback (deterministic)
+            rc["font.sans-serif"] = [*rc.get("font.sans-serif", []), "DejaVu Sans", "sans-serif"]
+            style = {
+                "rc": {**rc, **_SCREEN_RC},
+                # primary (single-series) first, then the role colors
+                "colors": [pal["ACCENT"], pal["FAIL"], pal["PASS"],
+                           pal["SIGNIFICANT"], pal["INCONCLUSIVE"]],
+                "semantic": {
+                    "FAIL": pal["FAIL"], "PASS": pal["PASS"],
+                    "SIGNIFICANT": pal["SIGNIFICANT"], "INCONCLUSIVE": pal["INCONCLUSIVE"],
+                    "AXIS": pal["AXIS"],
+                },
+            }
+    except Exception:
+        style = None
+
+    if style is None:  # eval-chart-style asset unavailable -> nature-figure look
+        style = {**_load_nature_style(), "semantic": None}
+    _CHART_STYLE_CACHE = style
+    return _CHART_STYLE_CACHE
+
+
 def _load_table(
     data: Any, tables_dir: Path | None, out_dir: Path
 ) -> tuple[list[dict[str, str]] | None, str]:
@@ -286,6 +330,8 @@ def _render_one(plt, spec, rows, x, y, out_dir, idx, style) -> Path:
     rc = (style or {}).get("rc", {})
     colors = (style or {}).get("colors") or _NATURE_COLORS_FALLBACK
     primary = colors[0]
+    semantic = (style or {}).get("semantic")
+    axis_color = (semantic or {}).get("AXIS", "#333333")
     title = str(spec.get("title") or spec.get("name") or f"chart_{idx}")
 
     figures = out_dir / "figures"
@@ -311,22 +357,39 @@ def _render_one(plt, spec, rows, x, y, out_dir, idx, style) -> Path:
                 ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
         else:  # bar
             positions = range(len(xs_raw))
-            ax.bar(positions, ys, color=primary, width=0.72, zorder=3)
+            ax.bar(positions, ys, color=_bar_colors(xs_raw, semantic, primary),
+                   width=0.72, zorder=3)
             ax.set_xticks(list(positions))
             ax.set_xticklabels([str(v) for v in xs_raw], rotation=45, ha="right")
 
         if kind in {"bar", "line", "timeseries"}:
             ax.grid(axis="y", linewidth=0.6, alpha=0.25, zorder=0)
             ax.set_axisbelow(True)
+        # Effect-size / separation charts straddle zero — anchor the reader.
+        if any(v < 0 for v in ys):
+            ax.axhline(0, color=axis_color, linewidth=0.8, zorder=2)
 
         ax.set_xlabel(str(x))
         ax.set_ylabel(str(y))
         ax.set_title(title, fontweight="bold")
         fig.tight_layout()
-        # Pin metadata so the same spec + CSV yields byte-identical PNGs.
-        fig.savefig(png, dpi=130, metadata={"Software": "evalvitals", "Creation Time": None})
+        # Pin metadata + white facecolor so the same spec + CSV yields a
+        # byte-identical, opaque PNG.
+        fig.savefig(png, dpi=130, facecolor="white",
+                    metadata={"Software": "evalvitals", "Creation Time": None})
         plt.close(fig)
     return png
+
+
+def _bar_colors(xs_raw, semantic, primary):
+    """Color bars by outcome role when every x category is a FAIL/PASS label
+    (e.g. a class-balance or by-outcome chart); otherwise one accent color."""
+    if not semantic:
+        return primary
+    labels = [str(v).strip().lower() for v in xs_raw]
+    if labels and all(lab in {"fail", "pass"} for lab in labels):
+        return [semantic["FAIL"] if lab == "fail" else semantic["PASS"] for lab in labels]
+    return primary
 
 
 def _safe_filename(name: Any) -> str:

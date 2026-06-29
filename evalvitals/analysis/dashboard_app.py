@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,25 @@ import pandas as pd
 import streamlit as st
 
 from evalvitals.analysis.dashboard import load_run
+
+# The vendored eval-chart-style plotly theme — loaded once, None when plotly is
+# unavailable (then the dashboard falls back to matplotlib figures).
+_VIZ_CACHE: Any = None
+_VIZ_TRIED = False
+
+
+def _get_viz():
+    global _VIZ_CACHE, _VIZ_TRIED
+    if _VIZ_TRIED:
+        return _VIZ_CACHE
+    _VIZ_TRIED = True
+    try:
+        from evalvitals.analysis.viz_theme import load_plotly_theme
+
+        _VIZ_CACHE = load_plotly_theme()
+    except Exception:
+        _VIZ_CACHE = None
+    return _VIZ_CACHE
 
 
 def main() -> None:
@@ -185,10 +205,20 @@ def _render_loop_analysis(story, explore_report, explore_dir) -> None:
 
     if signals:
         st.markdown("**Signal effect sizes (failure association)**")
-        fig = _signal_effect_figure(signals)
-        if fig is not None:
-            st.pyplot(fig, clear_figure=True)
+        _render_signal_effects(signals)
         st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+    # Per-case FAIL-vs-PASS distributions (plotly) behind the signals above —
+    # violins/scatter from the explorer's per-case records, when available.
+    viz = _get_viz()
+    records = _load_records(Path(explore_dir)) if viz is not None else None
+    if viz is not None and records is not None and not records.empty:
+        st.markdown("**Per-case distributions (FAIL vs PASS)**")
+        st.caption(
+            "The full per-case distributions behind the signals above — violins "
+            "show the spread and bimodality a mean-bar would hide."
+        )
+        _render_case_distributions(records, viz)
 
     # The analyst's reasoning chain + statistical-test summaries, when logged.
     evidence = next((a.get("evidence_chain") for a in analyses if a.get("evidence_chain")), None)
@@ -311,6 +341,89 @@ def _render_loop_flow(story, explore_report, explore_dir) -> None:
         st.markdown("### Fix — e-BH adjudicated outcomes")
         for f in fixes:
             st.json(f)
+
+
+def _render_signal_effects(signals: list[dict[str, Any]]) -> None:
+    """Forest plot (plotly, crisp) of each signal's effect size, colored by its
+    held-out e-BH verdict; falls back to the matplotlib bar when plotly is absent."""
+    viz = _get_viz()
+    if viz is not None:
+        rows = [{
+            "signal": f"{s.get('name', '?')} ({s.get('source', '')})",
+            "effect": float(s["effect"]),
+            "significant": bool(s.get("reject")),
+        } for s in signals if isinstance(s.get("effect"), (int, float))]
+        if rows:
+            try:
+                st.plotly_chart(viz.forest_effects(rows), width="stretch")
+                return
+            except Exception:
+                pass
+    fig = _signal_effect_figure(signals)
+    if fig is not None:
+        st.pyplot(fig, clear_figure=True)
+
+
+def _load_records(explore_dir: Path) -> "pd.DataFrame | None":
+    """The explorer's per-case table (one row per case: raw signals + outcome
+    label) — the correct source for distribution charts. Searched across the
+    run layout (the explorer writes it to its sandbox)."""
+    for p in (
+        explore_dir / "sandbox" / "records.json",
+        explore_dir / "records.json",
+        explore_dir / "sandbox" / "tables" / "records.json",
+    ):
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, list) and data:
+                try:
+                    return pd.DataFrame(data)
+                except Exception:
+                    continue
+    return None
+
+
+def _render_case_distributions(df: "pd.DataFrame", viz) -> None:
+    """Per-case FAIL-vs-PASS distributions via the eval-chart-style plotly
+    builders: class balance, a violin per continuous signal, and a joint scatter
+    of the two most-populated signals. Degenerate (binary/constant) signals are
+    skipped, not rendered as misleading spikes."""
+    label_col = "label" if "label" in df.columns else None
+    if label_col is None:
+        return
+    try:
+        st.plotly_chart(viz.counts_bar(df, outcome=label_col), width="stretch")
+    except Exception:
+        pass
+
+    # continuous signals only (>=3 distinct non-null values), most-populated first
+    plottable: list[tuple[str, int]] = []
+    for col in df.columns:
+        if col in {label_col, "case_id"} or not pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        sub = df[[label_col, col]].dropna()
+        if sub[col].nunique() >= 3 and len(sub) >= 4:
+            plottable.append((col, len(sub)))
+    plottable.sort(key=lambda t: -t[1])
+
+    for col, n in plottable:
+        try:
+            st.plotly_chart(viz.violin_by_outcome(df, col, outcome=label_col),
+                            width="stretch")
+            st.caption(f"{col} · n={n} non-null")
+        except Exception:
+            continue
+
+    if len(plottable) >= 2:
+        try:
+            st.plotly_chart(
+                viz.joint_scatter(df, plottable[0][0], plottable[1][0], outcome=label_col),
+                width="stretch")
+        except Exception:
+            pass
 
 
 def _signal_effect_figure(signals: list[dict[str, Any]]):
