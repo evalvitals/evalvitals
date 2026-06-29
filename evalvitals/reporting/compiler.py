@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from evalvitals.reporting.model import Claim, DiagnosticReport, Evidence, ReportStep
+from evalvitals.viz.labels import display_name
 
 
 def compile_diagnostic_report(
@@ -54,14 +55,15 @@ def _compile_evidence(explore_report: dict[str, Any], story: dict[str, Any]) -> 
         evidence.append(Evidence(
             id=f"signal:{name}",
             kind="confirmed_signal",
-            title=name,
+            title=str(signal.get("display_name") or display_name(name)),
             summary=_signal_summary(signal),
             artifact=signal,
         ))
     for idx, chart in enumerate(explore_report.get("charts") or [], start=1):
         if not isinstance(chart, dict):
             continue
-        title = str(chart.get("title") or chart.get("name") or f"Chart {idx}")
+        raw_title = str(chart.get("display_name") or chart.get("title") or chart.get("name") or f"Chart {idx}")
+        title = display_name(raw_title)
         evidence.append(Evidence(
             id=f"chart:{_slug(title)}",
             kind="chart",
@@ -223,7 +225,7 @@ def _signal_summary(signal: dict[str, Any]) -> str:
 
 
 def _claim_text(signal: dict[str, Any]) -> str:
-    name = str(signal.get("name") or "signal")
+    name = str(signal.get("display_name") or display_name(signal.get("name") or "signal"))
     if _is_leaky_signal(signal):
         return f"{name} tracks the failure label and is treated as descriptive plumbing."
     if signal.get("reject") is True:

@@ -35,6 +35,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from evalvitals.viz.labels import display_name, raw_hint
+
 # ---------------------------------------------------------------------------
 # 1. SEMANTIC PALETTE  — color encodes ROLE, never decoration.
 #    Reuse these names everywhere; never hardcode a hex in a chart.
@@ -70,25 +72,24 @@ def outcome_color(v):
 #    short() returns the display alias; full() / tooltip kept for hover.
 # ---------------------------------------------------------------------------
 SHORT_NAMES = {
-    "relative_attention_focus_share":        "attn.focus",
-    "relative_attention_max_relative_weight":"attn.max",
-    "relative_attention_mean_relative_weight":"attn.mean",
-    "generated_probe1_false_detection":      "probe1.fd",
-    "low_focus_share":                       "low_focus",
-    "probe1_positive":                       "probe1.pos",
+    "relative_attention_focus_share":        "Attention focus",
+    "relative_attention_max_relative_weight":"Max attention",
+    "relative_attention_mean_relative_weight":"Mean attention",
+    "generated_probe1_false_detection":      "Label audit",
+    "low_focus_share":                       "Low focus",
+    "probe1_positive":                       "Probe positive",
 }
 
 def short(name: str) -> str:
     """Display alias. Falls back to a deterministic abbreviation."""
     if name in SHORT_NAMES:
         return SHORT_NAMES[name]
-    parts = name.replace("-", "_").split("_")
-    if len(parts) <= 2:
-        return name
-    return ".".join(p[:4] for p in parts[:3])
+    return display_name(name, compact=True)
 
 def full(name: str) -> str:
-    return name
+    hint = raw_hint(name)
+    label = display_name(name)
+    return f"{label} ({hint})" if hint else label
 
 
 # ---------------------------------------------------------------------------

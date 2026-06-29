@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from evalvitals.analysis.dashboard import load_run
+from evalvitals.viz.labels import display_name, raw_hint
 
 # Eval-chart-style house theme (FAIL-red / PASS-slate palette, distribution-first
 # chart builders, short names + number/bin formatting). See eval_viz_theme.py and
@@ -717,14 +718,15 @@ def _signal_effect_figure(signals: list[dict[str, Any]]):
     except Exception:
         return None
 
-    rows = [(str(s.get("name", "?")), float(s["effect"]), bool(s.get("reject")), str(s.get("source", "")))
+    rows = [(str(s.get("display_name") or s.get("name", "?")), str(s.get("name", "?")),
+             float(s["effect"]), bool(s.get("reject")), str(s.get("source", "")))
             for s in signals if isinstance(s.get("effect"), (int, float))]
     if not rows:
         return None
-    rows.sort(key=lambda r: r[1])
-    names = [f"{n}  ({src})" for n, _, _, src in rows]
-    effects = [e for _, e, _, _ in rows]
-    colors = ["#0f8a5f" if rej else "#9aa4b2" for _, _, rej, _ in rows]
+    rows.sort(key=lambda r: r[2])
+    names = [f"{display_name(label or raw, compact=True)}  ({src})" for label, raw, _, _, src in rows]
+    effects = [e for _, _, e, _, _ in rows]
+    colors = ["#0f8a5f" if rej else "#9aa4b2" for _, _, _, rej, _ in rows]
 
     fig, ax = plt.subplots(figsize=(7.2, max(1.6, 0.55 * len(rows) + 0.8)))
     ax.barh(range(len(rows)), effects, color=colors)
@@ -762,8 +764,10 @@ def _forest_rows(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not isinstance(s.get("effect"), (int, float)):
             continue
         ci = s.get("ci") or [None, None]
+        raw = str(s.get("name", "?"))
         rows.append({
-            "signal": str(s.get("name", "?")),
+            "signal": str(s.get("display_name") or display_name(raw)),
+            "raw_signal": raw,
             "effect": float(s["effect"]),
             "ci_lo": ci[0] if isinstance(ci, (list, tuple)) and len(ci) == 2 else None,
             "ci_hi": ci[1] if isinstance(ci, (list, tuple)) and len(ci) == 2 else None,
@@ -787,7 +791,8 @@ def _signals_dataframe(signals: list[dict[str, Any]]):
         return viz.fmt(x, kind) if viz is not None else x
 
     rows = [{
-        "signal": viz.short(s.get("name", "")) if viz is not None else s.get("name"),
+        "signal": display_name(s.get("display_name") or s.get("name"), compact=True),
+        "raw field": s.get("name"),
         "source": s.get("source"),
         "effect": _fmt(s.get("effect"), "effect"),
         "e_value": _fmt(s.get("e_value"), "stat") if s.get("e_value") is not None else "—",
@@ -1114,15 +1119,18 @@ def _render_overview(report: dict[str, Any]) -> None:
                 if not isinstance(signal, dict):
                     st.markdown(f"- {signal}")
                     continue
-                name = str(signal.get("name") or "Signal")
+                raw = str(signal.get("name") or "Signal")
+                name = str(signal.get("display_name") or display_name(raw))
                 rationale = str(signal.get("rationale") or "")
                 suggested = str(signal.get("suggested_test") or "")
+                raw = raw_hint(raw)
                 st.markdown(
                     f"""
                     <div class="ev-signal">
                       <div class="ev-signal-title">{_html_escape(name)}</div>
                       <div class="ev-signal-body">{_html_escape(rationale)}</div>
                       <div class="ev-signal-test">{_html_escape(suggested)}</div>
+                      <div class="ev-signal-test">{_html_escape(raw)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1161,7 +1169,8 @@ def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
 
 
 def _render_chart_card(chart: dict[str, Any], turn_dir: Path) -> None:
-    title = str(chart.get("title") or chart.get("name") or "Chart")
+    title = str(chart.get("display_name") or chart.get("title") or chart.get("name") or "Chart")
+    title = display_name(title)
     df = _table_to_dataframe(chart.get("data"), turn_dir)
 
     st.markdown(f'<div class="ev-card-title">{_html_escape(title)}</div>', unsafe_allow_html=True)

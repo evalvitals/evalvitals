@@ -55,6 +55,7 @@ template. Aim for 6-12 charts/plots that together tell the FAIL-vs-PASS story.
 First build a "visual_plan" list. Each item should be a dict:
   {{
     "name": "<stable artifact/chart name>",
+    "display_name": "<short human title, no raw generated/probe id>",
     "question": "<what this visual answers>",
     "data_shape": "<numeric-vs-binary | categorical-vs-binary | numeric-vs-numeric | many-numeric | paired | ...>",
     "plot_kind": "<chosen plot type, e.g. bar, line, scatter, box, violin, heatmap, paired_slope>",
@@ -86,7 +87,7 @@ As a minimum, consider this standard battery when the columns exist:
 
 For EVERY chart you report in "charts":
 - write its plotted data as a CSV under "tables/<name>.csv"
-- add a spec {{"name","kind","data","x","y","title"}} with data="tables/<name>.csv"
+- add a spec {{"name","display_name","kind","data","x","y","title"}} with data="tables/<name>.csv"
   and kind in {{"bar","line","scatter"}}. The HOST renders these deterministically,
   so PRE-AGGREGATE distributions into the CSV (histogram = bin->count; fail rate =
   bin->fail_rate; group comparison = group->value) — never rely on a raw dump.
@@ -104,6 +105,10 @@ Discovery outputs:
   "descriptive" unless the host later confirms it.
 - add "critique": agent self-audit notes about leakage, small n, double-dipping,
   missingness, misleading plot choices, or alternative explanations.
+- Never use raw internal IDs like "generated_probe1_false_detection" as user-facing
+  chart titles or claim text. Use display names such as "Label audit: probe
+  false-detection flag", and demote label-like/probe-derived fields to audit
+  evidence rather than explanatory findings.
 - PREFERRED: for any composite / threshold / interaction signal that is a
   DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
   compute it on a HELD-OUT split and confirm it rigorously:
@@ -127,6 +132,7 @@ Discovery outputs:
     "observations": ["..."],
     "visual_plan": [
       {{"name": "failrate_by_objsize",
+        "display_name": "Failure rate by object size",
         "question": "Does object size change failure risk?",
         "data_shape": "numeric-vs-binary",
         "plot_kind": "line",
@@ -148,7 +154,8 @@ Discovery outputs:
         "do_not_infer": "Not causal until M5/M4 support it."}}
     ],
     "candidate_signals": [
-      {{"name": "...", "rationale": "...", "suggested_test": "...",
+      {{"name": "...", "display_name": "<human-readable signal label>",
+        "rationale": "...", "suggested_test": "...",
         "recipe": {{"name": "...", "kind": "expr",
                    "expr": "(col_a < 40) and (col_b < 0.3)"}}}}
     ],
@@ -156,9 +163,11 @@ Discovery outputs:
     "tables": {{}},
     "charts": [
       {{"name": "class_balance", "kind": "bar",
+        "display_name": "FAIL/PASS case balance",
         "data": "tables/class_balance.csv", "x": "outcome", "y": "count",
         "title": "FAIL vs PASS"}},
       {{"name": "failrate_by_objsize", "kind": "line",
+        "display_name": "Failure rate by object size",
         "data": "tables/failrate_by_objsize.csv", "x": "obj_size_bin",
         "y": "fail_rate", "title": "Fail rate by object size"}},
       {{"name": "top_discriminators", "kind": "bar",
@@ -213,6 +222,7 @@ class CandidateSignal:
     """
 
     name: str
+    display_name: str = ""
     rationale: str = ""
     suggested_test: str = ""
     # --- proposed by the explorer (no authority over the verdict) ---
@@ -231,6 +241,7 @@ class CandidateSignal:
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "display_name": self.display_name,
             "rationale": self.rationale,
             "suggested_test": self.suggested_test,
             "sufficient": self.sufficient,
@@ -704,6 +715,7 @@ def _report_from_sandbox(
     signals = [
         CandidateSignal(
             name=str(item.get("name", "")),
+            display_name=str(item.get("display_name", "")),
             rationale=str(item.get("rationale", "")),
             suggested_test=str(item.get("suggested_test", "")),
             sufficient=item["sufficient"] if isinstance(item.get("sufficient"), dict) else None,

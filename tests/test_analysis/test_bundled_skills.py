@@ -17,6 +17,7 @@ def test_nature_figure_is_bundled_in_the_package():
     paths = bundled_skill_paths()
     names = {Path(p).name for p in paths}
     assert "nature-figure" in names
+    assert "evalvitals-report-ui" in names
     nf = next(Path(p) for p in paths if Path(p).name == "nature-figure")
     assert (nf / "SKILL.md").is_file()
     assert (nf / "LICENSE").is_file()  # Apache-2.0 attribution preserved
