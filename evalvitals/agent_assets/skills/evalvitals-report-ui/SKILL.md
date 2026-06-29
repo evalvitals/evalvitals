@@ -54,6 +54,23 @@ Do not produce an artifact dump. Produce a three-panel reader path:
    - Summarize M4/M5 test or fix outcomes.
    - Keep raw artifacts in expandable drill-down sections.
 
+Emit the reader path as `dashboard_storyboard` in the final JSON. The dashboard
+renderer is intentionally stable and should only render this artifact. The
+agent, not the Streamlit host, owns the run-specific narrative.
+
+Required storyboard panel shape:
+
+```json
+{
+  "id": "problem_setting | analysis | hypotheses_artifacts",
+  "title": "Human panel title",
+  "stages": ["M1"],
+  "summary": "One paragraph written for the user",
+  "items": ["method -> evidence -> takeaway bullets"],
+  "artifact_refs": ["candidate_signals", "charts"]
+}
+```
+
 ## Required Output Discipline
 
 - Every `candidate_signals` item must include:

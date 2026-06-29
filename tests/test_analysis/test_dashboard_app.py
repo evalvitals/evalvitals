@@ -40,6 +40,14 @@ def _build_loop_run(root):
             "reading": "The present state has a lower failure rate in this toy fixture.",
             "do_not_infer": "This chart alone is not causal.",
         }],
+        "dashboard_storyboard": [{
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": "Agent-authored dashboard narrative for this run.",
+            "items": ["Method: held-out comparison", "Takeaway: inspect the signal"],
+            "artifact_refs": ["candidate_signals", "charts"],
+        }],
         "claims": [{
             "id": "A1",
             "text": "The signal is lower risk when present.",
@@ -112,6 +120,7 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     assert "Analysis takeaway" in blob
     assert "Method:" in blob
     assert "Takeaway:" in blob
+    assert "Agent-authored dashboard narrative for this run." in blob
     assert "M1" in blob and "M2" in blob and "M3" in blob and "M5" in blob
 
 

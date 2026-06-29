@@ -95,6 +95,7 @@ class FusedReport:
     observations: list[str] = field(default_factory=list)
     visual_plan: list[dict[str, Any]] = field(default_factory=list)
     chart_readings: list[dict[str, Any]] = field(default_factory=list)
+    dashboard_storyboard: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
     candidate_signals: list[FusedSignal] = field(default_factory=list)
     charts: list[dict[str, Any]] = field(default_factory=list)
@@ -118,6 +119,7 @@ class FusedReport:
             "observations": self.observations,
             "visual_plan": self.visual_plan,
             "chart_readings": self.chart_readings,
+            "dashboard_storyboard": self.dashboard_storyboard,
             "claims": self.claims,
             "candidate_signals": [s.to_dict() for s in self.candidate_signals],
             "charts": self.charts,
@@ -217,6 +219,7 @@ def run_fused_analysis(
     report.observations = list(getattr(explore_report, "observations", []) or [])
     report.visual_plan = list(getattr(explore_report, "visual_plan", []) or [])
     report.chart_readings = list(getattr(explore_report, "chart_readings", []) or [])
+    report.dashboard_storyboard = list(getattr(explore_report, "dashboard_storyboard", []) or [])
     report.claims = list(getattr(explore_report, "claims", []) or [])
     report.charts = list(getattr(explore_report, "charts", []) or [])
     report.caveats = list(getattr(explore_report, "caveats", []) or [])

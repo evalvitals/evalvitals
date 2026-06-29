@@ -35,10 +35,60 @@ def compile_diagnostic_report(
         timeline=_compile_timeline(story, explore_report),
         visual_decisions=list(explore_report.get("visual_plan") or []),
         chart_readings=list(explore_report.get("chart_readings") or []),
+        dashboard_storyboard=_dashboard_storyboard(explore_report, story, claims),
         critique=_critique(explore_report, signals),
         caveats=[str(c) for c in (explore_report.get("caveats") or [])],
         next_actions=_next_actions(explore_report, claims),
     )
+
+
+def _dashboard_storyboard(
+    explore_report: dict[str, Any],
+    story: dict[str, Any],
+    claims: list[Claim],
+) -> list[dict[str, Any]]:
+    raw = explore_report.get("dashboard_storyboard") or explore_report.get("ui_panels")
+    if isinstance(raw, list) and all(isinstance(p, dict) for p in raw):
+        return [dict(p) for p in raw]
+
+    supported = next((c.text for c in claims if c.status == "supported"), "")
+    observations = [str(x) for x in (explore_report.get("observations") or [])[:3]]
+    readings = [
+        str(r.get("reading"))
+        for r in (explore_report.get("chart_readings") or [])
+        if isinstance(r, dict) and r.get("reading")
+    ][:3]
+    hypotheses = []
+    for diag in story.get("diagnoses") or []:
+        for h in diag.get("hypotheses") or []:
+            hypotheses.append(str(h.get("statement") or h))
+
+    return [
+        {
+            "id": "problem_setting",
+            "title": "Problem Setting",
+            "stages": ["M1"],
+            "summary": str(explore_report.get("question") or "What distinguishes failures from passes?"),
+            "items": observations,
+            "artifact_refs": ["data_profile", "candidate_signals"],
+        },
+        {
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": supported or str(explore_report.get("conclusion") or ""),
+            "items": readings,
+            "artifact_refs": ["candidate_signals", "charts", "chart_readings"],
+        },
+        {
+            "id": "hypotheses_artifacts",
+            "title": "Hypotheses & Artifacts",
+            "stages": ["M3", "M4", "M5"],
+            "summary": "Hypotheses and downstream decisions generated from the analysis.",
+            "items": hypotheses[:5],
+            "artifact_refs": ["diagnoses", "surgeries", "fixes"],
+        },
+    ]
 
 
 def _candidate_signals(explore_report: dict[str, Any]) -> list[dict[str, Any]]:

@@ -32,6 +32,16 @@ payload = {
             "do_not_infer": "This does not prove flag causes failure.",
         }
     ],
+    "dashboard_storyboard": [
+        {
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": "Agent-authored storyboard summary.",
+            "items": ["Method: grouped comparison", "Takeaway: flag separates failures"],
+            "artifact_refs": ["charts"],
+        }
+    ],
     "claims": [
         {
             "id": "C1",
@@ -92,6 +102,7 @@ def test_m2_explorer_runs_generated_local_analysis(tmp_path):
     assert report.visual_plan[0]["plot_kind"] == "bar"
     assert "rationale" in report.visual_plan[0]
     assert report.chart_readings[0]["chart"] == "flag_distribution"
+    assert report.dashboard_storyboard[0]["summary"] == "Agent-authored storyboard summary."
     assert report.claims[0]["id"] == "C1"
     assert report.critique == ["small scripted fixture"]
     assert report.tables["counts"] == {"fail": 3, "pass": 3}
@@ -114,6 +125,7 @@ def test_m2_explorer_prompt_requires_visual_plan(tmp_path):
     assert '"visual_plan"' in prompt
     assert "plot_kind" in prompt
     assert "chart_readings" in prompt
+    assert "dashboard_storyboard" in prompt
     assert "critique" in prompt
 
 

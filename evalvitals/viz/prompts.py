@@ -33,4 +33,7 @@ browser. Structure the output as three reader-facing panels:
 
 Never assume raw field names are user-facing language. Include display_name for
 signals/charts and keep raw identifiers only as drill-down provenance.
+
+Emit the panels as `dashboard_storyboard` in the run JSON. The host dashboard is
+a stable renderer; the run-specific narrative must come from this storyboard.
 """

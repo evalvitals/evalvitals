@@ -184,6 +184,7 @@ def _render_problem_setting(
 ) -> None:
     """Panel 1: orient the user before any statistical claims."""
     report = report or {}
+    storyboard = _storyboard_panels(report, story=story)
     question = str(report.get("question") or "What distinguishes failures from passes?")
     adj = report.get("adjudication") or {}
     signals = _candidate_signals(report)
@@ -219,6 +220,7 @@ def _render_problem_setting(
 
     st.markdown("### Problem Setting")
     _render_stage_map(active={"M1", "M2"} if not story else {"M1"})
+    _render_storyboard_panel(storyboard, "problem_setting")
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -316,6 +318,48 @@ def _render_stage_map(*, active: set[str]) -> None:
     )
 
 
+def _storyboard_panels(
+    report: dict[str, Any] | None,
+    *,
+    story: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Agent-authored dashboard storyboard, with compiled diagnostic fallback."""
+    report = report or {}
+    raw = report.get("dashboard_storyboard") or report.get("ui_panels")
+    if isinstance(raw, list) and all(isinstance(p, dict) for p in raw):
+        return [dict(p) for p in raw]
+    diag = (story or {}).get("diagnostic_report") or {}
+    raw = diag.get("dashboard_storyboard")
+    if isinstance(raw, list) and all(isinstance(p, dict) for p in raw):
+        return [dict(p) for p in raw]
+    return []
+
+
+def _render_storyboard_panel(panels: list[dict[str, Any]], panel_id: str) -> None:
+    panel = next((p for p in panels if str(p.get("id")) == panel_id), None)
+    if not panel:
+        return
+    stages = ", ".join(str(s) for s in (panel.get("stages") or []))
+    items = [str(x) for x in (panel.get("items") or []) if str(x).strip()]
+    refs = [str(x) for x in (panel.get("artifact_refs") or []) if str(x).strip()]
+    st.markdown(
+        f"""
+        <div class="ev-storyboard-card">
+          <div class="ev-brief-label">Agent-generated storyboard {("· " + _html_escape(stages)) if stages else ""}</div>
+          <div class="ev-storyboard-title">{_html_escape(str(panel.get('title') or panel_id))}</div>
+          <div class="ev-storyboard-summary">{_html_escape(str(panel.get('summary') or ''))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if items:
+        st.markdown("**Storyboard takeaways**")
+        for item in items[:8]:
+            st.markdown(f"- {item}")
+    if refs:
+        st.caption("Storyboard artifact refs: " + ", ".join(refs[:8]))
+
+
 def _analysis_takeaway(report: dict[str, Any] | None, story: dict[str, Any] | None = None) -> str:
     diag = (story or {}).get("diagnostic_report") or {}
     answer = str(diag.get("answer") or "").strip()
@@ -359,9 +403,11 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
     signals = _candidate_signals(explore_report)
     adj = explore_report.get("adjudication") or {}
     readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
+    storyboard = _storyboard_panels(explore_report, story=story)
 
     st.markdown("### Analysis")
     _render_stage_map(active={"M2"})
+    _render_storyboard_panel(storyboard, "analysis")
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -438,8 +484,10 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
 def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> None:
     """Panel 3: hypotheses, downstream tests, and artifacts needed for decisions."""
     hyps = _hypotheses_with_outcomes(story)
+    storyboard = _storyboard_panels(explore_report or {}, story=story)
     st.markdown("### Hypotheses & Decision")
     _render_stage_map(active={"M3", "M4", "M5"})
+    _render_storyboard_panel(storyboard, "hypotheses_artifacts")
     if hyps:
         st.caption(
             "These are M3 hypotheses formed from the analysis panel. Treat them as "
@@ -476,8 +524,10 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
 
 def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
     signals = _candidate_signals(report)
+    storyboard = _storyboard_panels(report, story=None)
     st.markdown("### Analysis")
     _render_stage_map(active={"M2"})
+    _render_storyboard_panel(storyboard, "analysis")
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -502,8 +552,10 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
 
 
 def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
+    storyboard = _storyboard_panels(report, story=None)
     st.markdown("### Hypotheses & Artifacts")
     _render_stage_map(active={"M3", "M4", "M5"})
+    _render_storyboard_panel(storyboard, "hypotheses_artifacts")
     claims = [c for c in report.get("claims") or [] if isinstance(c, dict)]
     tests = report.get("recommended_confirmatory_tests") or []
     if claims:
@@ -1906,6 +1958,26 @@ def _inject_css() -> None:
           border-left: 3px solid var(--ev-ok);
           background: #f6fef9;
           padding: 0.45rem 0.6rem;
+        }
+        .ev-storyboard-card {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-ok);
+          border-radius: 8px;
+          margin: 0.35rem 0 0.85rem;
+          padding: 0.9rem 1rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-storyboard-title {
+          color: var(--ev-text);
+          font-size: 1rem;
+          font-weight: 760;
+          margin-bottom: 0.35rem;
+        }
+        .ev-storyboard-summary {
+          color: #344054;
+          font-size: 0.92rem;
+          line-height: 1.45;
         }
         .ev-claim-card {
           background: var(--ev-panel);

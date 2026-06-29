@@ -13,6 +13,14 @@ def _explore_report():
         "observations": ["obs"],
         "visual_plan": [{"name": "v", "plot_kind": "bar"}],
         "chart_readings": [{"chart": "C", "reading": "read"}],
+        "dashboard_storyboard": [{
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": "Agent-owned panel text",
+            "items": ["Method: held-out check"],
+            "artifact_refs": ["candidate_signals"],
+        }],
         "charts": [{"name": "c", "title": "C", "data": "tables/c.csv"}],
         "candidate_signals": [
             {"name": "low_focus", "effect": 0.4, "ci": [0.1, 0.7], "reject": True},
@@ -37,6 +45,7 @@ def test_compile_diagnostic_report_is_claim_first():
     leaky = next(c for c in report.claims if "Label audit" in c.text)
     assert leaky.status == "descriptive"
     assert report.chart_readings == [{"chart": "C", "reading": "read"}]
+    assert report.dashboard_storyboard[0]["summary"] == "Agent-owned panel text"
     assert report.critique == ["watch leakage"]
 
 

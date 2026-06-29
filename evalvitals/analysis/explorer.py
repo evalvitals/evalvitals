@@ -100,6 +100,9 @@ Report/dashboard contract:
   (1) Problem Setting = M1/run context and FAIL/PASS setup; (2) Analysis = M2
   methods, evidence/charts, and takeaways; (3) Hypotheses & Artifacts = M3-M5
   follow-up questions and decision evidence.
+- Emit this structure as "dashboard_storyboard": a list of panel dicts
+  {{"id","title","stages","summary","items","artifact_refs"}}. The Streamlit
+  dashboard will render this artifact; do not rely on hard-coded UI copy.
 - For each important analysis method, make the relationship explicit in
   chart_readings or claims: method -> evidence/chart -> takeaway.
 - Use M-stage language consistently: M1=measurement/features, M2=confirmatory
@@ -162,6 +165,20 @@ Discovery outputs:
         "evidence_ids": ["chart:failrate_by_objsize"],
         "interpretation": "Worth confirming as a deterministic signal.",
         "do_not_infer": "Not causal until M5/M4 support it."}}
+    ],
+    "dashboard_storyboard": [
+      {{"id": "problem_setting", "title": "Problem Setting", "stages": ["M1"],
+        "summary": "Labeled FAIL/PASS cases with per-case signals from M1.",
+        "items": ["FAIL means false positive on absent object."],
+        "artifact_refs": ["data_profile"]}},
+      {{"id": "analysis", "title": "Analysis", "stages": ["M2"],
+        "summary": "Held-out signal testing plus chart readings.",
+        "items": ["Method: compare FAIL/PASS effect sizes.", "Takeaway: ..."],
+        "artifact_refs": ["candidate_signals", "charts"]}},
+      {{"id": "hypotheses_artifacts", "title": "Hypotheses & Artifacts",
+        "stages": ["M3", "M4", "M5"],
+        "summary": "Candidate mechanisms and follow-up tests.",
+        "items": ["Test whether ..."], "artifact_refs": ["claims"]}}
     ],
     "candidate_signals": [
       {{"name": "...", "display_name": "<human-readable signal label>",
@@ -276,6 +293,7 @@ class ExploratoryAnalysisReport:
     observations: list[str] = field(default_factory=list)
     visual_plan: list[dict[str, Any]] = field(default_factory=list)
     chart_readings: list[dict[str, Any]] = field(default_factory=list)
+    dashboard_storyboard: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
     candidate_signals: list[CandidateSignal] = field(default_factory=list)
     plots: list[str] = field(default_factory=list)
@@ -307,6 +325,7 @@ class ExploratoryAnalysisReport:
             "observations": self.observations,
             "visual_plan": self.visual_plan,
             "chart_readings": self.chart_readings,
+            "dashboard_storyboard": self.dashboard_storyboard,
             "claims": self.claims,
             "candidate_signals": [s.to_dict() for s in self.candidate_signals],
             "plots": self.plots,
@@ -741,6 +760,7 @@ def _report_from_sandbox(
             observations=[str(x) for x in parsed.get("observations", []) or []],
             visual_plan=_normalize_visual_plan(parsed.get("visual_plan", [])),
             chart_readings=_normalize_list_of_dicts(parsed.get("chart_readings", [])),
+            dashboard_storyboard=_normalize_list_of_dicts(parsed.get("dashboard_storyboard", [])),
             claims=_normalize_list_of_dicts(parsed.get("claims", [])),
             candidate_signals=signals,
             plots=plots,

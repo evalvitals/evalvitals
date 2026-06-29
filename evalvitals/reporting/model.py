@@ -83,6 +83,7 @@ class DiagnosticReport:
     timeline: list[ReportStep] = field(default_factory=list)
     visual_decisions: list[dict[str, Any]] = field(default_factory=list)
     chart_readings: list[dict[str, Any]] = field(default_factory=list)
+    dashboard_storyboard: list[dict[str, Any]] = field(default_factory=list)
     critique: list[str] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
     next_actions: list[str] = field(default_factory=list)
@@ -97,6 +98,7 @@ class DiagnosticReport:
             "timeline": [s.to_dict() for s in self.timeline],
             "visual_decisions": self.visual_decisions,
             "chart_readings": self.chart_readings,
+            "dashboard_storyboard": self.dashboard_storyboard,
             "critique": self.critique,
             "caveats": self.caveats,
             "next_actions": self.next_actions,
