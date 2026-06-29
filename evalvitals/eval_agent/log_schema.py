@@ -100,6 +100,9 @@ _EVENTS: dict[str, dict[str, Any]] = {
             "analyzers": {"type": "array", "items": {"type": "string"}},
             "findings": {"type": "object"},
             "artifact_paths": {"type": "object"},
+            # Additive M1 fields (permissive schema): result_paths (per-analyzer
+            # complete result json), failed_analyzers (selected-but-errored),
+            # selected_analyzers — see RunLogger.log_probe.
             "selection_rationale": {"type": "string"},
             "judge_io": _JUDGE_IO,
             "duration_sec": {"type": "number"},
@@ -131,6 +134,11 @@ _EVENTS: dict[str, dict[str, Any]] = {
             "n_hypotheses": {"type": "integer"},
             "hypotheses": {"type": "array", "items": _HYPOTHESIS},
             "raw_judge_output": {"type": ["string", "null"]},
+            # Provenance of the (UNCONFIRMED) explorer mechanism notes M3 was shown.
+            # Descriptive/display-only — never enters M2/M5/fix.
+            "referenced_charts": {"type": "array", "items": {"type": "string"}},
+            "explore_context_used": {"type": "boolean"},
+            "explore_figures": {"type": "array", "items": {"type": "string"}},
             "judge_io": _JUDGE_IO,
             "duration_sec": {"type": "number"},
         },

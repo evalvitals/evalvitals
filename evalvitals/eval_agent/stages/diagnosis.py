@@ -42,7 +42,7 @@ Overall severity (threshold rules): {severity}
 
 Analysis conclusion (the analyst's interpretation):
 {conclusion}
-{evidence_section}{stats_section}
+{evidence_section}{stats_section}{explore_section}
 Raw findings (JSON):
 {findings_json}
 
@@ -100,15 +100,129 @@ def _format_prior_section(prior_cycles: list[dict]) -> str:
 
 
 @dataclass
+class ExploreContext:
+    """Descriptive mechanism notes from the LAMBDA explorer (Step 1).
+
+    This is **never authoritative**: it is read-only, enters ONLY the M3
+    hypothesis-proposal prompt (and the dashboard), and never the M2 confirmatory
+    family, M5 testing, or the fix gate. It informs *which* hypotheses M3
+    proposes — not *whether* any of them is true. Every chart/observation here is
+    free-form EDA on a HELD-OUT explore split and stays UNCONFIRMED until the
+    downstream M5+M4+e-BH machinery tests it.
+
+    Attributes:
+        observations: Free-text EDA observations.
+        charts:       Chart dicts ``{title, kind, description, figure_path}`` —
+                      ``figure_path`` (when present) is attached to M3 as an image.
+        caveats:      The explorer's own warnings about its findings.
+        source:       Provenance tag (default ``"lambda_explorer"``).
+    """
+
+    observations: list[str] = field(default_factory=list)
+    charts: list[dict[str, Any]] = field(default_factory=list)
+    caveats: list[str] = field(default_factory=list)
+    source: str = "lambda_explorer"
+
+    @classmethod
+    def from_report(cls, data: dict[str, Any] | None) -> "ExploreContext | None":
+        """Build from an explore/fused report dict (``fused_report.json`` etc.).
+
+        Returns ``None`` when *data* is empty or carries no descriptive content,
+        so callers can pass it through unconditionally.
+        """
+        if not data or not isinstance(data, dict):
+            return None
+        observations = [str(x) for x in (data.get("observations") or [])]
+        charts = [dict(c) for c in (data.get("charts") or []) if isinstance(c, dict)]
+        caveats = [str(x) for x in (data.get("caveats") or [])]
+        if not (observations or charts or caveats):
+            return None
+        return cls(
+            observations=observations,
+            charts=charts,
+            caveats=caveats,
+            source=str(data.get("source") or "lambda_explorer"),
+        )
+
+    @property
+    def figure_paths(self) -> list[str]:
+        return [
+            str(c["figure_path"])
+            for c in self.charts
+            if isinstance(c, dict) and c.get("figure_path")
+        ]
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.observations or self.charts or self.caveats)
+
+
+def _format_explore_section(ctx: "ExploreContext | None") -> str:
+    """Render an :class:`ExploreContext` as a strongly-labelled, UNCONFIRMED
+    block for the diagnosis prompt. Returns ``""`` when there is nothing to add."""
+    if ctx is None or ctx.is_empty:
+        return ""
+    lines = [
+        "",
+        "EXPLORATORY MECHANISM NOTES (free-form EDA on a HELD-OUT explore split — "
+        "DESCRIPTIVE, UNCONFIRMED; use ONLY to decide WHICH hypotheses to propose, "
+        "NEVER as evidence; every claim must still be tested downstream):",
+    ]
+    if ctx.observations:
+        lines.append("  observations:")
+        for obs in ctx.observations[:12]:
+            lines.append(f"    - {obs}")
+    if ctx.charts:
+        lines.append("  charts (attached as images when rendered):")
+        for c in ctx.charts[:12]:
+            title = str(c.get("title") or c.get("name") or "chart")
+            desc = str(c.get("description") or c.get("kind") or "")
+            tag = "" if c.get("figure_path") else " [text-only, not rendered]"
+            lines.append(f"    - [{title}]{tag} {desc}")
+    if ctx.caveats:
+        lines.append("  caveats (the explorer's own warnings):")
+        for cav in ctx.caveats[:8]:
+            lines.append(f"    - {cav}")
+    return "\n".join(lines) + "\n"
+
+
+def _extract_referenced(raw: str, ctx: "ExploreContext | None") -> list[str]:
+    """Best-effort, DISPLAY-ONLY list of explore artifacts M3's output referenced.
+
+    Matches chart titles/names mentioned in the judge output as a whole phrase
+    (word boundaries, min length) to avoid crediting a chart just because a short
+    generic title like "rate"/"loss" happens to be a substring of unrelated prose.
+    Used only for provenance/dashboard display — no effect on hypothesis survival.
+    """
+    if ctx is None or ctx.is_empty:
+        return []
+    import re
+
+    low = str(raw).lower()
+    referenced: list[str] = []
+    for c in ctx.charts:
+        for key in ("title", "name"):
+            label = str(c.get(key) or "").strip()
+            # Require a reasonably specific label matched on word boundaries.
+            if len(label) >= 6 and label not in referenced:
+                if re.search(rf"\b{re.escape(label.lower())}\b", low):
+                    referenced.append(label)
+                    break
+    return referenced
+
+
+@dataclass
 class DiagnosisResult:
     """Output of :class:`DiagnosisAgent`.
 
     Attributes:
-        model_name:       ``repr()`` of the analysed model.
-        hypotheses:       Proposed :class:`~evalvitals.eval_agent.hypothesis.Hypothesis`
-                          objects for M4.
-        findings_summary: The findings dict forwarded to the judge.
-        raw_judge_output: Verbatim LLM response (useful for debugging).
+        model_name:           ``repr()`` of the analysed model.
+        hypotheses:           Proposed :class:`~evalvitals.eval_agent.hypothesis.Hypothesis`
+                              objects for M4.
+        findings_summary:     The findings dict forwarded to the judge.
+        raw_judge_output:     Verbatim LLM response (useful for debugging).
+        referenced_charts:    Explore chart titles M3 cited (provenance only).
+        explore_context_used: Whether an :class:`ExploreContext` was supplied.
     """
 
     model_name: str
@@ -116,6 +230,8 @@ class DiagnosisResult:
     findings_summary: dict[str, Any] = field(default_factory=dict)
     raw_judge_output: str = ""
     prompt: str = ""
+    referenced_charts: list[str] = field(default_factory=list)
+    explore_context_used: bool = False
 
 
 _HYPOTHESIS_SCHEMA: dict = {
@@ -372,6 +488,7 @@ class DiagnosisAgent:
         analysis: "AnalysisReport | dict[str, Result]",
         model_name: str = "",
         prior_cycles: list[dict] | None = None,
+        explore_context: "ExploreContext | None" = None,
     ) -> DiagnosisResult:
         """Synthesize *analysis* into a set of falsifiable hypotheses.
 
@@ -448,12 +565,18 @@ class DiagnosisAgent:
             conclusion=conclusion,
             evidence_section=evidence_section,
             stats_section=stats_section,
+            explore_section=_format_explore_section(explore_context),
             available_signals_section=available_signals_section,
             findings_json=json.dumps(summary, indent=2, default=str),
         )
         import inspect as _inspect
         from pathlib import Path as _Path
+        # M2's confirmatory figures, then the explorer's (UNCONFIRMED) charts.
+        # The explore charts are attached to the M3 prompt ONLY — they never reach
+        # M2's confirmatory family, M5, or the fix gate.
         _figs = [_Path(f) for f in getattr(analysis, "figures", []) if _Path(f).exists()]
+        if explore_context is not None:
+            _figs += [_Path(f) for f in explore_context.figure_paths if _Path(f).exists()]
         _sig = _inspect.signature(self.judge.generate)
         if "images" in _sig.parameters and _figs:
             raw = self.judge.generate(prompt, images=_figs)
@@ -491,4 +614,6 @@ class DiagnosisAgent:
             findings_summary=summary,
             raw_judge_output=str(raw),
             prompt=prompt,
+            referenced_charts=_extract_referenced(str(raw), explore_context),
+            explore_context_used=bool(explore_context is not None and not explore_context.is_empty),
         )

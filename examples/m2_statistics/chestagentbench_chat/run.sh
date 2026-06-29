@@ -11,10 +11,11 @@ TIMEOUT_SEC="${TIMEOUT_SEC:-180}"
 
 cmd=(
   evalvitals
-  chat
+  explore
   "$RESULTS_DIR"
   --backend "$CODER_PROVIDER"
   --out "$OUT_DIR"
+  -q "${QUESTION:-Which features distinguish incorrect cases from correct cases?}"
   --max-rows "$MAX_ROWS"
   --max-files "$MAX_FILES"
   --timeout-sec "$TIMEOUT_SEC"

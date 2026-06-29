@@ -1,0 +1,67 @@
+You are selecting diagnostic analyzers for a model evaluation experiment.
+Choose the analyzers that would surface the most useful evidence given the researcher's description.
+
+EXPERIMENT DESCRIPTION:
+For yes/no questions of the form 'Is there a {object} in the image?', the VLM sometimes answers 'Yes' for an object that is NOT in the image (a false detection). Failure cases are absent-object questions the model answers 'Yes'. The batch also contains, as controls, absent-object questions it correctly answers 'No' and present-object questions it correctly answers 'Yes', drawn from the same images and question template; the answer is scored against each question's own ground truth.
+
+TASK DOMAIN: object-presence recognition
+
+
+SUCCESS CRITERIA: parse_yes_no(answer) matches the POPE gold label
+
+
+ADDITIONAL OBSERVATIONS: the answer is 'Yes' although the queried object is not in the image; present-object questions are mostly answered 'Yes' correctly — a change that suppresses these correct 'Yes' answers is not an improvement, only a different error
+
+OBSERVED CASES (PASS=160 FAIL=41 UNKNOWN=0) — select analyzers for what actually failed:
+  [FAIL] prompt: Is there a car in the image? Please answer Yes or No.
+         expected: no
+         model answered: Yes
+  [FAIL] prompt: Is there a bus in the image? Please answer Yes or No.
+         expected: no
+         model answered: Yes
+  [FAIL] prompt: Is there a handbag in the image? Please answer Yes or No.
+         expected: no
+         model answered: Yes
+  [FAIL] prompt: Is there a bottle in the image? Please answer Yes or No.
+         expected: no
+         model answered: Yes
+  [PASS] prompt: Is there a skis in the image? Please answer Yes or No.
+         expected: no
+         model answered: No
+  [PASS] prompt: Is there a person in the image? Please answer Yes or No.
+         expected: yes
+         model answered: Yes
+
+MODEL TYPE: vlm
+
+AVAILABLE ANALYZERS (22 compatible with this model):
+  - attention: Extract and summarise attention weights from a white-box model.
+  - attention_rollout: Attention-rollout influence of each token on the final position.
+  - attention_sink: Per-layer attention mass on the first token (sink strength).
+  - causal_trace: causal_trace
+  - chair: Object-hallucination rate of generated captions vs gold objects.
+  - cka: Pairwise linear-CKA matrix across the model's layers for one input.
+  - counterfactual: Rank a trajectory's tool-call steps by how often re-running flips the outcome.
+  - first_error_judge: Attribute the first-erroneous step via an LLM judge (all-at-once protocol).
+  - ignored_obs: Detect error observations that the agent then ignored (repeated the same call).
+  - linear_probe: Per-layer linear-probe (held-out, balanced) accuracy for PASS/FAIL.
+  - logit_lens: Per-layer readout at one position, plus per-case decision-depth signals.
+  - loop_detect: Detect repeated tool actions in a trajectory.
+  - opera: opera
+  - pope: Score yes/no object-presence probes against gold labels.
+  - prompt_contrast: Re-asks each question under paired prompt interventions (baseline / describe-the-image-first / answer-sensitively) and scores each variant — causal evidence for whether failures are repairable at the prompt level (language prior / threshold miscalibration) or persist regardless (perception failure).
+  - relative_attention: Relative attention to image-patch tokens.
+  - rise: Token-occlusion saliency over the input prompt.
+  - self_consistency: Sample ``n`` generations and report the modal-answer fraction (consistency).
+  - token_entropy: Summarise next-token predictive entropy from a model's logits.
+  - tuned_lens: Tuned-lens projection of hidden states (needs trained translators).
+  - vcd: vcd
+  - verbalized_confidence: Elicit a stated confidence and parse it to a 0–1 float (None if unparseable).
+
+Select up to 3 analyzers. Return ONLY a JSON object, no other text:
+{"analyzers": ["name1", "name2", ...], "rationale": "one sentence explaining the selection"}
+
+If the analyzers you can actually rely on (excluding any listed as failed)
+cannot adequately surface the suspected mechanism, additionally include
+"need_custom": "<one line describing the probe to generate>" in the JSON —
+a bespoke probe will be code-generated and run in a sandbox.

@@ -93,30 +93,33 @@ print(evalvitals.registry.analyzers.names_compatible_with(model))
 
 This is the same discovery surface intended for an automated evaluation agent.
 
-## Standalone M2 Chat
+## Standalone M2 Explore
 
 If you already have result logs and want M2 to analyze them without writing
-analysis code, use the chat CLI:
+analysis code, run a single-shot exploration:
 
 ```bash
-evalvitals chat /path/to/results \
+evalvitals explore /path/to/results \
   --backend antigravity \
-  --out m2_chat_output
+  -q "Which failure patterns distinguish wrong answers from correct ones?" \
+  --out evalvitals_explore_output \
+  --dashboard          # optional
 ```
 
-Each turn writes generated code, stdout/stderr, a structured exploratory report,
-and optional figures/tables under `m2_chat_output/turn_XXX/`.
+The run writes the generated code, stdout/stderr, a structured exploratory
+report (`exploratory_report.json`), and rendered charts under
+`evalvitals_explore_output/figures/` + `tables/`.
 
-Open the saved session as a dashboard:
+Open the saved output as a dashboard:
 
 ```bash
 pip install -e ".[dashboard]"
-evalvitals dashboard m2_chat_output
+evalvitals dashboard evalvitals_explore_output
 ```
 
 See [M2 Statistical Analysis](m2_analysis.md) for the full standalone workflow
-and the boundary between exploratory chat and confirmatory `StatsAnalysisAgent`
-tests.
+and the boundary between exploratory analysis and confirmatory
+`StatsAnalysisAgent` tests.
 
 ## Convenience Shim
 

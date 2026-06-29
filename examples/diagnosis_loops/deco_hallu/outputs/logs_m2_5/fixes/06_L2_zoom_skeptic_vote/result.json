@@ -1,0 +1,45 @@
+{
+  "tier": "L2",
+  "name": "zoom_skeptic_vote",
+  "kind": "spec",
+  "source": "judge",
+  "payload": {
+    "name": "zoom_skeptic_vote",
+    "image_ops": [
+      {
+        "tool": "zoom_center",
+        "params": {
+          "factor": 1.5
+        }
+      },
+      {
+        "tool": "enhance_contrast",
+        "params": {
+          "factor": 1.5
+        }
+      }
+    ],
+    "prompt_template": "{prompt}\nThe presence of this object is not guaranteed. Verify it is genuinely visible before answering. When in doubt, answer No.",
+    "n_samples": 5
+  },
+  "trial_root": null,
+  "n_pairs": 24,
+  "n_fixed": 4,
+  "n_broken": 0,
+  "fixed_cases": [
+    "c560bf98c4ca",
+    "09d651295764",
+    "df9252ab7455",
+    "18ffb4e4a446"
+  ],
+  "broken_cases": [],
+  "effect": 0.16666666666666663,
+  "reject": false,
+  "fixed": false,
+  "summary": "[mcnemar + e-value (paired binary)] effect=+0.1667 (B>A) CI=+0.0417..+0.3333, e=3.20 -> inconclusive [partial, coverage=100%]",
+  "n_applicable": 24,
+  "coverage": 1.0,
+  "n_unstable": 0,
+  "e_value": 3.199999999999995,
+  "verdict": "partial"
+}

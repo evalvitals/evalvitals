@@ -1,0 +1,228 @@
+{
+  "question": "Among these labeled cases, what per-case signals distinguish the FAIL cases (false 'Yes' on an absent object) from the PASS cases? Propose composite signals as deterministic recipes over the available numeric columns.",
+  "ok": true,
+  "observations": [
+    "Outcome column 'label' mapped to 25 FAIL and 96 PASS cases (n=121).",
+    "Numeric signal columns: ['generated_probe1_false_detection', 'relative_attention_max_relative_weight', 'relative_attention_mean_relative_weight', 'relative_attention_focus_share'].",
+    "Strongest single-signal separation: 'relative_attention_focus_share' (|SMD|=1.21).",
+    "Fail rate is 1.00 among probe1-positive vs 0.00 among probe1-negative cases."
+  ],
+  "candidate_signals": [
+    {
+      "name": "generated_probe1_false_detection",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.8664799253034547,
+      "ci": [
+        0.6900093370681606,
+        1.0
+      ],
+      "e_value": null,
+      "reject": true,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "probe1_positive",
+      "source": "explorer",
+      "description": "bridged explorer signal",
+      "suggested_test": "",
+      "recipe": {
+        "name": "probe1_positive",
+        "kind": "expr",
+        "expr": "generated_probe1_false_detection > 0.5"
+      },
+      "operationalized": true,
+      "effect": 0.8664799253034547,
+      "ci": [
+        0.6900093370681606,
+        1.0
+      ],
+      "e_value": null,
+      "reject": true,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "low_focus_share",
+      "source": "explorer",
+      "description": "bridged explorer signal",
+      "suggested_test": "",
+      "recipe": {
+        "name": "low_focus_share",
+        "kind": "expr",
+        "expr": "relative_attention_focus_share > 0.244825"
+      },
+      "operationalized": true,
+      "effect": 0.4070450097847358,
+      "ci": [
+        0.025440313111545987,
+        0.7612524461839529
+      ],
+      "e_value": null,
+      "reject": true,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    }
+  ],
+  "charts": [
+    {
+      "name": "class_balance",
+      "kind": "bar",
+      "data": "tables/class_balance.csv",
+      "x": "outcome",
+      "y": "count",
+      "title": "FAIL vs PASS",
+      "description": "FAIL vs PASS: bar of count by outcome (2 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/00_class_balance.png"
+    },
+    {
+      "name": "groupstats_generated_probe1_false_detection",
+      "kind": "bar",
+      "data": "tables/groupstats_generated_probe1_false_detection.csv",
+      "x": "outcome",
+      "y": "mean",
+      "title": "generated_probe1_false_detection: mean by outcome",
+      "description": "generated_probe1_false_detection: mean by outcome: bar of mean by outcome (2 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/01_groupstats_generated_probe1_false_detection.png"
+    },
+    {
+      "name": "failrate_by_generated_probe1_false_detection",
+      "kind": "line",
+      "data": "tables/failrate_by_generated_probe1_false_detection.csv",
+      "x": "generated_probe1_false_detection_bin",
+      "y": "fail_rate",
+      "title": "Fail rate by generated_probe1_false_detection",
+      "description": "Fail rate by generated_probe1_false_detection: line of fail_rate by generated_probe1_false_detection_bin (1 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/02_failrate_by_generated_probe1_false_detection.png"
+    },
+    {
+      "name": "groupstats_relative_attention_max_relative_weight",
+      "kind": "bar",
+      "data": "tables/groupstats_relative_attention_max_relative_weight.csv",
+      "x": "outcome",
+      "y": "mean",
+      "title": "relative_attention_max_relative_weight: mean by outcome",
+      "description": "relative_attention_max_relative_weight: mean by outcome: bar of mean by outcome (2 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/03_groupstats_relative_attention_max_relative_weigh.png"
+    },
+    {
+      "name": "failrate_by_relative_attention_max_relative_weight",
+      "kind": "line",
+      "data": "tables/failrate_by_relative_attention_max_relative_weight.csv",
+      "x": "relative_attention_max_relative_weight_bin",
+      "y": "fail_rate",
+      "title": "Fail rate by relative_attention_max_relative_weight",
+      "description": "Fail rate by relative_attention_max_relative_weight: line of fail_rate by relative_attention_max_relative_weight_bin (6 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/04_failrate_by_relative_attention_max_relative_weig.png"
+    },
+    {
+      "name": "groupstats_relative_attention_mean_relative_weight",
+      "kind": "bar",
+      "data": "tables/groupstats_relative_attention_mean_relative_weight.csv",
+      "x": "outcome",
+      "y": "mean",
+      "title": "relative_attention_mean_relative_weight: mean by outcome",
+      "description": "relative_attention_mean_relative_weight: mean by outcome: bar of mean by outcome (2 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/05_groupstats_relative_attention_mean_relative_weig.png"
+    },
+    {
+      "name": "failrate_by_relative_attention_mean_relative_weight",
+      "kind": "line",
+      "data": "tables/failrate_by_relative_attention_mean_relative_weight.csv",
+      "x": "relative_attention_mean_relative_weight_bin",
+      "y": "fail_rate",
+      "title": "Fail rate by relative_attention_mean_relative_weight",
+      "description": "Fail rate by relative_attention_mean_relative_weight: line of fail_rate by relative_attention_mean_relative_weight_bin (6 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/06_failrate_by_relative_attention_mean_relative_wei.png"
+    },
+    {
+      "name": "groupstats_relative_attention_focus_share",
+      "kind": "bar",
+      "data": "tables/groupstats_relative_attention_focus_share.csv",
+      "x": "outcome",
+      "y": "mean",
+      "title": "relative_attention_focus_share: mean by outcome",
+      "description": "relative_attention_focus_share: mean by outcome: bar of mean by outcome (2 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/07_groupstats_relative_attention_focus_share.png"
+    },
+    {
+      "name": "failrate_by_relative_attention_focus_share",
+      "kind": "line",
+      "data": "tables/failrate_by_relative_attention_focus_share.csv",
+      "x": "relative_attention_focus_share_bin",
+      "y": "fail_rate",
+      "title": "Fail rate by relative_attention_focus_share",
+      "description": "Fail rate by relative_attention_focus_share: line of fail_rate by relative_attention_focus_share_bin (6 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/08_failrate_by_relative_attention_focus_share.png"
+    },
+    {
+      "name": "top_discriminators",
+      "kind": "bar",
+      "data": "tables/top_discriminators.csv",
+      "x": "signal",
+      "y": "separation",
+      "title": "Top FAIL/PASS discriminators",
+      "description": "Top FAIL/PASS discriminators: bar of separation by signal (4 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/09_top_discriminators.png"
+    },
+    {
+      "name": "corr_with_fail",
+      "kind": "bar",
+      "data": "tables/corr_with_fail.csv",
+      "x": "signal",
+      "y": "corr_with_fail",
+      "title": "Signal correlation with FAIL",
+      "description": "Signal correlation with FAIL: bar of corr_with_fail by signal (4 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/10_corr_with_fail.png"
+    },
+    {
+      "name": "scatter_top_pair",
+      "kind": "scatter",
+      "data": "tables/scatter_top_pair.csv",
+      "x": "x",
+      "y": "y",
+      "title": "relative_attention_focus_share vs relative_attention_mean_relative_weight by outcome",
+      "description": "relative_attention_focus_share vs relative_attention_mean_relative_weight by outcome: scatter of y by x (20 rows)",
+      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/11_scatter_top_pair.png"
+    }
+  ],
+  "recommended_confirmatory_tests": [
+    "Confirm probe1_positive recipe on a held-out split (two-group fail-rate contrast).",
+    "Collect attention features for all rows, then re-test focus_share threshold."
+  ],
+  "caveats": [
+    "Attention columns are populated for only 20 of 121 rows; attention-based signals are exploratory on that subset only.",
+    "Exploratory only \u2014 no causal or multiplicity-adjusted claim; host confirms on held-out split.",
+    "marginal per-case signal verdicts are CI-based at alpha and NOT e-BH FDR-corrected across the signal family (unpaired test has no e-value)"
+  ],
+  "adjudication": {
+    "method": "e-BH",
+    "alpha": 0.05,
+    "n_in_family": 1,
+    "rejected_tools": [
+      "single_rate_evalue"
+    ],
+    "n_signals_tested": 3,
+    "n_signals_rejected": 3,
+    "split": "held_out"
+  },
+  "split": {
+    "mode": "held_out",
+    "n_total": 201,
+    "n_explore": 121,
+    "n_confirm": 80,
+    "frac": 0.4,
+    "seed": 0
+  },
+  "conclusion": "Standalone statistical analysis found a supported signal. Statistically supported: signal 'generated_probe1_false_detection' vs FAIL: [clustered bootstrap (unpaired)] effect=+0.8665 (B>A) CI=+0.6900..+1.0000 -> REJECT H0"
+}

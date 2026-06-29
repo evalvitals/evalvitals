@@ -36,18 +36,62 @@ A JSON file named "{input_filename}" is in the current working directory.
 It contains a list of row dictionaries. Data profile:
 {data_profile}
 
-Write a self-contained Python script that:
-- reads "{input_filename}" from the current working directory
-- explores patterns relevant to the question
-- may use only local Python packages; no network and no repo mutation
-- when useful, writes summary tables under a local "tables/" directory as CSV
-- when useful, writes plots under a local "figures/" directory as PNG
-- when useful, returns chart specs in "charts": each spec should include
-  {{"name", "kind", "data", "x", "y", "title"}} where data points to a CSV table
-- does NOT claim causal/statistical confirmation; this is exploratory only
-- prints the final result as the LAST stdout line exactly like:
-  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "..."}}], "plots": ["figures/name.png"], "tables": {{}}, "charts": [], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+Write a self-contained Python script that performs a THOROUGH, Lambda-style
+exploratory failure analysis and PRODUCES A RICH SET OF CHARTS BY DEFAULT.
 
+Setup:
+- reads "{input_filename}" from the current working directory
+- may use only local Python packages (pandas / numpy / matplotlib are fine); no
+  network and no repo mutation
+- identify the outcome column (label / is_correct / is_fail / pass-fail) and call
+  the two groups FAIL and PASS. Identify the numeric signal columns and any
+  categorical group columns (model, source_dir, probe_type, ...).
+
+VISUAL ANALYSIS — produce a COMPREHENSIVE set of charts, NOT one. Aim for 6-12
+charts that together tell the FAIL-vs-PASS story. Build this standard battery for
+whichever columns exist (skip a chart only if its columns are absent):
+  1. Class balance: count of FAIL vs PASS overall (and per model/group if present).
+  2. Per numeric signal — how it separates FAIL vs PASS: group mean/median per
+     outcome (grouped bar), AND a binned fail-rate curve (bin -> fail_rate).
+  3. Top discriminators: a ranked bar of each signal's FAIL-vs-PASS separation
+     (e.g. standardized mean difference / |meanFAIL - meanPASS| / s), largest first.
+  4. Fail rate by each categorical group column (bar).
+  5. Signal correlations: a correlation table (and optionally a heatmap PNG).
+  6. 1-2 scatter plots of the most discriminative signal pairs, coloured by outcome.
+
+For EVERY chart you report in "charts":
+- write its plotted data as a CSV under "tables/<name>.csv"
+- add a spec {{"name","kind","data","x","y","title"}} with data="tables/<name>.csv"
+  and kind in {{"bar","line","scatter"}}. The HOST renders these deterministically,
+  so PRE-AGGREGATE distributions into the CSV (histogram = bin->count; fail rate =
+  bin->fail_rate; group comparison = group->value) — never rely on a raw dump.
+ADDITIONALLY you MAY draw richer figures (box / violin / heatmap / scatter-matrix)
+directly as PNG under "figures/" and list them in "plots"; a figure-styling skill
+(when available) will make these publication-quality.
+
+Discovery outputs:
+- does NOT claim causal/statistical confirmation; this is exploratory only
+- PREFERRED: for any composite / threshold / interaction signal that is a
+  DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
+  compute it on a HELD-OUT split and confirm it rigorously:
+    "recipe": {{"name": "<new signal key>", "kind": "expr",
+                "expr": "<boolean/numeric expression over the numeric columns above>"}}
+  The expr may use the columns BY NAME, comparisons (< <= > >= == !=), and/or/not,
+  arithmetic (+ - * / %), and abs/min/max/float/int/len. It must NOT reference the
+  label/outcome column (a recipe is a PREDICTOR, never the answer). Example:
+    "recipe": {{"name": "small_and_peripheral", "kind": "expr", "expr": "(obj_size < 40) and (focus_share < 0.3)"}}
+  Emit a recipe rather than prose whenever the candidate is computable from the columns.
+- ALTERNATIVELY, you MAY attach host-adjudicable "sufficient" statistics computed
+  from the rows, as ONE of these shapes:
+    {{"kind": "two_group", "a": [0/1, ...], "b": [0/1, ...]}}   # is_fail indicators among signal-ABSENT (a) vs signal-PRESENT (b) cases
+    {{"kind": "paired_binary", "b": <int>, "c": <int>}}          # discordant counts of a paired intervention (b = flips the good way, c = the bad way)
+  Do NOT emit "reject"/"e_value"/"p_value" anywhere — the HOST recomputes the
+  verdict from "recipe"/"sufficient" with its validated, multiplicity-aware core; a
+  self-declared verdict is ignored. Omit both for descriptive-only signals.
+- prints the final result as the LAST stdout line exactly like (note "charts" is a
+  RICH list here, one entry per CSV you wrote):
+  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "recipe": {{"name": "...", "kind": "expr", "expr": "(col_a < 40) and (col_b < 0.3)"}}}}], "plots": ["figures/corr_heatmap.png"], "tables": {{}}, "charts": [{{"name": "class_balance", "kind": "bar", "data": "tables/class_balance.csv", "x": "outcome", "y": "count", "title": "FAIL vs PASS"}}, {{"name": "failrate_by_objsize", "kind": "line", "data": "tables/failrate_by_objsize.csv", "x": "obj_size_bin", "y": "fail_rate", "title": "Fail rate by object size"}}, {{"name": "top_discriminators", "kind": "bar", "data": "tables/top_discriminators.csv", "x": "signal", "y": "separation", "title": "Top FAIL/PASS discriminators"}}], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+{skills_hint}
 Return ONLY the Python code{fences_hint}."""
 
 _REPAIR_PROMPT = """\
@@ -79,17 +123,48 @@ Rewrite the script. It must read "{input_filename}" and print a final
 
 @dataclass
 class CandidateSignal:
-    """A signal worth testing later in confirmatory M2."""
+    """A signal worth testing later in confirmatory M2.
+
+    The explorer PROPOSES this signal; it has no adjudication authority. When the
+    explorer attaches host-adjudicable ``sufficient`` statistics, the host
+    (:func:`evalvitals.analysis.adjudicate.adjudicate_report`) recomputes the
+    verdict with the validated, multiplicity-aware core and fills in the
+    ``effect`` / ``ci`` / ``e_value`` / ``reject`` / ``host_adjudicated`` fields.
+    Any ``reject`` / ``e_value`` the explorer self-declares is IGNORED — proposing
+    is not validating; only ``sufficient`` (or, in Phase B, ``recipe``) is read.
+    """
 
     name: str
     rationale: str = ""
     suggested_test: str = ""
+    # --- proposed by the explorer (no authority over the verdict) ---
+    sufficient: dict[str, Any] | None = None  # host-adjudicable sufficient stats
+    recipe: dict[str, Any] | None = None       # Phase B operationalization recipe
+    # --- filled in by the host adjudication pass (authoritative) ---
+    effect: float | None = None
+    ci: tuple[float, float] | None = None
+    e_value: float | None = None
+    reject: bool | None = None
+    underpowered: bool = False
+    host_adjudicated: bool = False
+    fdr_corrected: bool = False
+    descriptive_only: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "rationale": self.rationale,
             "suggested_test": self.suggested_test,
+            "sufficient": self.sufficient,
+            "recipe": self.recipe,
+            "effect": self.effect,
+            "ci": list(self.ci) if self.ci is not None else None,
+            "e_value": self.e_value,
+            "reject": self.reject,
+            "underpowered": self.underpowered,
+            "host_adjudicated": self.host_adjudicated,
+            "fdr_corrected": self.fdr_corrected,
+            "descriptive_only": self.descriptive_only,
         }
 
 
@@ -107,6 +182,9 @@ class ExploratoryAnalysisReport:
     caveats: list[str] = field(default_factory=list)
     recommended_confirmatory_tests: list[str] = field(default_factory=list)
     data_profile: dict[str, Any] = field(default_factory=dict)
+    # Host adjudication family metadata (method/alpha/split/n_in_family/rejected),
+    # filled by evalvitals.analysis.adjudicate; empty until adjudicated.
+    adjudication: dict[str, Any] = field(default_factory=dict)
     code: str = ""
     stdout: str = ""
     stderr: str = ""
@@ -131,6 +209,7 @@ class ExploratoryAnalysisReport:
             "caveats": self.caveats,
             "recommended_confirmatory_tests": self.recommended_confirmatory_tests,
             "data_profile": self.data_profile,
+            "adjudication": self.adjudication,
             "code": self.code,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -283,6 +362,7 @@ class M2ExplorerAgent:
             input_filename=_INPUT_FILENAME,
             data_profile=json.dumps(profile, indent=2, default=str),
             marker=_RESULT_MARKER,
+            skills_hint=_skills_hint(self._cli_config),
             fences_hint=_fences_hint(self._cli_config),
         )
         return self._run_writer(prompt, use_inspector=False)
@@ -540,6 +620,8 @@ def _report_from_sandbox(
             name=str(item.get("name", "")),
             rationale=str(item.get("rationale", "")),
             suggested_test=str(item.get("suggested_test", "")),
+            sufficient=item["sufficient"] if isinstance(item.get("sufficient"), dict) else None,
+            recipe=item["recipe"] if isinstance(item.get("recipe"), dict) else None,
         )
         for item in parsed.get("candidate_signals", []) or []
         if isinstance(item, dict) and item.get("name")
@@ -616,3 +698,25 @@ def _fences_hint(cli_config: "CliAgentConfig | None") -> str:
     if cli_config is not None and cli_config.provider != "llm":
         return ", written to a file named analysis.py"
     return " inside a ```python code block"
+
+
+def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
+    """Prompt addendum steering the agent to use available Agent Skills (e.g. a
+    figure-styling skill) for the plots it writes. Empty unless skills are enabled
+    on the CLI backend. Skills style the agent-authored ``figures/*.png`` only;
+    the host-rendered ``charts`` (spec+CSV) stay deterministic and unstyled."""
+    if cli_config is None or not getattr(cli_config, "skills_enabled", False):
+        return ""
+    from pathlib import Path as _P
+
+    names = [_P(s).name for s in (cli_config.skills or [])]
+    which = ("the " + ", ".join(f"`/{n}`" for n in names) + " skill(s)") if names else "any installed Agent Skills"
+    return (
+        "\nFIGURE STYLING: Agent Skills are available. When you write plots under "
+        f"figures/, you MAY invoke {which} to produce publication-quality, "
+        "well-labelled matplotlib figures. This is a non-interactive PYTHON "
+        "analysis: if a skill asks you to choose a plotting backend, choose "
+        "Python and proceed without pausing — never stop to ask a question. Use a "
+        "skill for styling only — it must not change the data, the analysis, the "
+        "sandbox workflow, or the final result JSON.\n"
+    )

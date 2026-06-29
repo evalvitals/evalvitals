@@ -238,7 +238,7 @@ def _service_call(
             if not enable_attend:
                 return {"error": "model_attend requires fix tier >= L3a on a "
                                  "white-box model"}
-            from evalvitals.eval_agent.stages.fix_internals import attention_heatmap
+            from evalvitals.analyzers.attention.relative_attn import attention_heatmap
 
             grid = attention_heatmap(model, case)
             if grid is None:

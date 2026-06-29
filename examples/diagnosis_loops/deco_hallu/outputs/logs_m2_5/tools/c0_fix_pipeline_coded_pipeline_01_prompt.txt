@@ -1,0 +1,52 @@
+You are writing a PYTHON PIPELINE (tier L2: a scaffold around the unchanged vision-language model) that repairs the failures described below.  Design any
+pipeline you want — the only constraint is that the model itself is unchanged.
+
+VERIFIED FAILURE HYPOTHESES:
+- [hallucination (language_prior)] Over-detection is driven by a language/co-occurrence prior ("Yes" bias for objects commonly co-present with the scene) that is upstream of vision, so it persists even when attention is non-pathological and is immune to prompt reformatting.
+- [attention_sink] The "peaked attention" is a content-independent positional attention sink on a fixed patch cluster (indices ~58/59/69/80) rather than fixation on a queried-object region, so high max_relative_weight reflects a layer-20 sink token, not perceptual misgrounding.
+
+EXAMPLE FAILING PROMPTS:
+- Is there a car in the image? Please answer Yes or No.
+- Is there a car in the image? Please answer Yes or No.
+- Is there a bear in the image? Please answer Yes or No.
+- Is there a handbag in the image? Please answer Yes or No.
+- Is there a cup in the image? Please answer Yes or No.
+- Is there a bear in the image? Please answer Yes or No.
+- Is there a handbag in the image? Please answer Yes or No.
+- Is there a bicycle in the image? Please answer Yes or No.
+- Is there a bus in the image? Please answer Yes or No.
+- Is there a handbag in the image? Please answer Yes or No.
+- Is there a bowl in the image? Please answer Yes or No.
+- Is there a chair in the image? Please answer Yes or No.
+
+EXECUTION CONTRACT:
+- "fix_cases.json" in the current directory: {"cases": [{"id": str, "prompt": str}]}
+- A function  model_generate(case_id, prompt=None, image_ops=None) -> str  is
+  ALREADY DEFINED in your namespace (do NOT import or redefine it).  It runs
+  the ORIGINAL model on that case: optional prompt override, optional image
+  transforms applied to the case's image first.  image_ops MUST be a list of
+  {"tool": "<name>", "params": {...}} dicts using ONLY these tools
+  (anything else is rejected with an error):
+- zoom_center: crop the central 1/factor region, resize back — magnifies small findings  [params: factor: float >= 1 (default 1.5)]
+- enhance_contrast: global contrast boost — low-contrast findings  [params: factor: float (default 1.5)]
+- sharpen: edge sharpening — blurred or subtle boundaries  [params: factor: float (default 2.0)]
+- equalize: histogram equalization — compressed dynamic range  [params: (no params)]
+- upscale: resize up before encoding — more vision tokens per region  [params: factor: float >= 1 (default 2.0)]
+- crop_region: crop an arbitrary region and resize back — magnify a known area  [params: box: [left, top, right, bottom] normalized 0..1]
+- crop_case_bbox: crop the per-case bbox stored in metadata and resize back — paper-style human-CROP for TextVQA answer regions, optionally sharpened/enhanced  [params: bbox_key: str metadata key (default answer_bbox_xyxy_norm), padding: float (default 0.15), min_size_frac: float (default 0.08), sharpen_factor: float (default 1), contrast_factor: float (default 1)]
+- crop_salient_region: detect content that differs from a uniform border/background, crop it with padding, and resize back — magnifies small objects  [params: padding: float 0-0.5 (default 0.05), min_delta: float (default 18)]
+- separate_horizontal_bands: detect adjacent horizontal color bands and redraw them as separated, thick bands — makes sub-patch stripe structure countable  [params: min_delta: float (default 18), color_delta: float (default 35), min_width_frac: float 0-1 (default 0.35)]
+- annotate_horizontal_band_count: detect adjacent horizontal color bands and overlay a visual COUNT: N measurement derived from the image pixels  [params: min_delta: float (default 18), color_delta: float (default 35), min_width_frac: float 0-1 (default 0.35), min_count: int (default 1)]
+- A function  model_attend(case_id, prompt=None) -> {"grid": [[float,...],...], "shape": [H, W]}  is ALSO defined: the model's attention heatmap over image patches (read-only internals). Use it e.g. to find where the model looks, then crop_region there and re-ask.
+- You may call the model SEVERAL times per case (budget ~6 calls/case) and
+  branch on its outputs — e.g. ask where the finding could be, zoom there,
+  re-ask; describe first, then decide; vote over variants.
+- The LAST line of stdout MUST be exactly:
+  FIX_PIPELINE_RESULT_JSON={"per_case": [{"sample_id": "<case id>", "output": "<final answer text>"}]}
+- Emit an entry for EVERY case.  The "output" is scored externally against the
+  original question, so it must answer that question faithfully (e.g. contain
+  a clear yes/no for yes/no questions).
+- Standard library + numpy only.  No network, no file writes.  Keep it under
+  ~80 lines.
+
+Return ONLY the Python code, written to a file named pipeline.py.

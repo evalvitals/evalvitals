@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Any
 
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 from evalvitals.eval_agent.stages.stats_tools import StatsInput, StatsToolResult, describe_data
+from evalvitals.stats import compare
+from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
@@ -66,12 +68,19 @@ Data shape available for THIS run:
 
 REQUIREMENTS:
 - Read "{input_filename}" from the current directory. Do NOT hardcode the data.
-- You MAY `import evalvitals.stats` (compare, compare_multiple, mcnemar,
-  evalue_bernoulli, ebh, kendall_tau) and `import numpy`. No network, no file
-  writes, no other I/O.
-- Every verdict must carry an effect size; never decide on a bare p-value.
+- You MAY `import numpy`. No network, no file writes, no other I/O.
+- You decide WHAT statistic to compute, but you do NOT adjudicate significance.
+  Do NOT emit a "reject", "e_value", or "p_value" verdict — the HOST recomputes
+  the decision from your SUFFICIENT STATISTICS with its validated,
+  multiplicity-aware core; a self-declared verdict is ignored.
 - The LAST line of stdout MUST be exactly one line of the form:
-  {marker}{{"summary": "<one sentence>", "effect": <number or null>, "ci": [lo, hi] or null, "reject": <true/false/null>, "e_value": <number or null>, "p_value": <number or null>, "underpowered": <true/false>, "details": {{}}}}
+  {marker}{{"summary": "<one sentence>", "effect": <number or null>, "ci": [lo, hi] or null, "underpowered": <true/false>, "details": {{}}, "sufficient": <a SUFFICIENT-STATISTICS object or null>}}
+- "sufficient" must be ONE of these host-adjudicable shapes:
+    {{"kind": "paired_binary", "b": <int: #cases that flipped the GOOD way>, "c": <int: #cases that flipped the BAD way>}}
+    {{"kind": "two_group", "a": [0/1, ...], "b": [0/1, ...]}}   # two independent success/indicator vectors (e.g. is_fail among signal-absent vs signal-present)
+  If your statistic cannot be expressed as one of these, set "sufficient": null —
+  your tool is then DESCRIPTIVE (it reports effect/CI but can never claim a
+  rejection). Choose the shape that captures your test; the host owns the verdict.
 - Print NOTHING after that line. Keep the script under ~60 lines.
 
 Return ONLY the Python code{fences_hint}."""
@@ -122,10 +131,14 @@ class StatsToolGenerator:
         max_cpu_seconds: int | None = None,
         max_memory_bytes: int | None = None,
         run_logger: "Any | None" = None,
+        alpha: float = 0.05,
     ) -> None:
         self._judge = judge
         self._cli_config = cli_config
         self._timeout_sec = timeout_sec
+        # Significance level the HOST uses to reconstruct each generated tool's
+        # reject decision from its sufficient statistics (the LLM never decides).
+        self._alpha = float(alpha)
         self._sandbox = sandbox or ExperimentSandbox(
             max_cpu_seconds=max_cpu_seconds,
             max_memory_bytes=max_memory_bytes,
@@ -296,7 +309,7 @@ class StatsToolGenerator:
                 details={"returncode": sandbox_result.returncode,
                          "timed_out": sandbox_result.timed_out},
             )
-        return _parse_result(sandbox_result.stdout, name)
+        return _parse_result(sandbox_result.stdout, name, self._alpha)
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +325,52 @@ def _extract_code(raw: str) -> str:
     return cleaned.strip()
 
 
-def _parse_result(stdout: str, name: str) -> StatsToolResult:
-    """Parse the last ``STATS_RESULT_JSON=`` line of *stdout*."""
+def _reconstruct_decision(
+    suff: Any, alpha: float
+) -> "tuple[bool, float | None, float | None, tuple | None] | None":
+    """Recompute ``(reject, e_value, effect, ci)`` HOST-SIDE from a generated
+    tool's sufficient statistics, using the validated core — so a generated
+    tool can choose WHAT statistic to compute but never WHETHER to reject.
+
+    Returns ``None`` when *suff* is missing or not an adjudicable shape; the
+    caller then treats the tool as descriptive (``reject=False``).
+    """
+    if not isinstance(suff, dict):
+        return None
+    kind = suff.get("kind")
+    try:
+        if kind == "paired_binary":
+            b, c = int(suff["b"]), int(suff["c"])
+            if b < 0 or c < 0:
+                return None
+            n = b + c
+            e_value = evalue_bernoulli(b, n, p0=0.5) if n > 0 else 1.0
+            reject = e_value >= 1.0 / alpha
+            effect = (b - c) / n if n > 0 else 0.0
+            return reject, float(e_value), effect, None
+        if kind == "two_group":
+            a = [int(x) for x in suff["a"]]
+            grp_b = [int(x) for x in suff["b"]]
+            if not a or not grp_b:
+                return None
+            sr = compare(a, grp_b, paired=False, alpha=alpha)
+            return bool(sr.reject), sr.e_value, sr.effect, tuple(sr.ci)
+    except (KeyError, TypeError, ValueError):
+        return None
+    return None
+
+
+def _parse_result(stdout: str, name: str, alpha: float = 0.05) -> StatsToolResult:
+    """Parse the last ``STATS_RESULT_JSON=`` line of *stdout*.
+
+    The generated script supplies a DESCRIPTION (summary/effect/ci/details) plus
+    SUFFICIENT STATISTICS; the host reconstructs the *decision*
+    (reject / e-value) from those statistics via the validated core. A
+    self-declared ``reject``/``e_value``/``p_value`` in the JSON is IGNORED — the
+    LLM proposes evidence, it never adjudicates it. A tool with no adjudicable
+    sufficient statistic is descriptive only (``reject=False``), mirroring the
+    ``single_rate_evalue`` muzzle, so it can never reach M5's headline.
+    """
     marker_line = None
     for line in stdout.splitlines():
         s = line.strip()
@@ -337,17 +394,34 @@ def _parse_result(stdout: str, name: str) -> StatsToolResult:
 
     ci = data.get("ci")
     ci_tuple = tuple(ci) if isinstance(ci, (list, tuple)) and len(ci) == 2 else None
+    effect = _as_float(data.get("effect"))
+    details = data.get("details") if isinstance(data.get("details"), dict) else {}
+
+    # HOST reconstructs the decision; the script's own reject/e_value/p_value are
+    # never trusted as a verdict (closes the codegen p-hacking hole).
+    recon = _reconstruct_decision(data.get("sufficient"), alpha)
+    if recon is not None:
+        reject, e_value, eff_h, ci_h = recon
+        if eff_h is not None:
+            effect = eff_h
+        if ci_h is not None:
+            ci_tuple = ci_h
+        details = {**details, "host_adjudicated": True}
+    else:
+        reject, e_value = False, None
+        details = {**details, "host_adjudicated": False, "descriptive_only": True}
+
     return StatsToolResult(
         tool=f"generated:{name}",
         ok=True,
         summary=str(data.get("summary", "")) or f"generated:{name}",
-        effect=_as_float(data.get("effect")),
+        effect=effect,
         ci=ci_tuple,
-        reject=data.get("reject"),
-        e_value=_as_float(data.get("e_value")),
-        p_value=_as_float(data.get("p_value")),
+        reject=reject,
+        e_value=e_value,
+        p_value=None,  # diagnostic at most; never a host decision input
         underpowered=bool(data.get("underpowered", False)),
-        details=data.get("details") if isinstance(data.get("details"), dict) else {},
+        details=details,
     )
 
 

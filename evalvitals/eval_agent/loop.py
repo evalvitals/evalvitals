@@ -348,6 +348,7 @@ class AutoDiagnoseLoop:
                     judge_prompt=getattr(self.probe_agent, "last_selection_prompt", ""),
                     judge_raw=getattr(self.probe_agent, "last_selection_raw", ""),
                     duration_sec=_dt,
+                    failed_analyzers=getattr(self.probe_agent, "_failed_analyzers", None) or None,
                 )
                 _log_generated_tools(self.run_logger, cycle, "m1_probe", self.probe_agent)
             if not probe_results:
@@ -626,6 +627,43 @@ _STOPPED_BY_NO_HYPS   = "no_hypotheses"
 _STOPPED_BY_NO_PROBE  = "no_probe_results"
 
 
+def _coerce_explore_context(value: "Any | None") -> "Any | None":
+    """Normalise an explore_report argument into an ExploreContext or None.
+
+    Accepts an ``ExploreContext``, a report dict (e.g. ``fused_report.json``),
+    or ``None``. Never raises — a malformed value degrades to ``None``."""
+    if value is None:
+        return None
+    try:
+        from evalvitals.eval_agent.stages.diagnosis import ExploreContext
+
+        if isinstance(value, ExploreContext):
+            return None if value.is_empty else value
+        if isinstance(value, dict):
+            return ExploreContext.from_report(value)
+    except Exception as exc:  # explore context is optional, never fatal
+        logger.warning("could not build ExploreContext from explore_report: %s", exc)
+    return None
+
+
+def _diagnose_with_optional_context(
+    diag_agent: "Any", stats_report: "Any", prior_cycles: "Any", explore_context: "Any | None"
+) -> "Any":
+    """Call ``diag_agent.diagnose`` passing ``explore_context`` only when the
+    agent accepts it, so custom/legacy diagnosis agents keep working unchanged."""
+    import inspect as _inspect
+
+    kwargs: dict[str, Any] = {"prior_cycles": prior_cycles or None}
+    if explore_context is not None:
+        try:
+            params = _inspect.signature(diag_agent.diagnose).parameters
+            if "explore_context" in params:
+                kwargs["explore_context"] = explore_context
+        except (TypeError, ValueError):
+            pass
+    return diag_agent.diagnose(stats_report, **kwargs)
+
+
 @dataclass
 class VLDiagnoseReport:
     """Summary returned by :class:`VLDiagnoseLoop.run`.
@@ -714,6 +752,11 @@ class VLDiagnoseLoop:
         run_logger: "Any | None" = None,
         token_budget: int = 0,
         analysis_only: bool = False,
+        confirm_split: float = 0.0,
+        confirm_split_seed: int = 0,
+        signal_recipes: "list | None" = None,
+        bridge_analyzer_name: str = "explored",
+        explore_report: "Any | None" = None,
     ) -> None:
         from evalvitals.eval_agent.stages.fix_agent import FixAgent
         from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
@@ -734,8 +777,112 @@ class VLDiagnoseLoop:
         self.run_logger = run_logger
         self.token_budget = token_budget
         self.analysis_only = analysis_only
+        # Held-out CONFIRM split (leak #3): fraction of the batch reserved, away
+        # from M1-M5 hypothesis generation, for the post-loop fix/surgery to
+        # validate on — so the deployed fix is confirmed on data the loop never
+        # mined. 0.0 = off (current behavior); the split is deterministic
+        # (stratified by label+probe_type, seeded), so run() and run_m4/run_fix
+        # derive the identical partition from the same input batch.
+        self.confirm_split = float(confirm_split)
+        self.confirm_split_seed = int(confirm_split_seed)
+        # Operationalization bridge (off by default): pre-registered SignalRecipes
+        # are compiled over the analyzer per_case signals each cycle into a synthetic
+        # "<bridge_analyzer_name>" analyzer Result, so LAMBDA-discovered composite
+        # signals enter M2's family via the standard findings["per_case"] contract.
+        # Leak-free by construction — recipes must be discovered out-of-band (e.g.
+        # the fused pipeline's held-out split), never by peeking at these labels.
+        self._signal_recipes = list(signal_recipes or [])
+        self._bridge_analyzer_name = bridge_analyzer_name
+        # Step-1 explorer mechanism notes (charts/observations/caveats). Descriptive,
+        # UNCONFIRMED: passed to M3's hypothesis-proposal prompt ONLY — never to the
+        # M2 confirmatory family, M5 testing, or the fix gate. Accepts an
+        # ExploreContext, a report dict (fused_report.json), or None.
+        self._explore_context = _coerce_explore_context(explore_report)
         self._tokens_used: int = 0
         self._run_id: str = ""
+
+    @staticmethod
+    def _strat_key(case: "Any") -> "tuple":
+        """Stratify the explore/confirm split by label + probe_type when present
+        (keeps the no-free-lunch control mix, e.g. present-detections, in both
+        partitions). Falls back to label alone for generic batches."""
+        label = getattr(getattr(case, "label", None), "value", "?")
+        probe = (getattr(case, "metadata", {}) or {}).get("probe_type")
+        return (label, probe)
+
+    def _split_explore_confirm(self, data: "CaseBatch"):
+        """Deterministic, stratified (explore, confirm) partition.
+
+        Returns ``(explore_batch, confirm_batch)``. When ``confirm_split <= 0``
+        (or the batch is too small to split), returns ``(data, None)`` — a
+        no-op, so existing runs are byte-for-byte unchanged.
+        """
+        from evalvitals.core.case import CaseBatch
+        from evalvitals.stats.subset_sampling import stratified_subset
+
+        cases = list(data)
+        frac = self.confirm_split
+        if frac <= 0.0 or len(cases) < 4:
+            return data, None
+        n_confirm = round(len(cases) * frac)
+        if n_confirm <= 0 or n_confirm >= len(cases):
+            return data, None
+        confirm = stratified_subset(cases, self._strat_key, n_confirm,
+                                    seed=self.confirm_split_seed)
+        confirm_ids = {id(c) for c in confirm}
+        explore = [c for c in cases if id(c) not in confirm_ids]
+        return CaseBatch(explore), CaseBatch(confirm)
+
+    def _bridge_signals(self, probe_results: "dict[str, Any]", data: "Any | None") -> None:
+        """Compile pre-registered signal recipes into a synthetic analyzer Result
+        and inject it into *probe_results* so M2/M3/M5 see the bridged composite
+        signals through the standard findings["per_case"] contract. No-op when no
+        recipes are configured. Never raises into the loop."""
+        if not self._signal_recipes:
+            return
+        # Never silently overwrite a real analyzer that already used this key.
+        name = self._bridge_analyzer_name
+        if name in probe_results:
+            base, n = name, 1
+            while name in probe_results:
+                name, n = f"{base}_bridge{n}", n + 1
+            logger.warning(
+                "bridge analyzer name %r collides with a real analyzer; "
+                "injecting under %r instead", base, name,
+            )
+        try:
+            from evalvitals.analysis.operationalize import bridge_recipes_to_result
+
+            synth = bridge_recipes_to_result(
+                self._signal_recipes, probe_results, data,
+                model_repr=repr(self.model),
+                analyzer_name=name,
+            )
+        except Exception as exc:  # bridging must never sink the loop
+            logger.warning("signal bridge failed: %s", exc)
+            return
+        if synth is None:
+            return
+        probe_results[name] = synth
+        self.store.add_result(synth)
+        # The bridged signals ARE the discovered candidates — they must be tested,
+        # not optional. default_plan caps at the stats agent's max_signal_tools and
+        # appends bridged signals LAST, so a low cap silently drops them. Raise the
+        # cap to cover the expanded family (more multiplicity = more conservative,
+        # never less — e-BH still controls FDR over whatever is tested).
+        agent = getattr(self, "stats_agent", None)
+        if agent is not None and hasattr(agent, "_max_signal_tools"):
+            try:
+                from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+
+                n_signals = len(build_stats_input(probe_results, data).per_case)
+                agent._max_signal_tools = max(int(agent._max_signal_tools), n_signals)
+            except Exception as exc:  # never let the cap-bump break the loop
+                logger.debug("bridge: could not raise stats signal cap: %s", exc)
+        logger.info(
+            "bridged %d signal row(s) into M2 as analyzer %r",
+            len(synth.findings.get("per_case", [])), name,
+        )
 
     # ──────────────────────────────────────────────────────────────────
     # Public API
@@ -761,6 +908,17 @@ class VLDiagnoseLoop:
 
         # Per-stage wall-clock totals (seconds) for the loop_end cost profile.
         timings: dict[str, float] = {}
+
+        # Held-out CONFIRM split (leak #3): M1-M5 see only EXPLORE; the post-loop
+        # fix/surgery validate on the frozen CONFIRM partition (run_m4/run_fix
+        # re-derive the same deterministic split from the same input batch).
+        explore, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            logger.info(
+                "confirm split: explore=%d cases, confirm=%d held out (frac=%.2f)",
+                len(list(explore)), len(list(confirm)), self.confirm_split,
+            )
+            data = explore
 
         # Forward the RunLogger into the agents so the probe / stats tool
         # generators record their tool-synthesis attempts ("tool_codegen" events).
@@ -825,6 +983,11 @@ class VLDiagnoseLoop:
             for r in probe_results.values():
                 self.store.add_result(r)
 
+            # Operationalization bridge: pre-registered recipes -> synthetic
+            # "explored" analyzer Result, injected so M2's family includes the
+            # LAMBDA-discovered composite signals (no-op when none configured).
+            self._bridge_signals(probe_results, data)
+
             # ── M2: protocol-aware stats analysis ────────────────────
             _t0 = time.monotonic()
             stats_report = self.stats_agent.analyze(
@@ -855,7 +1018,9 @@ class VLDiagnoseLoop:
 
             _t0 = time.monotonic()
             try:
-                diag = diag_agent.diagnose(stats_report, prior_cycles=prior_cycles or None)
+                diag = _diagnose_with_optional_context(
+                    diag_agent, stats_report, prior_cycles, self._explore_context
+                )
             except Exception as exc:  # judge timeout/quota must not kill the loop
                 logger.warning(
                     "M3 diagnosis failed at cycle %d (%s) — stopping with the "
@@ -873,7 +1038,19 @@ class VLDiagnoseLoop:
             self._tokens_used += _tok
 
             if self.run_logger:
-                self.run_logger.log_diagnosis(cycle, diag, duration_sec=_dt)
+                # Log only the figures that actually existed (the same existence
+                # filter M3 applies when attaching them) so the audit trail reflects
+                # what the judge truly saw, not every chart with a figure_path key.
+                _explore_figs = None
+                if self._explore_context is not None:
+                    from pathlib import Path as _P
+
+                    _explore_figs = [
+                        f for f in self._explore_context.figure_paths if _P(f).exists()
+                    ]
+                self.run_logger.log_diagnosis(
+                    cycle, diag, duration_sec=_dt, explore_figures=_explore_figs or None
+                )
 
             if not diag.hypotheses:
                 logger.info("M3 produced no hypotheses at cycle %d.", cycle)
@@ -970,6 +1147,13 @@ class VLDiagnoseLoop:
             logger.info("run_m4: no verified hypotheses to act on.")
             return None
 
+        # Confirm the fix on the held-out partition (leak #3): the loop generated
+        # the hypothesis on EXPLORE, so M4 must operate on CONFIRM — data it never
+        # mined. Deterministic re-split of the same batch; no-op when off.
+        _, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            data = confirm
+
         best_tr = report.verified_hypotheses[0]
         results: dict[str, Any] = (
             report.final_stats_report.raw_results
@@ -1028,6 +1212,14 @@ class VLDiagnoseLoop:
         """
         from evalvitals.eval_agent.stages.fix_tiers import FixTier, parse_tier
 
+        # Validate the fix on the held-out partition (leak #3): the hypotheses
+        # were generated on EXPLORE, so the deployed repair must be confirmed on
+        # CONFIRM — cases the loop never used to pick the fix. Deterministic
+        # re-split of the same batch; no-op when confirm_split=0.
+        _, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            data = confirm
+
         agent = fix_agent or self.fix_agent
         hypotheses = [tr.hypothesis for tr in report.verified_hypotheses]
         if not hypotheses:
@@ -1072,11 +1264,21 @@ class VLDiagnoseLoop:
             finally:
                 agent.run_logger = agent_logger
 
-            # Merge all rounds into one combined outcome and emit once.
+            # Merge all rounds into one combined outcome and emit once. The
+            # merged set spans every escalated tier, so it is a LARGER best-of-N
+            # family than any single tier — re-apply e-BH FDR control over the
+            # whole union (mirrors FixAgent.propose_and_validate) instead of an
+            # uncorrected max, or auto-escalation would re-open the multiplicity
+            # leak it was meant to respect.
             if last_outcome is not None:
                 last_outcome.attempted = all_attempted
                 last_outcome.max_tier = ceiling
-                winners = [v for v in all_attempted if v.fixed]
+                tested = [v for v in all_attempted if v.e_value is not None]
+                survivors = agent._ebh_survivors(tested)
+                last_outcome.ebh_survivors = sorted(
+                    v.candidate.name for v in tested if id(v) in survivors)
+                winners = [v for v in all_attempted
+                           if v.fixed and id(v) in survivors]
                 if winners:
                     last_outcome.best = max(
                         winners, key=lambda v: (v.effect or 0.0, -v.n_broken)

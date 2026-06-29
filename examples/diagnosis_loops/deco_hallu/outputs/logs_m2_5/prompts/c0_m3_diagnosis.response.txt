@@ -1,0 +1,13 @@
+NO_ISSUE does not apply — the analyzer surfaced a real false-positive mode. The prior cycle already owns the "peaked attention → perceptual fixation → false 'Yes'" story, so I propose three *new*, non-overlapping hypotheses the existing evidence can adjudicate.
+
+HYPOTHESIS: False detections split into two distinct sub-modes — a peaked-attention "fixation" mode and a separate diffuse-attention mode — so concentrated attention explains only part of the over-detection, not all of it.
+FAILURE_MODE: mixed_attention (fixation + diffuse)
+TEST: Compare `explored.probe1_or_diffuse` against `explored.probe1_flag`: cases flagged by probe1_or_diffuse but NOT probe1_flag (e.g. 2d41348db313, 3394a70b65f3, b70a85522b58, f7b46b7649da, c6695dc728db, 9907039d5238) should show LOW `relative_attention.focus_share`/`max_relative_weight`, confirming a non-peaked false-detection channel.
+
+HYPOTHESIS: The "peaked attention" is a content-independent positional attention sink on a fixed patch cluster (indices ~58/59/69/80) rather than fixation on a queried-object region, so high max_relative_weight reflects a layer-20 sink token, not perceptual misgrounding.
+FAILURE_MODE: attention_sink
+TEST: Run a per-case top-patch-index stability analyzer on `relative_attention.top_patches`: if the same patch indices dominate across unrelated images (and recur in PASS cases too), the sink is positional; spatial overlap between the peak patch and the absent object's plausible location would falsify it.
+
+HYPOTHESIS: Over-detection is driven by a language/co-occurrence prior ("Yes" bias for objects commonly co-present with the scene) that is upstream of vision, so it persists even when attention is non-pathological and is immune to prompt reformatting.
+FAILURE_MODE: hallucination (language_prior)
+TEST: `prompt_contrast` for `describe_first` and `sensitive` already show no repair (e=0.80/1.00, inconclusive); next cycle add a text-only / image-ablated probe — if false-detection rate on absent-object questions stays high without the image, the language prior is confirmed as the root cause.

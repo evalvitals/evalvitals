@@ -544,23 +544,39 @@ class RunLogger:
         judge_prompt: "str | None" = None,
         judge_raw: "str | None" = None,
         duration_sec: "float | None" = None,
+        failed_analyzers: "dict[str, str] | None" = None,
     ) -> "list[Path]":
         """M1: log findings (JSON) and persist heavy artifacts to disk.
+
+        Everything M1 produces is captured: the inlined ``findings`` plus, per
+        analyzer, the COMPLETE result (``result_paths`` → ``*.result.json`` with
+        metadata + summary) and heavy arrays (``artifact_paths`` → ``.npy``/
+        ``.json``/figures).  ``failed_analyzers`` records analyzers that were
+        selected but errored at runtime (and why), so a selected-but-missing
+        analyzer is observable instead of silently absent.  The selection judge
+        call is saved under ``prompts/`` via ``judge_io``.
 
         Returns a list of PNG figure paths that were saved for this cycle
         (attention heatmaps, spatial maps, heatmap-on-image overlays, etc.)
         so callers can forward them to the judge as visual context.
         """
         artifact_paths, overlay_pngs = self._save_probe_artifacts(cycle, results)
+        result_paths = self._save_probe_results(cycle, results)
         entry: dict[str, Any] = {
             "event": "probe",
             "cycle": cycle,
             "analyzers": list(results),
             "findings": {name: r.findings for name, r in results.items()},
+            "result_paths": result_paths,
             "artifact_paths": artifact_paths,
         }
+        if failed_analyzers:
+            entry["failed_analyzers"] = dict(failed_analyzers)
         if schema is not None:
             entry["selection_rationale"] = getattr(schema, "rationale", "")
+            selected = getattr(schema, "selected_analyzers", None)
+            if selected is not None:
+                entry["selected_analyzers"] = list(selected)
         judge_io = self._save_judge_io(f"c{cycle}_m1_selection", judge_prompt, judge_raw)
         if judge_io:
             entry["judge_io"] = judge_io
@@ -647,8 +663,13 @@ class RunLogger:
         diag: "DiagnosisResult",
         *,
         duration_sec: "float | None" = None,
+        explore_figures: "list[str] | None" = None,
     ) -> None:
-        """M3: log raw LLM output, the prompt, and every parsed hypothesis."""
+        """M3: log raw LLM output, the prompt, and every parsed hypothesis.
+
+        *explore_figures* are the (UNCONFIRMED) explorer chart PNGs M3 was shown,
+        recorded for the dashboard; they have no bearing on hypothesis survival.
+        """
         entry: dict[str, Any] = {
             "event": "diagnosis",
             "cycle": cycle,
@@ -664,6 +685,16 @@ class RunLogger:
             ],
             "raw_judge_output": diag.raw_judge_output,
         }
+        # Provenance of the (UNCONFIRMED) explorer mechanism notes M3 was shown.
+        # Descriptive only — these never enter M2/M5/fix; logged so the dashboard
+        # can tag which explore charts/observations each hypothesis cited.
+        referenced = getattr(diag, "referenced_charts", None)
+        if referenced:
+            entry["referenced_charts"] = list(referenced)
+        if getattr(diag, "explore_context_used", False):
+            entry["explore_context_used"] = True
+        if explore_figures:
+            entry["explore_figures"] = list(explore_figures)
         judge_io = self._save_judge_io(
             f"c{cycle}_m3_diagnosis",
             getattr(diag, "prompt", None),
@@ -1347,6 +1378,42 @@ class RunLogger:
                 except Exception as exc:  # noqa: BLE001 - viz must never break the probe
                     warnings.warn(f"RunLogger: image_overlays failed for {analyzer_name}: {exc}")
         return paths, overlay_pngs
+
+    def _save_probe_results(
+        self,
+        cycle: int,
+        results: dict[str, "Result"],
+    ) -> "dict[str, str]":
+        """Persist each analyzer's COMPLETE result so M1's full output is
+        observable, not just the ``findings`` inlined into the probe event.
+
+        Writes ``artifacts/c{cycle}_{analyzer}.result.json`` carrying the full
+        :meth:`Result.to_dict` (findings + metadata + n_cases) plus the rendered
+        ``summary()`` text.  Heavy arrays/tensors already go through
+        :meth:`_save_probe_artifacts`; this captures everything else.
+        """
+        paths: dict[str, str] = {}
+        for analyzer_name, result in results.items():
+            to_dict = getattr(result, "to_dict", None)
+            if not callable(to_dict):
+                continue  # minimal/duck-typed result with no serialisable view
+            try:
+                doc = to_dict()
+                summary = getattr(result, "summary", None)
+                if callable(summary):
+                    doc["summary"] = summary()
+                doc["artifact_names"] = sorted((getattr(result, "artifacts", None) or {}).keys())
+            except Exception as exc:  # noqa: BLE001 - logging must never break M1
+                warnings.warn(f"RunLogger: could not serialise result {analyzer_name!r}: {exc}")
+                continue
+            path = self.artifact_dir / f"c{cycle}_{analyzer_name}.result.json"
+            try:
+                path.write_text(json.dumps(doc, indent=2, default=str), encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                warnings.warn(f"RunLogger: could not write result {analyzer_name!r}: {exc}")
+                continue
+            paths[analyzer_name] = str(path.relative_to(self.run_dir))
+        return paths
 
     def _save_artifact(self, stem: str, artifact: Any) -> Path | None:
         """Write one artifact to ``artifacts/<stem>.<ext>``; return path or None.

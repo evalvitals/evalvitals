@@ -289,6 +289,21 @@
                 "null"
               ]
             },
+            "referenced_charts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "explore_context_used": {
+              "type": "boolean"
+            },
+            "explore_figures": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "judge_io": {
               "type": "object",
               "properties": {
