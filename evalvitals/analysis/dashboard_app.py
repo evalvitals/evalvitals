@@ -569,18 +569,11 @@ def _scatter_axis_names(explore_report, csv_name: str) -> tuple[str | None, str 
 
 
 def _counts_bar_agg(df: pd.DataFrame):
-    """Themed class-count bars from an already-aggregated (outcome, count) table.
-    Bars are the one correct use of a bar: discrete counts from a zero baseline."""
-    import plotly.graph_objects as go
+    """Class balance from an aggregated (outcome, count) table → a single slim
+    100%-stacked composition strip (not two fat bars for two numbers)."""
     rowmap = {str(r["outcome"]).upper(): int(r["count"]) for _, r in df.iterrows()}
     order = [g for g in ("FAIL", "PASS") if g in rowmap] or list(rowmap)
-    fig = go.Figure(go.Bar(
-        x=order, y=[rowmap[g] for g in order],
-        marker_color=[viz.outcome_color(g) for g in order],
-        text=[viz.fmt(rowmap[g], "count") for g in order], textposition="outside"))
-    fig.update_layout(title="Class balance", xaxis_title="", yaxis_title="count",
-                      height=300)
-    return fig
+    return viz.composition_bar(order, [rowmap[g] for g in order])
 
 
 def _groupstats_dumbbell(df: pd.DataFrame, signal: str):

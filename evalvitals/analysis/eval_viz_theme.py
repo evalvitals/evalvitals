@@ -291,19 +291,32 @@ def joint_scatter(df, x_sig, y_sig, outcome="label"):
     return _size(fig, "wide")
 
 
+def composition_bar(labels, values, title="Class balance"):
+    """Parts-of-a-whole as ONE slim 100%-stacked horizontal bar — the right
+    encoding for a handful of category counts. Two tall bars for two numbers is
+    chart-junk (and usually redundant with the text); a single stacked strip
+    reads the proportion at a glance. Each segment labels its count + percent."""
+    total = sum(values) or 1
+    fig = go.Figure()
+    for lab, val in zip(labels, values):
+        fig.add_trace(go.Bar(
+            y=["balance"], x=[val], orientation="h", name=str(lab),
+            marker_color=outcome_color(lab),
+            text=f"{lab} {fmt(val, 'count')} ({fmt(val / total, 'pct')})",
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(color="white", size=13)))
+    fig.update_layout(barmode="stack", title=title, showlegend=False,
+                      xaxis=dict(visible=False), yaxis=dict(visible=False),
+                      height=120, margin=dict(l=8, r=8, t=44, b=8))
+    return fig
+
+
 def counts_bar(df, outcome="label"):
-    """
-    The ONE place a bar chart is correct: discrete class counts.
-    Bars encode counts (the 'from zero' baseline is meaningful here).
-    """
+    """Discrete class counts → a single 100%-stacked composition strip (see
+    `composition_bar`); avoids two fat bars for two numbers."""
     vc = df[outcome].astype(str).str.upper().value_counts()
     order = [g for g in ["FAIL", "PASS"] if g in vc.index]
-    fig = go.Figure(go.Bar(
-        x=order, y=[int(vc[g]) for g in order],
-        marker_color=[outcome_color(g) for g in order],
-        text=[fmt(vc[g], "count") for g in order], textposition="outside"))
-    fig.update_layout(title="Class balance", xaxis_title="", yaxis_title="count")
-    return _size(fig, "compact")
+    return composition_bar(order, [int(vc[g]) for g in order])
 
 
 # ---------------------------------------------------------------------------
