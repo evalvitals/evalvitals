@@ -64,15 +64,17 @@ def main() -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    overview, charts, tables, artifacts = st.tabs(["Overview", "Charts", "Tables", "Artifacts"])
-    with overview:
-        _render_overview(report)
-    with charts:
-        _render_charts_and_plots(report, turn_dir)
-    with tables:
-        _render_tables(report, turn_dir)
-    with artifacts:
-        _render_artifacts(report, turn_dir)
+    setting, analysis, hypotheses = st.tabs([
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Hypotheses & Artifacts",
+    ])
+    with setting:
+        _render_problem_setting(root, report, story=None)
+    with analysis:
+        _render_standalone_analysis(report, turn_dir, root)
+    with hypotheses:
+        _render_standalone_hypotheses(report, turn_dir)
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -127,14 +129,25 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
     if not explore_report:
         explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
     explore_dir = Path(story.get("explore_dir") or (runs[0]["dir"] if runs else root))
+    if not explore_report:
+        st.warning(
+            "No explore report was found alongside this loop log, so measured "
+            "signals/charts are unavailable. Re-run with `--explore-report`, or "
+            "point the dashboard at a directory containing `fused_report.json` / "
+            "`exploratory_report.json`."
+        )
 
-    analysis, flow, tables = st.tabs(["📊 Analysis", "🔬 Diagnosis flow", "🗂 Tables"])
+    setting, analysis, hypotheses = st.tabs([
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Hypotheses & Artifacts",
+    ])
+    with setting:
+        _render_problem_setting(root, explore_report or {}, story=story)
     with analysis:
-        _render_loop_analysis(story, explore_report, explore_dir, root)
-    with flow:
-        _render_loop_flow(story, explore_report, explore_dir)
-    with tables:
-        _render_explore_tables(explore_report, explore_dir, full=True)
+        _render_loop_analysis_panel(story, explore_report, explore_dir, root)
+    with hypotheses:
+        _render_hypothesis_decision_panel(story, explore_report, explore_dir)
 
 
 def _candidate_signals(explore_report: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -160,6 +173,324 @@ def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
                 "tests": tests_by_stmt.get(stmt, []),
             })
     return out
+
+
+def _render_problem_setting(
+    root: Path,
+    report: dict[str, Any] | None,
+    *,
+    story: dict[str, Any] | None,
+) -> None:
+    """Panel 1: orient the user before any statistical claims."""
+    report = report or {}
+    question = str(report.get("question") or "What distinguishes failures from passes?")
+    adj = report.get("adjudication") or {}
+    signals = _candidate_signals(report)
+    charts = [c for c in report.get("charts", []) if isinstance(c, dict)]
+
+    matrix = None
+    if load_case_matrix is not None:
+        try:
+            matrix = load_case_matrix(root)
+        except Exception:
+            matrix = None
+
+    n_cases = None
+    n_fail = None
+    n_pass = None
+    n_features = None
+    if matrix is not None and not matrix.empty:
+        n_cases = len(matrix)
+        if "is_fail" in matrix.columns:
+            n_fail = int(pd.to_numeric(matrix["is_fail"], errors="coerce").fillna(0).sum())
+            n_pass = n_cases - n_fail
+        try:
+            n_features = len(continuous_signals(matrix)) if continuous_signals else None
+        except Exception:
+            n_features = None
+
+    profile = report.get("data_profile") or {}
+    if n_cases is None:
+        n_cases = profile.get("loaded_rows", profile.get("n_rows"))
+    columns = profile.get("columns") or {}
+    if n_features is None and isinstance(columns, dict):
+        n_features = len(columns)
+
+    st.markdown("### Problem Setting")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">User question</div>
+          <div class="ev-report-answer-text">{_html_escape(question)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(5)
+    metrics = [
+        ("Cases", n_cases, "rows/cases loaded"),
+        ("FAIL", n_fail, "failure cases"),
+        ("PASS", n_pass, "passing cases"),
+        ("Signals", len(signals) or n_features, "candidate/features"),
+        ("Charts", len(charts) + len(report.get("plots") or []), "analysis visuals"),
+    ]
+    for col, (label, value, help_text) in zip(cols, metrics, strict=False):
+        col.metric(label, _format_int(value), help=help_text)
+
+    c1, c2 = st.columns([1.15, 1], gap="large")
+    with c1:
+        st.markdown("#### What data was provided")
+        if matrix is not None and not matrix.empty:
+            fields = [
+                c for c in matrix.columns
+                if c not in {"case_id", "label", "is_fail", "model_yes", "truth_yes"}
+            ]
+            st.caption(
+                "Dashboard reconstructed the per-case M1 feature matrix. "
+                "M2 analyses compare these per-case signals against FAIL/PASS labels."
+            )
+            preview = pd.DataFrame({
+                "field": fields[:12],
+                "display": [display_name(f) for f in fields[:12]],
+                "coverage": [int(matrix[f].notna().sum()) for f in fields[:12]],
+            })
+            if not preview.empty:
+                st.dataframe(preview, width="stretch", hide_index=True, height=260)
+        elif isinstance(columns, dict) and columns:
+            st.caption("Explorer data profile from the sampled input records.")
+            rows = [
+                {"field": k, "display": display_name(k), "profile": str(v)[:180]}
+                for k, v in list(columns.items())[:12]
+            ]
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=260)
+        else:
+            st.info("No structured data profile was saved with this report.")
+
+    with c2:
+        st.markdown("#### Evaluation frame")
+        split = adj.get("split") or "not recorded"
+        method = adj.get("method") or "exploratory only"
+        stages = []
+        if story:
+            stages = [
+                ("M2 analyses", len(story.get("analyses") or [])),
+                ("M3 diagnoses", len(story.get("diagnoses") or [])),
+                ("M5/M4 tests", len(story.get("surgeries") or [])),
+                ("Fix events", len(story.get("fixes") or [])),
+            ]
+        st.markdown(
+            f"""
+            <div class="ev-brief-card">
+              <div class="ev-brief-label">Confirmatory method</div>
+              <div class="ev-brief-value">{_html_escape(str(method))}</div>
+              <div class="ev-signal-test">Split: {_html_escape(str(split))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        for label, count in stages:
+            st.markdown(f"- **{label}:** {count}")
+        st.caption(f"Run directory: {root}")
+
+
+def _analysis_takeaway(report: dict[str, Any] | None, story: dict[str, Any] | None = None) -> str:
+    diag = (story or {}).get("diagnostic_report") or {}
+    answer = str(diag.get("answer") or "").strip()
+    if answer:
+        return answer
+    supported = [
+        display_name(s.get("display_name") or s.get("name"))
+        for s in _candidate_signals(report)
+        if s.get("reject") is True and not _is_leaky_signal(s)
+    ]
+    if supported:
+        return f"{supported[0]} is the leading held-out supported signal."
+    conclusion = str((report or {}).get("conclusion") or "").strip()
+    return conclusion or "No supported diagnostic claim is available in the loaded report."
+
+
+def _render_method_card(title: str, method: str, evidence: str, takeaway: str) -> None:
+    st.markdown(
+        f"""
+        <div class="ev-analysis-card">
+          <div class="ev-brief-label">{_html_escape(title)}</div>
+          <div class="ev-analysis-method">Method: {_html_escape(method)}</div>
+          <div class="ev-analysis-evidence">Evidence: {_html_escape(evidence)}</div>
+          <div class="ev-analysis-takeaway">Takeaway: {_html_escape(takeaway)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -> None:
+    """Panel 2: analysis methods, evidence, charts, and takeaways."""
+    explore_report = explore_report or {}
+    if not explore_report:
+        st.warning(
+            "No explore report was found alongside this loop log, so the Analysis "
+            "panel cannot show measured signals or charts. Re-run with "
+            "`--explore-report`, or point the dashboard at a directory containing "
+            "`fused_report.json` / `exploratory_report.json`."
+        )
+    signals = _candidate_signals(explore_report)
+    adj = explore_report.get("adjudication") or {}
+    readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
+
+    st.markdown("### Analysis")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">Analysis takeaway</div>
+          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(explore_report, story))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        _render_method_card(
+            "Confirmatory signal testing",
+            str(adj.get("method") or "held-out host adjudication"),
+            "Effect sizes, confidence intervals, and e-BH/FDR verdicts.",
+            f"{adj.get('n_signals_rejected', adj.get('n_rejected', 0))} of "
+            f"{adj.get('n_signals_tested', adj.get('n_in_family', len(signals)))} tested signals survived.",
+        )
+    with c2:
+        _render_method_card(
+            "Exploratory visualization",
+            "Agent-proposed chart plan; host-rendered deterministic specs.",
+            f"{len(readings)} chart reading(s), {len(explore_report.get('charts') or [])} chart spec(s).",
+            readings[0].get("reading", "Charts are leads for hypotheses, not causal proof.")
+            if readings else "No chart readings were recorded.",
+        )
+
+    if adj:
+        cols = st.columns(5)
+        cells = [
+            ("Method", adj.get("method", "-")),
+            ("alpha", adj.get("alpha", "-")),
+            ("Signals tested", adj.get("n_signals_tested", adj.get("n_in_family", "-"))),
+            ("Rejected", adj.get("n_signals_rejected", adj.get("n_rejected", "-"))),
+            ("Split", adj.get("split", "-")),
+        ]
+        for col, (label, value) in zip(cols, cells, strict=False):
+            col.metric(label, value)
+
+    if signals:
+        st.markdown("#### Confirmatory evidence")
+        if _viz_ready():
+            st.plotly_chart(viz.forest_effects(_forest_rows(signals)), width="stretch")
+        else:
+            fig = _signal_effect_figure(signals)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
+        st.caption(
+            "Green = held-out supported. Grey = inconclusive. Label-audit rows are "
+            "sanity checks and should not be read as root causes."
+        )
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+
+    st.markdown("#### Charts and takeaways")
+    _render_visual_plan(explore_report)
+    if readings:
+        rows = [{
+            "chart": display_name(r.get("chart")),
+            "takeaway": r.get("reading", ""),
+            "do not infer": r.get("do_not_infer", ""),
+        } for r in readings]
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    if _viz_ready():
+        _render_explore_tables(explore_report, explore_dir, full=False, root=root)
+    else:
+        _render_charts_and_plots(explore_report, explore_dir)
+
+    with st.expander("Additional statistical diagnostics", expanded=False):
+        _render_stat_panel(root)
+
+
+def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> None:
+    """Panel 3: hypotheses, downstream tests, and artifacts needed for decisions."""
+    hyps = _hypotheses_with_outcomes(story)
+    st.markdown("### Hypotheses & Decision")
+    if hyps:
+        st.caption(
+            "These are M3 hypotheses formed from the analysis panel. Treat them as "
+            "decision candidates until M5/M4 tests or fix outcomes support them."
+        )
+        for h in hyps:
+            _render_hypothesis_card(h)
+    else:
+        st.warning("No M3 hypotheses were recorded for this run.")
+
+    surgeries = story.get("surgeries") or []
+    fixes = story.get("fixes") or []
+    if surgeries or fixes:
+        st.markdown("#### Downstream decision evidence")
+        for s in surgeries:
+            tag = str(s.get("module", "")).upper()
+            st.markdown(
+                f"- **[{tag}]** {s.get('status', '')}: "
+                f"{_truncate(str(s.get('hypothesis', '')), 180)}"
+            )
+        if fixes:
+            with st.expander("Fix adjudication records", expanded=False):
+                for f in fixes:
+                    st.json(f)
+
+    with st.expander("Inspect M1-M4 artifacts and flow", expanded=True):
+        _render_loop_flow(story, explore_report, explore_dir)
+    with st.expander("Inspect raw tables", expanded=False):
+        _render_explore_tables(explore_report, explore_dir, full=True)
+    if explore_report:
+        with st.expander("Explorer original charts/figures", expanded=False):
+            _render_charts_and_plots(explore_report, explore_dir)
+
+
+def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
+    signals = _candidate_signals(report)
+    st.markdown("### Analysis")
+    st.markdown(
+        f"""
+        <div class="ev-report-answer">
+          <div class="ev-brief-label">Analysis takeaway</div>
+          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(report))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _render_method_card(
+        "Standalone M2 exploration",
+        "Agent-authored EDA plus host-rendered deterministic chart specs.",
+        f"{len(signals)} candidate signal(s), {len(report.get('charts') or [])} chart spec(s).",
+        "Use these findings to choose confirmatory follow-up tests; exploratory charts are not causal evidence.",
+    )
+    _render_visual_plan(report)
+    if signals:
+        st.markdown("#### Candidate signal table")
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+    _render_charts_and_plots(report, turn_dir)
+    _render_tables(report, turn_dir)
+
+
+def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
+    st.markdown("### Hypotheses & Artifacts")
+    claims = [c for c in report.get("claims") or [] if isinstance(c, dict)]
+    tests = report.get("recommended_confirmatory_tests") or []
+    if claims:
+        st.markdown("#### Claims to carry forward")
+        st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
+    if tests:
+        st.markdown("#### Recommended confirmatory tests")
+        for item in tests:
+            st.markdown(f"- {item}")
+    if not claims and not tests:
+        st.info("No explicit hypotheses or confirmatory tests were recorded.")
+    with st.expander("Inspect generated artifacts", expanded=True):
+        _render_artifacts(report, turn_dir)
 
 
 def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None:
@@ -1492,6 +1823,28 @@ def _inject_css() -> None:
           color: var(--ev-text);
           font-size: 1rem;
           line-height: 1.45;
+        }
+        .ev-analysis-card {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-radius: 8px;
+          min-height: 9.2rem;
+          padding: 0.95rem 1rem;
+          margin-bottom: 0.8rem;
+          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+        }
+        .ev-analysis-method,
+        .ev-analysis-evidence,
+        .ev-analysis-takeaway {
+          color: #344054;
+          font-size: 0.9rem;
+          line-height: 1.45;
+          margin-top: 0.35rem;
+        }
+        .ev-analysis-takeaway {
+          border-left: 3px solid var(--ev-ok);
+          background: #f6fef9;
+          padding: 0.45rem 0.6rem;
         }
         .ev-claim-card {
           background: var(--ev-panel);

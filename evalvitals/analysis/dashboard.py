@@ -149,7 +149,7 @@ def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | N
     The loop writes ``run_log.jsonl`` under ``logs*/`` while the fused pipeline
     writes ``fused_report.json`` under a separate ``fused/`` dir. Search the run
     tree and its parents/siblings so the dashboard can show what M3 consulted."""
-    bases = [root, log_path.parent, log_path.parent.parent, root.parent]
+    bases = [root, log_path.parent, log_path.parent.parent]
     seen: set[Path] = set()
     for base in bases:
         if base in seen or not base.exists():

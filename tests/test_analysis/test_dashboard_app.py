@@ -93,22 +93,25 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     at = _run_app(tmp_path)
 
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["📊 Analysis", "🔬 Diagnosis flow", "🗂 Tables"]
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Hypotheses & Artifacts",
+    ]
 
     # e-BH adjudication metrics surfaced as a metric row.
     metric_labels = {m.label for m in at.metric}
-    assert {"Method", "Signals tested", "Rejected (real)", "Split"} <= metric_labels
+    assert {"Method", "Signals tested", "Rejected", "Split"} <= metric_labels
     vals = {m.label: m.value for m in at.metric}
-    assert vals["Rejected (real)"] in ("2", 2)
+    assert vals["Rejected"] in ("2", 2)
 
     # The candidate-signals table rendered (a dataframe).
     assert len(at.dataframe) >= 1
     blob = " ".join(str(m.value) for m in at.markdown)
-    assert "Diagnostic report" in blob
-    assert "Claims and evidence" in blob
-    assert any(e.label == "How to interpret this page" for e in at.expander)
-    assert any(e.label == "Chart readings written by the agent" for e in at.expander)
-    assert any(e.label == "Critique and limits" for e in at.expander)
+    assert "Problem Setting" in blob
+    assert "Analysis takeaway" in blob
+    assert "Method:" in blob
+    assert "Takeaway:" in blob
 
 
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
@@ -129,10 +132,10 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     at = _run_app(tmp_path)
     assert not at.exception
     heads = [m.value for m in at.markdown if isinstance(m.value, str) and m.value.startswith("###")]
-    # the three narrative sections are present
-    assert any("What we analysed" in h for h in heads)
-    assert any("What we found" in h for h in heads)
-    assert any("Hypotheses formed" in h for h in heads)
+    # the three-panel narrative sections are present
+    assert any("Problem Setting" in h for h in heads)
+    assert any("Analysis" in h for h in heads)
+    assert any("Hypotheses & Decision" in h for h in heads)
     # the hypothesis statement + its M5 verdict appear somewhere in the page
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "language-prior hallucination" in blob
