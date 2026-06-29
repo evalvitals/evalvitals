@@ -114,6 +114,7 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     assert "Bottom line" in blob
     assert "Evidence you can use" in blob
     assert "How to read this evidence" in blob
+    assert "Takeaway" in blob
     assert "Supporting experiment" in blob
     assert "Method:" in blob
     assert "Takeaway:" in blob

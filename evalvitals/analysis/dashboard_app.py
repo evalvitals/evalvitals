@@ -1326,6 +1326,16 @@ def _render_evidence_panel(
 
         charts = _supporting_charts_for_signal(signal, explore_report)
         reading = _supporting_reading_for_signal(signal, explore_report, charts)
+        takeaway = _evidence_takeaway(row, signal)
+        st.markdown(
+            f"""
+            <div class="ev-evidence-takeaway">
+              <div class="ev-brief-label">Takeaway</div>
+              <div>{_html_escape(takeaway)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.markdown("**Supporting experiment**")
         if charts and explore_dir is not None:
             if reading:
@@ -1417,7 +1427,24 @@ def _supporting_reading_for_signal(
             return text
         if any(chart and chart in blob for blob in chart_blobs):
             return text
-    return "This chart is the visual check for the same signal tested in the card above."
+    return "The chart below is the experiment behind this finding: it shows the same signal split by FAIL/PASS outcome."
+
+
+def _evidence_takeaway(row: dict[str, str], signal: dict[str, Any]) -> str:
+    name = row["finding"]
+    if row["role"] == "sanity check":
+        return f"{name} validates the measurement path, but it is not a root-cause explanation."
+    if signal.get("reject") is True:
+        return (
+            f"{name} is the actionable M2 finding: it separates FAIL from PASS on the "
+            f"confirmation split with effect {row['effect']} and CI {row['ci']}."
+        )
+    if signal.get("reject") is False:
+        return (
+            f"{name} was tested, but the confirmation split did not support it as a "
+            "reliable FAIL/PASS separator."
+        )
+    return f"{name} is descriptive context only; it needs a held-out confirmation before use."
 
 
 def _signal_tokens(signal: dict[str, Any]) -> list[str]:
@@ -2369,6 +2396,17 @@ def _inject_css() -> None:
           font-size: 0.92rem;
           line-height: 1.45;
           margin-bottom: 0.5rem;
+        }
+        .ev-evidence-takeaway {
+          background: #f8fafc;
+          border: 1px solid var(--ev-border);
+          border-left: 3px solid var(--ev-info);
+          border-radius: 8px;
+          color: #344054;
+          font-size: 0.92rem;
+          line-height: 1.45;
+          margin: 0.7rem 0 0.75rem;
+          padding: 0.7rem 0.85rem;
         }
         .ev-evidence-meta {
           color: var(--ev-muted);
