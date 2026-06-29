@@ -196,6 +196,7 @@ def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None
 
     # ── ② What we found ───────────────────────────────────────────────────
     st.markdown("### ② What we found")
+    _render_plain_findings(story.get("diagnostic_report") or {})
     if adj:
         st.caption(
             "Each candidate signal was confirmed on a HELD-OUT split with e-BH "
@@ -475,6 +476,31 @@ def _render_claim_card(claim: dict[str, Any], evidence: dict[str, dict[str, Any]
     downstream = [str(x) for x in (claim.get("downstream") or [])]
     if downstream:
         st.caption("Downstream: " + " · ".join(downstream))
+
+
+def _render_plain_findings(report: dict[str, Any]) -> None:
+    claims = [c for c in (report.get("claims") or []) if isinstance(c, dict)]
+    if not claims:
+        return
+    supported = [c for c in claims if c.get("status") == "supported"]
+    descriptive = [c for c in claims if c.get("status") == "descriptive"]
+    inconclusive = [c for c in claims if c.get("status") == "inconclusive"]
+
+    cols = st.columns(3)
+    groups = [
+        ("Main supported findings", supported, "These are the findings to carry forward."),
+        ("Sanity checks / descriptive", descriptive, "Useful context, not root-cause evidence."),
+        ("Not supported", inconclusive, "Tested but not convincing in this run."),
+    ]
+    for col, (title, rows, caption) in zip(cols, groups, strict=False):
+        with col:
+            st.markdown(f"**{title}**")
+            if rows:
+                for claim in rows[:4]:
+                    st.markdown(f"- {_html_escape(str(claim.get('text') or ''))}")
+            else:
+                st.caption("None")
+            st.caption(caption)
 
 
 def _render_run_briefing(

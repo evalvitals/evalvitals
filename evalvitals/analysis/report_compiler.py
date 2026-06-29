@@ -180,12 +180,14 @@ def _compile_timeline(story: dict[str, Any], explore_report: dict[str, Any]) -> 
 
 
 def _answer(explore_report: dict[str, Any], claims: list[Claim]) -> str:
+    supported = [c.text for c in claims if c.status == "supported"]
+    if supported:
+        leaky = sum(1 for c in claims if "label-like" in c.do_not_infer or "label" in c.text)
+        suffix = f" ({leaky} label-like sanity-check claim(s) demoted.)" if leaky else ""
+        return supported[0] + suffix
     conclusion = str(explore_report.get("conclusion") or "").strip()
     if conclusion:
         return conclusion
-    supported = [c.text for c in claims if c.status == "supported"]
-    if supported:
-        return supported[0]
     return "No supported diagnostic claim is available in the loaded report."
 
 

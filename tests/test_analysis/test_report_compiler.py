@@ -30,7 +30,8 @@ def test_compile_diagnostic_report_is_claim_first():
     }
     report = compile_diagnostic_report(story, _explore_report())
 
-    assert report.answer == "Supported signal found."
+    assert report.answer.startswith("low_focus is associated with FAIL cases")
+    assert "label-like" in report.answer
     by_text = {c.text: c for c in report.claims}
     assert any("low_focus is associated" in text for text in by_text)
     leaky = next(c for c in report.claims if "probe1_false_detection" in c.text)
@@ -54,5 +55,5 @@ def test_load_run_attaches_diagnostic_report(tmp_path):
 
     assert loaded["kind"] == "loop"
     diag = loaded["story"]["diagnostic_report"]
-    assert diag["answer"] == "Supported signal found."
+    assert diag["answer"].startswith("low_focus is associated with FAIL cases")
     assert diag["claims"]
