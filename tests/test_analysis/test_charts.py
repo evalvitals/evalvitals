@@ -31,6 +31,7 @@ def test_empty_input_returns_empty():
     assert render_chart_specs([], None, "/tmp/x") == []
 
 
+@pytest.mark.skipif(not _HAVE_MPL, reason="matplotlib not installed")
 def test_missing_csv_is_annotated_not_dropped(tmp_path):
     charts = [{"name": "m", "kind": "bar", "data": "tables/none.csv", "x": "g", "y": "v"}]
     out = render_chart_specs(charts, tmp_path / "tables", tmp_path / "out")
