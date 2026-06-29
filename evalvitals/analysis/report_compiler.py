@@ -117,7 +117,7 @@ def _compile_claims(
             "claim can be made from the available confirmation layer.",
             do_not_infer="Do not treat exploratory plots as confirmed root causes.",
         ))
-    return claims
+    return _sort_claims(claims)
 
 
 def _claim_from_agent(raw: dict[str, Any], idx: int) -> Claim:
@@ -292,6 +292,11 @@ def _next_actions(explore_report: dict[str, Any], claims: list[Claim]) -> list[s
     if not actions:
         actions.append("Re-run with a larger held-out split or richer probes if no claim is supported.")
     return actions
+
+
+def _sort_claims(claims: list[Claim]) -> list[Claim]:
+    order = {"supported": 0, "inconclusive": 1, "refuted": 2, "descriptive": 3}
+    return sorted(claims, key=lambda c: (order.get(c.status, 9), c.id))
 
 
 def _is_leaky_signal(signal: dict[str, Any]) -> bool:
