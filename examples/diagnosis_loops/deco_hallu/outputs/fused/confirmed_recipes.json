@@ -1,12 +1,17 @@
 [
   {
-    "name": "probe1_positive",
+    "name": "peripheral_attention",
     "kind": "expr",
-    "expr": "generated_probe1_false_detection > 0.5"
+    "expr": "(relative_attention_edge_mass > 0.1828) and (relative_attention_center_offset > 0.176)"
   },
   {
-    "name": "low_focus_share",
+    "name": "prompt_insensitive",
     "kind": "expr",
-    "expr": "relative_attention_focus_share > 0.244825"
+    "expr": "prompt_contrast_prompt_sensitivity <= 0.0"
+  },
+  {
+    "name": "diffuse_and_peripheral",
+    "kind": "expr",
+    "expr": "(relative_attention_focus_share < 0.2343) and (relative_attention_edge_mass > 0.1828)"
   }
 ]

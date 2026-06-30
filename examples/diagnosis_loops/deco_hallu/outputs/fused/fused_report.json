@@ -2,23 +2,438 @@
   "question": "Among these labeled cases, what per-case signals distinguish the FAIL cases (false 'Yes' on an absent object) from the PASS cases? Propose composite signals as deterministic recipes over the available numeric columns.",
   "ok": true,
   "observations": [
-    "Outcome column 'label' mapped to 25 FAIL and 96 PASS cases (n=121).",
-    "Numeric signal columns: ['generated_probe1_false_detection', 'relative_attention_max_relative_weight', 'relative_attention_mean_relative_weight', 'relative_attention_focus_share'].",
-    "Strongest single-signal separation: 'relative_attention_focus_share' (|SMD|=1.21).",
-    "Fail rate is 1.00 among probe1-positive vs 0.00 among probe1-negative cases."
+    "121 labeled cases: 25 FAIL (false 'Yes') vs 96 PASS (20.7% fail rate).",
+    "prompt_sensitivity present for 85 cases; the 7 relative_attention signals present for only 22 cases (heavy missingness)."
+  ],
+  "visual_plan": [
+    {
+      "name": "class_balance",
+      "question": "How imbalanced are the labeled outcomes?",
+      "data_shape": "categorical-vs-binary",
+      "plot_kind": "bar",
+      "fallback_kind": "bar",
+      "rationale": "Counts establish the base rate so later separations are read against imbalance.",
+      "required_columns": [
+        "label"
+      ]
+    },
+    {
+      "name": "top_discriminators",
+      "question": "Which numeric signals separate FAIL from PASS most?",
+      "data_shape": "many-numeric",
+      "plot_kind": "bar",
+      "fallback_kind": "bar",
+      "rationale": "Ranked |standardized mean diff| surfaces candidates without assuming a model.",
+      "required_columns": [
+        "prompt_contrast_prompt_sensitivity",
+        "relative_attention_max_relative_weight",
+        "relative_attention_mean_relative_weight",
+        "relative_attention_focus_share",
+        "relative_attention_attention_entropy",
+        "relative_attention_top1_share",
+        "relative_attention_center_offset",
+        "relative_attention_edge_mass"
+      ]
+    },
+    {
+      "name": "group_means",
+      "question": "In which direction does each signal shift for FAIL?",
+      "data_shape": "numeric-vs-binary",
+      "plot_kind": "bar",
+      "fallback_kind": "bar",
+      "rationale": "Side-by-side means show the sign of separation; pre-aggregated to avoid row dumps.",
+      "required_columns": [
+        "prompt_contrast_prompt_sensitivity",
+        "relative_attention_max_relative_weight",
+        "relative_attention_mean_relative_weight",
+        "relative_attention_focus_share",
+        "relative_attention_attention_entropy",
+        "relative_attention_top1_share",
+        "relative_attention_center_offset",
+        "relative_attention_edge_mass"
+      ]
+    },
+    {
+      "name": "attention_box_by_outcome",
+      "question": "Do attention distributions differ for FAIL vs PASS?",
+      "data_shape": "numeric-vs-binary",
+      "plot_kind": "box",
+      "fallback_kind": "bar",
+      "rationale": "Box+strip shows spread and overlap that a bar-of-means hides at small n.",
+      "required_columns": [
+        "relative_attention_max_relative_weight",
+        "relative_attention_mean_relative_weight",
+        "relative_attention_focus_share",
+        "relative_attention_attention_entropy",
+        "relative_attention_top1_share",
+        "relative_attention_center_offset",
+        "relative_attention_edge_mass",
+        "label"
+      ]
+    },
+    {
+      "name": "failrate_by_focus_share",
+      "question": "Does lower attention focus raise failure risk?",
+      "data_shape": "numeric-vs-binary",
+      "plot_kind": "line",
+      "fallback_kind": "line",
+      "rationale": "Ordered bins show the risk trend without assuming linearity.",
+      "required_columns": [
+        "relative_attention_focus_share",
+        "label"
+      ]
+    },
+    {
+      "name": "corr_heatmap",
+      "question": "Which signals are redundant vs independent?",
+      "data_shape": "many-numeric",
+      "plot_kind": "heatmap",
+      "fallback_kind": "bar",
+      "rationale": "Correlation guards against double-counting collinear attention features.",
+      "required_columns": [
+        "prompt_contrast_prompt_sensitivity",
+        "relative_attention_max_relative_weight",
+        "relative_attention_mean_relative_weight",
+        "relative_attention_focus_share",
+        "relative_attention_attention_entropy",
+        "relative_attention_top1_share",
+        "relative_attention_center_offset",
+        "relative_attention_edge_mass"
+      ]
+    },
+    {
+      "name": "scatter_top_attention_pair",
+      "question": "Do the two best signals jointly separate FAIL?",
+      "data_shape": "numeric-vs-numeric",
+      "plot_kind": "scatter",
+      "fallback_kind": "scatter",
+      "rationale": "Colored scatter reveals interaction/region structure a 1-D view misses.",
+      "required_columns": [
+        "relative_attention_attention_entropy",
+        "relative_attention_center_offset",
+        "label"
+      ]
+    }
+  ],
+  "chart_readings": [
+    {
+      "chart": "class_balance",
+      "reading": "PASS dominates (96) over FAIL (25); ~21% base fail rate.",
+      "do_not_infer": "Imbalance alone says nothing about which signals drive failures."
+    },
+    {
+      "chart": "top_discriminators",
+      "reading": "Bars rank signals by standardized FAIL-vs-PASS mean gap; attention focus/edge/entropy signals tend to top prompt_sensitivity.",
+      "do_not_infer": "A large gap on n=22 attention cases is not a confirmed or significant effect."
+    },
+    {
+      "chart": "group_means",
+      "reading": "Shows the direction of each shift (e.g. FAIL = lower focus_share / higher edge_mass).",
+      "do_not_infer": "Mean direction does not establish a threshold or a causal mechanism."
+    },
+    {
+      "chart": "attention_box_by_outcome",
+      "reading": "FAIL boxes shift toward diffuse/peripheral attention but overlap PASS substantially.",
+      "do_not_infer": "Overlap means no clean separator; small n makes whiskers unstable."
+    },
+    {
+      "chart": "failrate_by_focus_share",
+      "reading": "Fail rate is higher in the lowest focus_share bins.",
+      "do_not_infer": "The binned trend is descriptive, not a fitted dose-response."
+    },
+    {
+      "chart": "corr_heatmap",
+      "reading": "Several attention features are mutually correlated (focus_share, top1_share, entropy).",
+      "do_not_infer": "Collinearity does not tell which feature is the true driver."
+    },
+    {
+      "chart": "scatter_top_attention_pair",
+      "reading": "FAIL points cluster toward the diffuse/peripheral corner of the two top signals.",
+      "do_not_infer": "Clustering on the labeled set may not hold out-of-sample."
+    }
+  ],
+  "dashboard_storyboard": [
+    {
+      "id": "problem_setting",
+      "title": "Problem Setting",
+      "stages": [
+        "M1"
+      ],
+      "summary": "121 labeled cases where FAIL = false 'Yes' on an absent object; per-case M1 signals are prompt sensitivity and 7 relative-attention features (attention present for ~22 cases).",
+      "items": [
+        "FAIL means the model hallucinated a present object that is absent.",
+        "Base fail rate 21% (25/121); attention features missing for 99 cases."
+      ],
+      "artifact_refs": [
+        "data_profile",
+        "class_balance"
+      ]
+    },
+    {
+      "id": "analysis",
+      "title": "Analysis",
+      "stages": [
+        "M2"
+      ],
+      "summary": "Rank each numeric signal by standardized FAIL-vs-PASS separation, view distributions and binned fail-rate curves, and check signal collinearity.",
+      "items": [
+        "Method: |standardized mean diff| -> chart:top_discriminators -> attention focus/edge signals lead.",
+        "Method: binned fail-rate -> chart:failrate_by_focus_share -> risk rises at low focus.",
+        "Method: correlation -> chart:corr_heatmap -> attention features are partly redundant."
+      ],
+      "artifact_refs": [
+        "candidate_signals",
+        "charts",
+        "plots"
+      ]
+    },
+    {
+      "id": "hypotheses_artifacts",
+      "title": "Hypotheses & Artifacts",
+      "stages": [
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "summary": "Composite deterministic recipes proposed as predictors for held-out confirmation.",
+      "items": [
+        "M3: ungrounded attention (diffuse and/or peripheral) drives false positives.",
+        "M4: test the diffuse_and_peripheral recipe on a held-out attention-present split.",
+        "M5: if confirmed, an attention-grounding intervention should reduce false 'Yes'."
+      ],
+      "artifact_refs": [
+        "claims",
+        "candidate_signals"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "C1",
+      "text": "Diffuse, low-focus attention is a descriptive correlate of false-positive (FAIL) cases.",
+      "status": "descriptive",
+      "evidence_ids": [
+        "chart:top_discriminators",
+        "chart:attention_box_by_outcome",
+        "chart:failrate_by_focus_share",
+        "signal:diffuse_attention"
+      ],
+      "interpretation": "When attention is spread out rather than concentrated, the model is more likely to assert an absent object is present.",
+      "do_not_infer": "Not causal and based on only ~22 attention-instrumented cases."
+    },
+    {
+      "id": "C2",
+      "text": "Edge/peripheral attention concentration co-occurs with FAIL cases.",
+      "status": "descriptive",
+      "evidence_ids": [
+        "chart:group_means",
+        "signal:peripheral_attention"
+      ],
+      "interpretation": "Attention leaking to image borders accompanies ungrounded 'Yes' answers.",
+      "do_not_infer": "Direction of effect unconfirmed; edge_mass correlates with other signals."
+    },
+    {
+      "id": "C3",
+      "text": "Prompt-insensitive answers (zero sensitivity) are a sanity-check correlate of FAIL.",
+      "status": "descriptive",
+      "evidence_ids": [
+        "signal:prompt_insensitive"
+      ],
+      "interpretation": "Answers unchanged across prompt phrasings suggest an ungrounded prior.",
+      "do_not_infer": "Sensitivity is 0 for most cases, so discrimination is weak."
+    }
   ],
   "candidate_signals": [
     {
-      "name": "generated_probe1_false_detection",
+      "name": "prompt_contrast_prompt_sensitivity",
       "source": "catalog",
       "description": "existing per-case column",
       "suggested_test": "",
       "recipe": null,
       "operationalized": true,
-      "effect": 0.8664799253034547,
+      "effect": 0.14102564102564102,
       "ci": [
-        0.6900093370681606,
+        -0.38461538461538464,
+        0.6666666666666667
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_max_relative_weight",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.19999999999999996,
+      "ci": [
+        -0.4,
+        0.8
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_mean_relative_weight",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.19999999999999996,
+      "ci": [
+        -0.4,
+        0.8
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_focus_share",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.6000000000000001,
+      "ci": [
+        0.0,
         1.0
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_attention_entropy",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": -0.6000000000000001,
+      "ci": [
+        -1.0,
+        0.0
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_top1_share",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.6000000000000001,
+      "ci": [
+        0.0,
+        1.0
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_center_offset",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.6000000000000001,
+      "ci": [
+        0.0,
+        1.0
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "relative_attention_edge_mass",
+      "source": "catalog",
+      "description": "existing per-case column",
+      "suggested_test": "",
+      "recipe": null,
+      "operationalized": true,
+      "effect": 0.19999999999999996,
+      "ci": [
+        -0.4,
+        0.8
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "diffuse_attention",
+      "source": "explorer",
+      "description": "Low focus_share with high entropy = attention spread over no real object; the model 'sees' the absent object everywhere and answers Yes.",
+      "suggested_test": "Compare held-out fail rate of diffuse vs concentrated attention cases.",
+      "recipe": {
+        "name": "diffuse_attention",
+        "kind": "expr",
+        "expr": "(relative_attention_focus_share < 0.2343) and (relative_attention_attention_entropy > 0.8293)"
+      },
+      "operationalized": true,
+      "effect": 0.05263157894736842,
+      "ci": [
+        -0.2631578947368421,
+        0.5657894736842105
+      ],
+      "e_value": null,
+      "reject": false,
+      "underpowered": false,
+      "host_adjudicated": true,
+      "fdr_corrected": false,
+      "confirmed_on": "held_out"
+    },
+    {
+      "name": "peripheral_attention",
+      "source": "explorer",
+      "description": "High edge_mass + large center_offset = attention drawn to image borders rather than a grounded object location.",
+      "suggested_test": "Held-out fail rate for peripheral vs central attention.",
+      "recipe": {
+        "name": "peripheral_attention",
+        "kind": "expr",
+        "expr": "(relative_attention_edge_mass > 0.1828) and (relative_attention_center_offset > 0.176)"
+      },
+      "operationalized": true,
+      "effect": 0.5789473684210527,
+      "ci": [
+        0.07894736842105263,
+        0.8947368421052632
       ],
       "e_value": null,
       "reject": true,
@@ -28,20 +443,20 @@
       "confirmed_on": "held_out"
     },
     {
-      "name": "probe1_positive",
+      "name": "prompt_insensitive",
       "source": "explorer",
-      "description": "bridged explorer signal",
-      "suggested_test": "",
+      "description": "Zero sensitivity = the model gives the same answer regardless of prompt phrasing, a hallmark of an ungrounded prior 'Yes'.",
+      "suggested_test": "Held-out fail rate for prompt-insensitive vs sensitive cases.",
       "recipe": {
-        "name": "probe1_positive",
+        "name": "prompt_insensitive",
         "kind": "expr",
-        "expr": "generated_probe1_false_detection > 0.5"
+        "expr": "prompt_contrast_prompt_sensitivity <= 0.0"
       },
       "operationalized": true,
-      "effect": 0.8664799253034547,
+      "effect": 0.31019387116948094,
       "ci": [
-        0.6900093370681606,
-        1.0
+        0.15509693558474047,
+        0.46404002501563474
       ],
       "e_value": null,
       "reject": true,
@@ -51,20 +466,20 @@
       "confirmed_on": "held_out"
     },
     {
-      "name": "low_focus_share",
+      "name": "diffuse_and_peripheral",
       "source": "explorer",
-      "description": "bridged explorer signal",
-      "suggested_test": "",
+      "description": "Interaction: unfocused attention that also leaks to edges is the strongest ungrounded-attention pattern.",
+      "suggested_test": "Held-out fail rate for the conjunction vs the rest.",
       "recipe": {
-        "name": "low_focus_share",
+        "name": "diffuse_and_peripheral",
         "kind": "expr",
-        "expr": "relative_attention_focus_share > 0.244825"
+        "expr": "(relative_attention_focus_share < 0.2343) and (relative_attention_edge_mass > 0.1828)"
       },
       "operationalized": true,
-      "effect": 0.4070450097847358,
+      "effect": -0.20253164556962025,
       "ci": [
-        0.025440313111545987,
-        0.7612524461839529
+        -0.2911392405063291,
+        -0.11392405063291139
       ],
       "e_value": null,
       "reject": true,
@@ -78,132 +493,143 @@
     {
       "name": "class_balance",
       "kind": "bar",
+      "display_name": "FAIL/PASS case balance",
       "data": "tables/class_balance.csv",
       "x": "outcome",
       "y": "count",
-      "title": "FAIL vs PASS",
-      "description": "FAIL vs PASS: bar of count by outcome (2 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/00_class_balance.png"
-    },
-    {
-      "name": "groupstats_generated_probe1_false_detection",
-      "kind": "bar",
-      "data": "tables/groupstats_generated_probe1_false_detection.csv",
-      "x": "outcome",
-      "y": "mean",
-      "title": "generated_probe1_false_detection: mean by outcome",
-      "description": "generated_probe1_false_detection: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/01_groupstats_generated_probe1_false_detection.png"
-    },
-    {
-      "name": "failrate_by_generated_probe1_false_detection",
-      "kind": "line",
-      "data": "tables/failrate_by_generated_probe1_false_detection.csv",
-      "x": "generated_probe1_false_detection_bin",
-      "y": "fail_rate",
-      "title": "Fail rate by generated_probe1_false_detection",
-      "description": "Fail rate by generated_probe1_false_detection: line of fail_rate by generated_probe1_false_detection_bin (1 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/02_failrate_by_generated_probe1_false_detection.png"
-    },
-    {
-      "name": "groupstats_relative_attention_max_relative_weight",
-      "kind": "bar",
-      "data": "tables/groupstats_relative_attention_max_relative_weight.csv",
-      "x": "outcome",
-      "y": "mean",
-      "title": "relative_attention_max_relative_weight: mean by outcome",
-      "description": "relative_attention_max_relative_weight: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/03_groupstats_relative_attention_max_relative_weigh.png"
-    },
-    {
-      "name": "failrate_by_relative_attention_max_relative_weight",
-      "kind": "line",
-      "data": "tables/failrate_by_relative_attention_max_relative_weight.csv",
-      "x": "relative_attention_max_relative_weight_bin",
-      "y": "fail_rate",
-      "title": "Fail rate by relative_attention_max_relative_weight",
-      "description": "Fail rate by relative_attention_max_relative_weight: line of fail_rate by relative_attention_max_relative_weight_bin (6 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/04_failrate_by_relative_attention_max_relative_weig.png"
-    },
-    {
-      "name": "groupstats_relative_attention_mean_relative_weight",
-      "kind": "bar",
-      "data": "tables/groupstats_relative_attention_mean_relative_weight.csv",
-      "x": "outcome",
-      "y": "mean",
-      "title": "relative_attention_mean_relative_weight: mean by outcome",
-      "description": "relative_attention_mean_relative_weight: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/05_groupstats_relative_attention_mean_relative_weig.png"
-    },
-    {
-      "name": "failrate_by_relative_attention_mean_relative_weight",
-      "kind": "line",
-      "data": "tables/failrate_by_relative_attention_mean_relative_weight.csv",
-      "x": "relative_attention_mean_relative_weight_bin",
-      "y": "fail_rate",
-      "title": "Fail rate by relative_attention_mean_relative_weight",
-      "description": "Fail rate by relative_attention_mean_relative_weight: line of fail_rate by relative_attention_mean_relative_weight_bin (6 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/06_failrate_by_relative_attention_mean_relative_wei.png"
-    },
-    {
-      "name": "groupstats_relative_attention_focus_share",
-      "kind": "bar",
-      "data": "tables/groupstats_relative_attention_focus_share.csv",
-      "x": "outcome",
-      "y": "mean",
-      "title": "relative_attention_focus_share: mean by outcome",
-      "description": "relative_attention_focus_share: mean by outcome: bar of mean by outcome (2 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/07_groupstats_relative_attention_focus_share.png"
-    },
-    {
-      "name": "failrate_by_relative_attention_focus_share",
-      "kind": "line",
-      "data": "tables/failrate_by_relative_attention_focus_share.csv",
-      "x": "relative_attention_focus_share_bin",
-      "y": "fail_rate",
-      "title": "Fail rate by relative_attention_focus_share",
-      "description": "Fail rate by relative_attention_focus_share: line of fail_rate by relative_attention_focus_share_bin (6 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/08_failrate_by_relative_attention_focus_share.png"
+      "title": "FAIL vs PASS case balance",
+      "description": "FAIL vs PASS case balance: bar of count by outcome (2 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/00_class_balance.png"
     },
     {
       "name": "top_discriminators",
       "kind": "bar",
+      "display_name": "Top FAIL/PASS discriminators",
       "data": "tables/top_discriminators.csv",
       "x": "signal",
       "y": "separation",
-      "title": "Top FAIL/PASS discriminators",
-      "description": "Top FAIL/PASS discriminators: bar of separation by signal (4 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/09_top_discriminators.png"
+      "title": "Top FAIL/PASS discriminators (|standardized mean diff|)",
+      "description": "Top FAIL/PASS discriminators (|standardized mean diff|): bar of separation by signal (8 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/01_top_discriminators.png"
     },
     {
-      "name": "corr_with_fail",
+      "name": "group_means",
       "kind": "bar",
-      "data": "tables/corr_with_fail.csv",
+      "display_name": "Per-signal group means",
+      "data": "tables/group_means.csv",
       "x": "signal",
-      "y": "corr_with_fail",
-      "title": "Signal correlation with FAIL",
-      "description": "Signal correlation with FAIL: bar of corr_with_fail by signal (4 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/10_corr_with_fail.png"
+      "y": "mean",
+      "title": "Per-signal group means (FAIL vs PASS)",
+      "description": "Per-signal group means (FAIL vs PASS): bar of mean by signal (16 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/02_group_means.png"
     },
     {
-      "name": "scatter_top_pair",
+      "name": "failrate_by_max_relative_weight",
+      "kind": "line",
+      "display_name": "Fail rate by max_relative_weight",
+      "data": "tables/failrate_by_max_relative_weight.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by max_relative_weight",
+      "description": "Fail rate by max_relative_weight: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/03_failrate_by_max_relative_weight.png"
+    },
+    {
+      "name": "failrate_by_mean_relative_weight",
+      "kind": "line",
+      "display_name": "Fail rate by mean_relative_weight",
+      "data": "tables/failrate_by_mean_relative_weight.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by mean_relative_weight",
+      "description": "Fail rate by mean_relative_weight: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/04_failrate_by_mean_relative_weight.png"
+    },
+    {
+      "name": "failrate_by_focus_share",
+      "kind": "line",
+      "display_name": "Fail rate by focus_share",
+      "data": "tables/failrate_by_focus_share.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by focus_share",
+      "description": "Fail rate by focus_share: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/05_failrate_by_focus_share.png"
+    },
+    {
+      "name": "failrate_by_attention_entropy",
+      "kind": "line",
+      "display_name": "Fail rate by attention_entropy",
+      "data": "tables/failrate_by_attention_entropy.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by attention_entropy",
+      "description": "Fail rate by attention_entropy: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/06_failrate_by_attention_entropy.png"
+    },
+    {
+      "name": "failrate_by_top1_share",
+      "kind": "line",
+      "display_name": "Fail rate by top1_share",
+      "data": "tables/failrate_by_top1_share.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by top1_share",
+      "description": "Fail rate by top1_share: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/07_failrate_by_top1_share.png"
+    },
+    {
+      "name": "failrate_by_center_offset",
+      "kind": "line",
+      "display_name": "Fail rate by center_offset",
+      "data": "tables/failrate_by_center_offset.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by center_offset",
+      "description": "Fail rate by center_offset: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/08_failrate_by_center_offset.png"
+    },
+    {
+      "name": "failrate_by_edge_mass",
+      "kind": "line",
+      "display_name": "Fail rate by edge_mass",
+      "data": "tables/failrate_by_edge_mass.csv",
+      "x": "bin_label",
+      "y": "fail_rate",
+      "title": "Fail rate by edge_mass",
+      "description": "Fail rate by edge_mass: line of fail_rate by bin_label (4 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/09_failrate_by_edge_mass.png"
+    },
+    {
+      "name": "scatter_top_attention_pair",
       "kind": "scatter",
-      "data": "tables/scatter_top_pair.csv",
-      "x": "x",
-      "y": "y",
-      "title": "relative_attention_focus_share vs relative_attention_mean_relative_weight by outcome",
-      "description": "relative_attention_focus_share vs relative_attention_mean_relative_weight by outcome: scatter of y by x (20 rows)",
-      "figure_path": "examples/diagnosis_loops/deco_hallu/outputs/fused/figures/11_scatter_top_pair.png"
+      "display_name": "Scatter: top attention pair",
+      "data": "tables/scatter_top_attention_pair.csv",
+      "x": "attention_entropy",
+      "y": "center_offset",
+      "title": "Top discriminative attention pair",
+      "description": "Top discriminative attention pair: scatter of center_offset by attention_entropy (22 rows)",
+      "figure_path": "/tealab-data/jiaqiliu/evalsmith/evalvitals/examples/diagnosis_loops/deco_hallu/outputs/fused/figures/10_scatter_top_attention_pair.png"
     }
   ],
   "recommended_confirmatory_tests": [
-    "Confirm probe1_positive recipe on a held-out split (two-group fail-rate contrast).",
-    "Collect attention features for all rows, then re-test focus_share threshold."
+    "Confirm the diffuse_attention and diffuse_and_peripheral recipes on a held-out split via the host's multiplicity-aware core.",
+    "Collect attention features for the remaining cases to remove small-n / selection limits.",
+    "M5 surgery: apply attention re-grounding to high-edge_mass cases and re-measure the false-positive rate.",
+    "Check whether missingness of attention features itself predicts FAIL."
   ],
   "caveats": [
-    "Attention columns are populated for only 20 of 121 rows; attention-based signals are exploratory on that subset only.",
-    "Exploratory only \u2014 no causal or multiplicity-adjusted claim; host confirms on held-out split.",
+    "Attention signals exist for only 22/121 cases; all attention findings are small-n.",
+    "Recipe thresholds use medians of the present-data subset (data-driven) -> mild optimism; the host should confirm on a held-out split.",
+    "Class imbalance (~21% FAIL) inflates apparent separations; fail-rate curves are sparse per bin.",
+    "prompt_sensitivity is 0 for most cases, giving little spread.",
     "marginal per-case signal verdicts are CI-based at alpha and NOT e-BH FDR-corrected across the signal family (unpaired test has no e-value)"
+  ],
+  "critique": [
+    "Double-dipping risk: medians for thresholds are computed on the same rows used to report separation; recipes are emitted so the host can re-evaluate out-of-sample.",
+    "Heavy missingness in attention features could be non-random (which cases get instrumented), a possible selection confound.",
+    "Standardized mean diff assumes roughly comparable spread; with n=22 the pooled SD is unstable.",
+    "Probe/prompt_sensitivity fields are treated as sanity-check evidence, not primary explanatory findings."
   ],
   "adjudication": {
     "method": "e-BH",
@@ -212,7 +638,7 @@
     "rejected_tools": [
       "single_rate_evalue"
     ],
-    "n_signals_tested": 3,
+    "n_signals_tested": 12,
     "n_signals_rejected": 3,
     "split": "held_out"
   },
@@ -224,5 +650,5 @@
     "frac": 0.4,
     "seed": 0
   },
-  "conclusion": "Standalone statistical analysis found a supported signal. Statistically supported: signal 'generated_probe1_false_detection' vs FAIL: [clustered bootstrap (unpaired)] effect=+0.8665 (B>A) CI=+0.6900..+1.0000 -> REJECT H0"
+  "conclusion": "Standalone statistical analysis found a supported signal. Statistically supported: signal 'peripheral_attention' vs FAIL: [clustered bootstrap (unpaired)] effect=+0.5789 (B>A) CI=+0.0789..+0.8947 -> REJECT H0"
 }
