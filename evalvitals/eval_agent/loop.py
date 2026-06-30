@@ -962,8 +962,12 @@ class VLDiagnoseLoop:
     def _do_m2(
         self, cycle: int, probe_results: "dict[str, Any]", data: "Any",
         artifact_pngs: "list", timings: "dict[str, float]", *, log: bool = True,
+        confirmatory: bool = True,
     ) -> "Any":
-        """M2: protocol-aware rigorous stats analysis (e-BH + effect sizes + charts)."""
+        """M2: protocol-aware rigorous stats analysis (effect sizes + charts).
+
+        ``confirmatory=False`` defers the e-BH validity verdict (the analysis
+        phase shows distributions only); the confirm phase recomputes it."""
         _t0 = time.monotonic()
         stats_report = self.stats_agent.analyze(
             probe_results,
@@ -971,6 +975,7 @@ class VLDiagnoseLoop:
             protocol=self.protocol,
             data=data,
             extra_figures=artifact_pngs,
+            confirmatory=confirmatory,
         )
         _dt = time.monotonic() - _t0
         timings["m2"] = timings.get("m2", 0.0) + _dt
@@ -1026,6 +1031,25 @@ class VLDiagnoseLoop:
                 cycle, diag, duration_sec=_dt, explore_figures=_explore_figs or None
             )
         return diag
+
+    @staticmethod
+    def _finalize_confirmatory_stats(stats_report: "Any") -> None:
+        """Promote a descriptive (analysis-phase) stats report to confirmatory.
+
+        The analysis phase runs M2 with the e-BH validity verdict DEFERRED
+        (``descriptive_only=True``). The confirm phase recomputes e-BH FDR
+        correction over the report's stats results so M5 and the dashboard see
+        the family-level reject decision. No-op when already confirmatory."""
+        if stats_report is None:
+            return
+        corr = getattr(stats_report, "corrected_rejections", None) or {}
+        if getattr(stats_report, "descriptive_only", False) or corr.get("deferred"):
+            from evalvitals.eval_agent.stages.stats_tools import fdr_correct
+
+            stats_report.corrected_rejections = fdr_correct(
+                list(getattr(stats_report, "stats_results", None) or [])
+            )
+            stats_report.descriptive_only = False
 
     def _do_m5(
         self, cycle: int, hypotheses: "list[Any]", stats_report: "Any",
@@ -1237,8 +1261,11 @@ class VLDiagnoseLoop:
             logger.info("M1 produced no probe results — stopping.")
             stopped_by = _STOPPED_BY_NO_PROBE
         else:
+            # Descriptive M2: effect sizes + charts, but DEFER the e-BH validity
+            # verdict to run_confirm so the analysis dashboard shows no
+            # "supported/not-supported" claim (Q2: no validity before confirm).
             final_stats_report = self._do_m2(
-                0, probe_results, data, artifact_pngs, timings
+                0, probe_results, data, artifact_pngs, timings, confirmatory=False
             )
             diag = self._do_m3(0, final_stats_report, [], timings)
             if diag is None or not diag.hypotheses:
@@ -1333,6 +1360,14 @@ class VLDiagnoseLoop:
             stats_report = self._do_m2(
                 0, probe_results, data, artifact_pngs, timings, log=False
             )
+
+        # The confirm phase OWNS the validity verdict: if the reused report came
+        # from the descriptive analysis phase (e-BH deferred), compute e-BH now,
+        # flip descriptive_only off, and log the confirmatory M2 so the dashboard
+        # surfaces the signal validity it withheld before confirmation.
+        self._finalize_confirmatory_stats(stats_report)
+        if self.run_logger and stats_report is not None:
+            self.run_logger.log_analysis(0, stats_report)
 
         test_results: list[Any] = []
         if hypotheses:

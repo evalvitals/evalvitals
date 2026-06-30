@@ -283,6 +283,25 @@ def run_fused_analysis(
             f"namespaced to avoid overwriting a real signal: {sorted(collisions)}"
         )
 
+    # The deferred "leak-1" check: a bridged recipe (or catalog column) whose
+    # value RECONSTRUCTS the FAIL label is the label in disguise — it would
+    # trivially "confirm" with effect→1 and pollute confirmed_recipes.json. Route
+    # such columns to the sanity lane so they never enter the confirmatory family
+    # or get reported as discriminators; record a caveat for the audit trail.
+    # (build_stats_input_from_records already isolated raw leaks; this re-runs
+    # over the just-injected bridged signals.)
+    from evalvitals.eval_agent.stages.stats_tools import isolate_label_leaks
+
+    leaked = isolate_label_leaks(confirm_inp)
+    for key in leaked:
+        bridged_keys.discard(key)
+    if leaked:
+        report.caveats.append(
+            "label-reconstructing signal(s) held out of the confirmatory family "
+            "(sanity/plumbing, not discriminators): "
+            + ", ".join(f"{k} [{v}]" for k, v in sorted(leaked.items()))
+        )
+
     if stats_agent is None:
         from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 

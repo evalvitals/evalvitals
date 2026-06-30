@@ -6,6 +6,45 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added/Changed — signal hygiene, descriptive analysis, tensor-level attention
+
+- **Label-leak isolation (the deferred "leak-1" check)** (`eval_agent/stages/stats_tools.py`):
+  `label_leak_score` / `isolate_label_leaks` detect per-case signals that
+  *reconstruct* the FAIL label (a probe flag equal to the outcome) and route them
+  to a new `StatsInput.sanity` lane, out of the tested family / e-BH multiplicity
+  / candidate charts / hypothesis seeding. A leak is a **binary flag that ~equals
+  the label** (best-split accuracy ≥ 0.985, ≥ 10 cases) — a *continuous* feature
+  that perfectly separates the classes is legitimate discovery and is NOT flagged.
+  Wired into `build_stats_input` / `build_stats_input_from_records` and the fused
+  pipeline's confirm step, so `generated:probe1.false_detection` /
+  `explored.probe1_positive` no longer get tested, charted, or "confirmed."
+
+- **Descriptive analysis phase (validity deferred to confirm)**
+  (`StatsAnalysisAgent.analyze(confirmatory=…)`, `VLDiagnoseLoop`,
+  `reporting/compiler.py`): `run_analysis()` now runs M2 with the e-BH validity
+  verdict DEFERRED (`StatsAnalysisReport.descriptive_only=True`, `corrected_rejections`
+  marked deferred) — effect sizes + charts only. `run_confirm()` recomputes e-BH
+  (`_finalize_confirmatory_stats`) and logs the confirmatory M2, so the dashboard
+  shows supported/not-supported claims ONLY after confirmation. The compiler
+  demotes every claim to descriptive in analysis-phase mode with a banner; the
+  all-in-one `run()` path stays confirmatory and unchanged.
+
+- **Richer per-case attention features + per-case map stack**
+  (`analyzers/attention/relative_attn.py`): each case now also emits
+  `attention_entropy`, `top1_share`, `center_offset`, `edge_mass` (diffuse-vs-spike,
+  peripheral, positional-sink proxies) alongside max/mean/focus, and the full
+  per-case spatial maps are stored (float16) in `artifacts["per_case_maps"]`.
+  `prompt_contrast` now surfaces a non-tautological per-case `prompt_sensitivity`
+  signal (answer instability across prompts, correctness-independent) — the
+  tautological `fixed_by_*`/`broken_by_*` flags stay in artifacts.
+
+- **`attention_decoding` — tensor-level omnibus** (`stats_tools.py`): a new M2 tool
+  that decodes FAIL from the FULL per-case attention map (cross-validated ridge
+  decoder → out-of-fold AUC, label-permutation null), answering "do FAIL and PASS
+  attend differently anywhere?" — feature-agnostic, pure numpy, robust at
+  features≫samples. Reads `StatsInput.per_case_vectors`, runs as a mandatory
+  global/omnibus tool in M5, and is added to `default_plan` when map vectors exist.
+
 ### Added — decoupled analysis vs. confirm+fix
 
 - **`VLDiagnoseLoop.run_analysis()` + `VLDiagnoseLoop.run_confirm()`**

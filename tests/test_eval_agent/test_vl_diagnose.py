@@ -1024,6 +1024,78 @@ class TestVLDiagnoseTwoPhase:
         assert report.all_test_results == []
         assert report.verified_hypotheses == []
 
+    # ── WS2: analysis phase is descriptive (e-BH validity deferred to confirm) ──
+
+    def test_run_analysis_defers_validity_verdict(self):
+        loop, data = self._signal_setup()
+        report = loop.run_analysis(data)
+        sr = report.final_stats_report
+        assert sr is not None
+        # M2 ran (effect sizes + charts) but the e-BH verdict is deferred.
+        assert sr.descriptive_only is True
+        assert (sr.corrected_rejections or {}).get("deferred") is True
+
+    def test_run_confirm_promotes_to_confirmatory(self):
+        loop, data = self._signal_setup()
+        analysis = loop.run_analysis(data)
+        confirmed = loop.run_confirm(
+            data, list(analysis.all_hypotheses),
+            stats_report=analysis.final_stats_report,
+        )
+        sr = confirmed.final_stats_report
+        # The confirm phase computes e-BH and flips descriptive_only off.
+        assert sr.descriptive_only is False
+        assert not (sr.corrected_rejections or {}).get("deferred")
+        assert "method" in (sr.corrected_rejections or {})
+
+    def test_run_keeps_validity_inline(self):
+        # The all-in-one run() path is confirmatory by default — unchanged.
+        loop = VLDiagnoseLoop(
+            model=_vlm(), protocol=_spatial_protocol(),
+            diagnosis_agent=_scripted_diagnosis_agent(), max_cycles=1,
+        )
+        report = loop.run(_labeled_batch())
+        assert report.final_stats_report.descriptive_only is False
+
+
+class TestDescriptivePhaseCompiler:
+    """The compiler hides validity in analysis-phase (descriptive) mode."""
+
+    _EXPLORE = {
+        "candidate_signals": [
+            {"name": "focus_share", "reject": True, "effect": 0.4, "ci": [0.1, 0.7]}
+        ]
+    }
+
+    def test_descriptive_mode_demotes_claims(self):
+        from evalvitals.reporting.compiler import compile_diagnostic_report
+
+        story = {"analyses": [{"cycle": 0, "descriptive_only": True}], "surgeries": []}
+        rep = compile_diagnostic_report(story, self._EXPLORE).to_dict()
+        assert rep["claims"], "expected at least one claim"
+        assert all(c["status"] == "descriptive" for c in rep["claims"])
+        assert any("ANALYSIS PHASE" in c for c in rep["caveats"])
+
+    def test_confirmatory_mode_shows_validity(self):
+        from evalvitals.reporting.compiler import compile_diagnostic_report
+
+        # A confirmatory M2 (descriptive_only False) restores the supported verdict.
+        story = {"analyses": [{"cycle": 0, "descriptive_only": False}], "surgeries": []}
+        rep = compile_diagnostic_report(story, self._EXPLORE).to_dict()
+        assert any(c["status"] == "supported" for c in rep["claims"])
+
+    def test_surgery_presence_restores_validity(self):
+        from evalvitals.reporting.compiler import compile_diagnostic_report
+
+        # Even a descriptive analysis flips to validity once a confirm-phase
+        # surgery (M5) is recorded in the merged story.
+        story = {
+            "analyses": [{"cycle": 0, "descriptive_only": True}],
+            "surgeries": [{"cycle": 0, "module": "m5"}],
+        }
+        rep = compile_diagnostic_report(story, self._EXPLORE).to_dict()
+        assert any(c["status"] == "supported" for c in rep["claims"])
+
 
 class TestM3FaultTolerance:
     def test_judge_exception_in_m3_does_not_kill_loop(self):

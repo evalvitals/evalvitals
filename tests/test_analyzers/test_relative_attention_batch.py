@@ -218,3 +218,45 @@ def test_stats_layer_picks_up_attention_signals():
     assert "relative_attention.max_relative_weight" in inp.per_case
     # Continuous signal → eligible for median-split association and rank corr.
     assert "relative_attention.max_relative_weight" in describe_data(inp)["continuous_signals"]
+
+
+# ── WS3: richer per-case scalars + the per-case map stack ────────────────────
+
+_RICH_FEATURES = ("attention_entropy", "top1_share", "center_offset", "edge_mass")
+
+
+def test_richer_per_case_features_present():
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    for e in res.findings["per_case"]:
+        for k in _RICH_FEATURES:
+            assert k in e, f"missing {k}"
+            assert 0.0 <= e[k] <= 1.0
+    # FOCUS (pass) cases spike on one patch → lower entropy than the flat fail
+    # cases, and higher single-patch dominance.
+    by_id = {e["id"]: e for e in res.findings["per_case"]}
+    assert by_id["p0"]["attention_entropy"] < by_id["f0"]["attention_entropy"]
+    assert by_id["p0"]["top1_share"] > by_id["f0"]["top1_share"]
+
+
+def test_per_case_map_stack_artifact():
+    import numpy as np
+
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), _labeled_batch())
+    maps = res.artifacts["per_case_maps"]
+    assert set(maps) == {"p0", "p1", "f0", "f1"}
+    for cid, m in maps.items():
+        assert m.dtype == np.float16
+        assert m.shape == (2, 2)
+
+
+def test_richer_features_are_continuous_signals_not_leaks():
+    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+
+    batch = _labeled_batch()
+    res = RelativeAttentionAnalyzer().run(AttnVLM(), batch)
+    inp = build_stats_input({"relative_attention": res}, batch)
+    for k in _RICH_FEATURES:
+        key = f"relative_attention.{k}"
+        # New features enter the tested family — none is misfiled as a label leak.
+        assert key in inp.per_case, f"{key} missing from tested family"
+        assert key not in inp.sanity
