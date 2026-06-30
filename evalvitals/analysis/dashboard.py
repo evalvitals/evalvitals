@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from evalvitals.reporting.compiler import compile_diagnostic_report
+
 
 def launch_dashboard(run_dir: str | Path, *, port: int | None = None) -> int:
     """Launch the Streamlit dashboard app for a single explore/loop run dir."""
@@ -124,7 +126,7 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
     log_path = max(log_paths, key=lambda p: p.stat().st_size if p.exists() else 0)
     explore_report, explore_dir = _find_explore_report(root, log_path)
 
-    return {
+    story = {
         "log_path": str(log_path),
         "analyses": by_event.get("analysis", []),
         "diagnoses": by_event.get("diagnosis", []),
@@ -137,6 +139,8 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
         "explore_report": explore_report,
         "explore_dir": explore_dir,
     }
+    story["diagnostic_report"] = compile_diagnostic_report(story, explore_report).to_dict()
+    return story
 
 
 def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -145,7 +149,7 @@ def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | N
     The loop writes ``run_log.jsonl`` under ``logs*/`` while the fused pipeline
     writes ``fused_report.json`` under a separate ``fused/`` dir. Search the run
     tree and its parents/siblings so the dashboard can show what M3 consulted."""
-    bases = [root, log_path.parent, log_path.parent.parent, root.parent]
+    bases = [root, log_path.parent, log_path.parent.parent]
     seen: set[Path] = set()
     for base in bases:
         if base in seen or not base.exists():

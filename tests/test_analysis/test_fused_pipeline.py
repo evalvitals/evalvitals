@@ -13,10 +13,11 @@ from evalvitals.analysis.fused_pipeline import (
 class _FakeExplorer:
     """Stand-in for M2ExplorerAgent: returns scripted candidates, records what it saw."""
 
-    def __init__(self, candidates, *, observations=(), recommended=()):
+    def __init__(self, candidates, *, observations=(), recommended=(), dashboard_storyboard=()):
         self._candidates = candidates
         self._observations = list(observations)
         self._recommended = list(recommended)
+        self._dashboard_storyboard = list(dashboard_storyboard)
         self.seen_ids: list[str] | None = None
 
     def explore_records(self, rows, *, question=""):
@@ -25,6 +26,7 @@ class _FakeExplorer:
             ok=True,
             question=question,
             observations=self._observations,
+            dashboard_storyboard=self._dashboard_storyboard,
             candidate_signals=list(self._candidates),
             recommended_confirmatory_tests=self._recommended,
         )
@@ -83,6 +85,24 @@ def test_explorer_only_sees_explore_rows_verdict_computed_on_confirm():
     assert set(explorer.seen_ids).isdisjoint(confirm_ids)
     assert set(explorer.seen_ids) == {r["case_id"] for r in explore}
     assert rep.split["mode"] == "held_out"
+
+
+def test_fused_report_preserves_agent_dashboard_storyboard():
+    rows = _dataset()
+    explorer = _FakeExplorer(
+        [CandidateSignal(name="obj_size")],
+        dashboard_storyboard=[{
+            "id": "analysis",
+            "title": "Analysis",
+            "stages": ["M2"],
+            "summary": "Agent-generated analysis panel",
+            "items": ["Method: compare size"],
+            "artifact_refs": ["candidate_signals"],
+        }],
+    )
+    rep = run_fused_analysis(rows, explorer=explorer, confirm_split=0.3, seed=0)
+    assert rep.dashboard_storyboard[0]["summary"] == "Agent-generated analysis panel"
+    assert rep.to_dict()["dashboard_storyboard"][0]["id"] == "analysis"
 
 
 # ---------------------------------------------------------------------------

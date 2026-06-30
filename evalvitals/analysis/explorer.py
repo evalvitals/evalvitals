@@ -47,21 +47,47 @@ Setup:
   the two groups FAIL and PASS. Identify the numeric signal columns and any
   categorical group columns (model, source_dir, probe_type, ...).
 
-VISUAL ANALYSIS — produce a COMPREHENSIVE set of charts, NOT one. Aim for 6-12
-charts that together tell the FAIL-vs-PASS story. Build this standard battery for
-whichever columns exist (skip a chart only if its columns are absent):
+VISUAL ANALYSIS — before writing plotting code, make an explicit intermediate
+visualization plan. The plan is part of the machine-readable output and should
+show that YOU selected plot types from the data semantics, not from a fixed
+template. Aim for 6-12 charts/plots that together tell the FAIL-vs-PASS story.
+
+First build a "visual_plan" list. Each item should be a dict:
+  {{
+    "name": "<stable artifact/chart name>",
+    "display_name": "<short human title, no raw generated/probe id>",
+    "question": "<what this visual answers>",
+    "data_shape": "<numeric-vs-binary | categorical-vs-binary | numeric-vs-numeric | many-numeric | paired | ...>",
+    "plot_kind": "<chosen plot type, e.g. bar, line, scatter, box, violin, heatmap, paired_slope>",
+    "fallback_kind": "<bar|line|scatter when a deterministic host chart is useful>",
+    "required_columns": ["..."],
+    "rationale": "<why this plot type fits the data and avoids misleading summaries>"
+  }}
+
+Use these decision principles:
+  - categorical vs binary outcome: fail-rate/count bar with n annotated in the table.
+  - numeric vs binary outcome: prefer distribution views (box/violin/strip) when
+    writing rich PNG plots; include a deterministic summary chart only when useful.
+  - binned numeric risk curves: line over ordered bins/percentiles.
+  - numeric vs numeric: scatter, optionally colored/stratified by outcome.
+  - many numeric signals: ranked effect/separation bar plus correlation heatmap.
+  - paired/intervention data: paired slope or discordant-count visual.
+  - skip a planned visual when required columns are absent or sample size makes it
+    misleading; say so in caveats.
+
+As a minimum, consider this standard battery when the columns exist:
   1. Class balance: count of FAIL vs PASS overall (and per model/group if present).
-  2. Per numeric signal — how it separates FAIL vs PASS: group mean/median per
-     outcome (grouped bar), AND a binned fail-rate curve (bin -> fail_rate).
+  2. Per numeric signal — how it separates FAIL vs PASS: distribution view or
+     group summary, AND a binned fail-rate curve (bin -> fail_rate).
   3. Top discriminators: a ranked bar of each signal's FAIL-vs-PASS separation
      (e.g. standardized mean difference / |meanFAIL - meanPASS| / s), largest first.
   4. Fail rate by each categorical group column (bar).
-  5. Signal correlations: a correlation table (and optionally a heatmap PNG).
+  5. Signal correlations: a correlation table and, when helpful, a heatmap PNG.
   6. 1-2 scatter plots of the most discriminative signal pairs, coloured by outcome.
 
 For EVERY chart you report in "charts":
 - write its plotted data as a CSV under "tables/<name>.csv"
-- add a spec {{"name","kind","data","x","y","title"}} with data="tables/<name>.csv"
+- add a spec {{"name","display_name","kind","data","x","y","title"}} with data="tables/<name>.csv"
   and kind in {{"bar","line","scatter"}}. The HOST renders these deterministically,
   so PRE-AGGREGATE distributions into the CSV (histogram = bin->count; fail rate =
   bin->fail_rate; group comparison = group->value) — never rely on a raw dump.
@@ -69,8 +95,33 @@ ADDITIONALLY you MAY draw richer figures (box / violin / heatmap / scatter-matri
 directly as PNG under "figures/" and list them in "plots"; a figure-styling skill
 (when available) will make these publication-quality.
 
+Report/dashboard contract:
+- Think in three reader-facing panels, even though you only emit JSON artifacts:
+  (1) Problem Setting = M1/run context and FAIL/PASS setup; (2) Analysis = M2
+  methods, evidence/charts, and takeaways; (3) Hypotheses & Artifacts = M3-M5
+  follow-up questions and decision evidence.
+- Emit this structure as "dashboard_storyboard": a list of panel dicts
+  {{"id","title","stages","summary","items","artifact_refs"}}. The Streamlit
+  dashboard will render this artifact; do not rely on hard-coded UI copy.
+- For each important analysis method, make the relationship explicit in
+  chart_readings or claims: method -> evidence/chart -> takeaway.
+- Use M-stage language consistently: M1=measurement/features, M2=confirmatory
+  statistics, M3=hypotheses, M4=mechanism test, M5=repair/surgery test.
+
 Discovery outputs:
 - does NOT claim causal/statistical confirmation; this is exploratory only
+- after creating charts, add "chart_readings": one short dict per important
+  visual with {{"chart": "<name/title>", "reading": "<what a human should see>",
+  "do_not_infer": "<what this chart cannot prove>"}}.
+- add "claims" only for carefully worded descriptive/confirmable statements. Each
+  claim must cite chart/signal identifiers in "evidence_ids"; set status to
+  "descriptive" unless the host later confirms it.
+- add "critique": agent self-audit notes about leakage, small n, double-dipping,
+  missingness, misleading plot choices, or alternative explanations.
+- Never use raw internal IDs like "generated_probe1_false_detection" as user-facing
+  chart titles or claim text. Use display names such as "Sanity check: probe
+  false-detection flag", and demote probe-derived fields to sanity-check
+  evidence rather than explanatory findings.
 - PREFERRED: for any composite / threshold / interaction signal that is a
   DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
   compute it on a HELD-OUT split and confirm it rigorously:
@@ -90,7 +141,70 @@ Discovery outputs:
   self-declared verdict is ignored. Omit both for descriptive-only signals.
 - prints the final result as the LAST stdout line exactly like (note "charts" is a
   RICH list here, one entry per CSV you wrote):
-  {marker}{{"observations": ["..."], "candidate_signals": [{{"name": "...", "rationale": "...", "suggested_test": "...", "recipe": {{"name": "...", "kind": "expr", "expr": "(col_a < 40) and (col_b < 0.3)"}}}}], "plots": ["figures/corr_heatmap.png"], "tables": {{}}, "charts": [{{"name": "class_balance", "kind": "bar", "data": "tables/class_balance.csv", "x": "outcome", "y": "count", "title": "FAIL vs PASS"}}, {{"name": "failrate_by_objsize", "kind": "line", "data": "tables/failrate_by_objsize.csv", "x": "obj_size_bin", "y": "fail_rate", "title": "Fail rate by object size"}}, {{"name": "top_discriminators", "kind": "bar", "data": "tables/top_discriminators.csv", "x": "signal", "y": "separation", "title": "Top FAIL/PASS discriminators"}}], "caveats": ["..."], "recommended_confirmatory_tests": ["..."]}}
+  {marker}{{
+    "observations": ["..."],
+    "visual_plan": [
+      {{"name": "failrate_by_objsize",
+        "display_name": "Failure rate by object size",
+        "question": "Does object size change failure risk?",
+        "data_shape": "numeric-vs-binary",
+        "plot_kind": "line",
+        "fallback_kind": "line",
+        "required_columns": ["obj_size", "label"],
+        "rationale": "Ordered bins show risk trend without assuming linearity."}}
+    ],
+    "chart_readings": [
+      {{"chart": "failrate_by_objsize",
+        "reading": "Failure rate rises in the smallest object-size bins.",
+        "do_not_infer": "This does not prove object size causes the error."}}
+    ],
+    "claims": [
+      {{"id": "C1",
+        "text": "Small object size is a descriptive failure correlate.",
+        "status": "descriptive",
+        "evidence_ids": ["chart:failrate_by_objsize"],
+        "interpretation": "Worth confirming as a deterministic signal.",
+        "do_not_infer": "Not causal until M5/M4 support it."}}
+    ],
+    "dashboard_storyboard": [
+      {{"id": "problem_setting", "title": "Problem Setting", "stages": ["M1"],
+        "summary": "Labeled FAIL/PASS cases with per-case signals from M1.",
+        "items": ["FAIL means false positive on absent object."],
+        "artifact_refs": ["data_profile"]}},
+      {{"id": "analysis", "title": "Analysis", "stages": ["M2"],
+        "summary": "Held-out signal testing plus chart readings.",
+        "items": ["Method: compare FAIL/PASS effect sizes.", "Takeaway: ..."],
+        "artifact_refs": ["candidate_signals", "charts"]}},
+      {{"id": "hypotheses_artifacts", "title": "Hypotheses & Artifacts",
+        "stages": ["M3", "M4", "M5"],
+        "summary": "Candidate mechanisms and follow-up tests.",
+        "items": ["Test whether ..."], "artifact_refs": ["claims"]}}
+    ],
+    "candidate_signals": [
+      {{"name": "...", "display_name": "<human-readable signal label>",
+        "rationale": "...", "suggested_test": "...",
+        "recipe": {{"name": "...", "kind": "expr",
+                   "expr": "(col_a < 40) and (col_b < 0.3)"}}}}
+    ],
+    "plots": ["figures/corr_heatmap.png"],
+    "tables": {{}},
+    "charts": [
+      {{"name": "class_balance", "kind": "bar",
+        "display_name": "FAIL/PASS case balance",
+        "data": "tables/class_balance.csv", "x": "outcome", "y": "count",
+        "title": "FAIL vs PASS"}},
+      {{"name": "failrate_by_objsize", "kind": "line",
+        "display_name": "Failure rate by object size",
+        "data": "tables/failrate_by_objsize.csv", "x": "obj_size_bin",
+        "y": "fail_rate", "title": "Fail rate by object size"}},
+      {{"name": "top_discriminators", "kind": "bar",
+        "data": "tables/top_discriminators.csv", "x": "signal",
+        "y": "separation", "title": "Top FAIL/PASS discriminators"}}
+    ],
+    "caveats": ["..."],
+    "critique": ["..."],
+    "recommended_confirmatory_tests": ["..."]
+  }}
 {skills_hint}
 Return ONLY the Python code{fences_hint}."""
 
@@ -135,6 +249,7 @@ class CandidateSignal:
     """
 
     name: str
+    display_name: str = ""
     rationale: str = ""
     suggested_test: str = ""
     # --- proposed by the explorer (no authority over the verdict) ---
@@ -153,6 +268,7 @@ class CandidateSignal:
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "display_name": self.display_name,
             "rationale": self.rationale,
             "suggested_test": self.suggested_test,
             "sufficient": self.sufficient,
@@ -175,11 +291,16 @@ class ExploratoryAnalysisReport:
     question: str = ""
     ok: bool = False
     observations: list[str] = field(default_factory=list)
+    visual_plan: list[dict[str, Any]] = field(default_factory=list)
+    chart_readings: list[dict[str, Any]] = field(default_factory=list)
+    dashboard_storyboard: list[dict[str, Any]] = field(default_factory=list)
+    claims: list[dict[str, Any]] = field(default_factory=list)
     candidate_signals: list[CandidateSignal] = field(default_factory=list)
     plots: list[str] = field(default_factory=list)
     tables: dict[str, Any] = field(default_factory=dict)
     charts: list[dict[str, Any]] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
+    critique: list[str] = field(default_factory=list)
     recommended_confirmatory_tests: list[str] = field(default_factory=list)
     data_profile: dict[str, Any] = field(default_factory=dict)
     # Host adjudication family metadata (method/alpha/split/n_in_family/rejected),
@@ -202,11 +323,16 @@ class ExploratoryAnalysisReport:
             "question": self.question,
             "ok": self.ok,
             "observations": self.observations,
+            "visual_plan": self.visual_plan,
+            "chart_readings": self.chart_readings,
+            "dashboard_storyboard": self.dashboard_storyboard,
+            "claims": self.claims,
             "candidate_signals": [s.to_dict() for s in self.candidate_signals],
             "plots": self.plots,
             "tables": self.tables,
             "charts": self.charts,
             "caveats": self.caveats,
+            "critique": self.critique,
             "recommended_confirmatory_tests": self.recommended_confirmatory_tests,
             "data_profile": self.data_profile,
             "adjudication": self.adjudication,
@@ -618,6 +744,7 @@ def _report_from_sandbox(
     signals = [
         CandidateSignal(
             name=str(item.get("name", "")),
+            display_name=str(item.get("display_name", "")),
             rationale=str(item.get("rationale", "")),
             suggested_test=str(item.get("suggested_test", "")),
             sufficient=item["sufficient"] if isinstance(item.get("sufficient"), dict) else None,
@@ -631,11 +758,16 @@ def _report_from_sandbox(
             question=question,
             ok=True,
             observations=[str(x) for x in parsed.get("observations", []) or []],
+            visual_plan=_normalize_visual_plan(parsed.get("visual_plan", [])),
+            chart_readings=_normalize_list_of_dicts(parsed.get("chart_readings", [])),
+            dashboard_storyboard=_normalize_list_of_dicts(parsed.get("dashboard_storyboard", [])),
+            claims=_normalize_list_of_dicts(parsed.get("claims", [])),
             candidate_signals=signals,
             plots=plots,
             tables=dict(parsed.get("tables", {}) or {}),
             charts=[dict(x) for x in parsed.get("charts", []) or [] if isinstance(x, dict)],
             caveats=[str(x) for x in parsed.get("caveats", []) or []],
+            critique=[str(x) for x in parsed.get("critique", []) or []],
             recommended_confirmatory_tests=[
                 str(x) for x in parsed.get("recommended_confirmatory_tests", []) or []
             ],
@@ -665,6 +797,54 @@ def _parse_result_json(stdout: str) -> tuple[dict[str, Any], str]:
     if not isinstance(parsed, dict):
         return {}, f"{_RESULT_MARKER} payload must be a JSON object"
     return parsed, ""
+
+
+def _normalize_visual_plan(raw: Any) -> list[dict[str, Any]]:
+    """Keep agent plot-type decisions auditable without making old reports invalid."""
+    plan: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw or []):
+        if not isinstance(item, dict):
+            continue
+        cleaned: dict[str, Any] = {}
+        for key in (
+            "name",
+            "question",
+            "data_shape",
+            "plot_kind",
+            "fallback_kind",
+            "rationale",
+            "status",
+        ):
+            if item.get(key) is not None:
+                cleaned[key] = str(item.get(key))
+        cols = item.get("required_columns")
+        if isinstance(cols, list):
+            cleaned["required_columns"] = [str(c) for c in cols]
+        elif cols is not None:
+            cleaned["required_columns"] = [str(cols)]
+        if "name" not in cleaned:
+            cleaned["name"] = f"visual_{idx}"
+        plan.append(cleaned)
+    return plan
+
+
+def _normalize_list_of_dicts(raw: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        cleaned: dict[str, Any] = {}
+        for key, value in item.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                cleaned[str(key)] = value
+            elif isinstance(value, list):
+                cleaned[str(key)] = [str(x) for x in value]
+            elif isinstance(value, dict):
+                cleaned[str(key)] = {str(k): str(v) for k, v in value.items()}
+            else:
+                cleaned[str(key)] = str(value)
+        out.append(cleaned)
+    return out
 
 
 def _normalize_plot_paths(raw: Any, workdir: Path) -> list[str]:

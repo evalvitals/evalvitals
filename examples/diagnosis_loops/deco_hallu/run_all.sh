@@ -36,7 +36,7 @@ if [[ -z "${PY:-}" ]]; then
 fi
 
 # Bundled figure-styling skill — passed to the explorer when present.
-NF="$REPO_ROOT/evalvitals/analysis/skills/nature-figure"
+NF="$REPO_ROOT/evalvitals/agent_assets/skills/nature-figure"
 SKILL_ARGS=()
 [[ -d "$NF" ]] && SKILL_ARGS=(--skill "$NF")
 

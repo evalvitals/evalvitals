@@ -53,7 +53,7 @@ scripts wrap.
 ```bash
 # Use the repo's venv python; run from THIS directory (scripts `import run`).
 PY=<repo-root>/.venv/bin/python
-NF=<repo-root>/evalvitals/analysis/skills/nature-figure       # bundled figure-styling skill
+NF=<repo-root>/evalvitals/agent_assets/skills/nature-figure   # bundled figure-styling skill
 cd <repo-root>/examples/diagnosis_loops/deco_hallu
 
 # 0) one-time, offline: build the balanced FAIL/PASS case batch

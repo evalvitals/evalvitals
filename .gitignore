@@ -223,6 +223,7 @@ examples/qwen_loop_agy/*
 .docker/
 .geimini/
 runs/
+evalvitals_chat_output/
 
 # deco examples: frozen manifests (data/cases) ARE committed; bulky caches are not
 examples/deco_*/data/images/

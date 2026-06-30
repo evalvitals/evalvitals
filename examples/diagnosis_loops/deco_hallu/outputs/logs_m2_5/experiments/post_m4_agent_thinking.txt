@@ -270,7 +270,7 @@ print(type(hf), hf if not hasattr(hf,'__dict__') else list(vars(hf).keys()))
 266:            prompt = self._as_prompt(inputs)
 267:            enc = self._encode(prompt)
 268:        enc.pop("token_type_ids", None)  # some VLM processors emit this; generate() rejects it
-281:  
+281:
 … [truncated 1401 chars]
 [#12 Bash] $ cd /tmp/evalvitals_sandbox_vl0u6i_4; python -c "
 import evalvitals, time, torch

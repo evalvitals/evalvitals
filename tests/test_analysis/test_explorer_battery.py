@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evalvitals.analysis.charts import render_chart_specs
 from evalvitals.analysis.explorer import M2ExplorerAgent
+from evalvitals.viz.renderer import render_chart_specs
 
 # A compliant "Lambda-style" script: pre-aggregated CSVs + one spec per CSV.
 _RICH_SCRIPT = r'''
@@ -40,8 +40,20 @@ charts = [
  {"name":"failrate_by_size","kind":"line","data":"tables/failrate_by_size.csv","x":"obj_size_bin","y":"fail_rate","title":"Fail rate by size"},
  {"name":"top_discriminators","kind":"bar","data":"tables/top_discriminators.csv","x":"signal","y":"separation","title":"Top discriminators"},
 ]
+visual_plan = [
+ {"name":"class_balance","question":"How many FAIL/PASS cases exist?","data_shape":"categorical-vs-count",
+  "plot_kind":"bar","fallback_kind":"bar","required_columns":["label"],
+  "rationale":"Counts by class are categorical totals."},
+ {"name":"failrate_by_size","question":"Does size change failure risk?","data_shape":"numeric-vs-binary",
+  "plot_kind":"line","fallback_kind":"line","required_columns":["obj_size","label"],
+  "rationale":"Ordered bins show a risk curve."},
+ {"name":"top_discriminators","question":"Which signal separates FAIL/PASS most?","data_shape":"many-numeric",
+  "plot_kind":"bar","fallback_kind":"bar","required_columns":["obj_size","attention","label"],
+  "rationale":"A ranked bar compares signal effect magnitudes."},
+]
 print("EXPLORATORY_RESULT_JSON=" + json.dumps({
   "observations":["FAIL skews small"],
+  "visual_plan": visual_plan,
   "candidate_signals":[{"name":"small","rationale":"r","recipe":{"name":"small","kind":"expr","expr":"obj_size < 40"}}],
   "plots":[], "tables":{}, "charts":charts, "caveats":["exploratory only"],
   "recommended_confirmatory_tests":["confirm small"]}))
@@ -68,6 +80,8 @@ def test_explorer_surfaces_multi_chart_battery():
     assert rep.ok
     names = [c["name"] for c in rep.charts]
     assert names == ["class_balance", "failrate_by_size", "top_discriminators"]
+    assert [v["name"] for v in rep.visual_plan] == names
+    assert rep.visual_plan[1]["plot_kind"] == "line"
     # each chart references a CSV the script wrote
     for c in rep.charts:
         assert c["data"].startswith("tables/")
