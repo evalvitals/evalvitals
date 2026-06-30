@@ -1,9 +1,0 @@
-signal,separation
-attention_entropy,1.253
-center_offset,1.05
-focus_share,1.0303
-top1_share,0.875
-prompt_sensitivity,0.7952
-mean_relative_weight,0.7904
-max_relative_weight,0.5991
-edge_mass,0.2017
