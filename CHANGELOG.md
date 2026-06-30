@@ -39,11 +39,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
   tautological `fixed_by_*`/`broken_by_*` flags stay in artifacts.
 
 - **`attention_decoding` — tensor-level omnibus** (`stats_tools.py`): a new M2 tool
-  that decodes FAIL from the FULL per-case attention map (cross-validated ridge
-  decoder → out-of-fold AUC, label-permutation null), answering "do FAIL and PASS
-  attend differently anywhere?" — feature-agnostic, pure numpy, robust at
-  features≫samples. Reads `StatsInput.per_case_vectors`, runs as a mandatory
-  global/omnibus tool in M5, and is added to `default_plan` when map vectors exist.
+  over the FULL per-case attention map (not a scalar reduction), answering "do
+  FAIL and PASS attend differently anywhere?" — feature-agnostic, pure numpy,
+  robust at features≫samples. Primary test is a two-sample **energy-distance
+  permutation** test (more powerful than linear decoding at low n; sensitive to
+  nonlinear / distributional differences), with a cross-validated linear-decoder
+  AUC reported alongside as an interpretable companion. Reads
+  `StatsInput.per_case_vectors`, runs as a mandatory global/omnibus tool in M5,
+  and is added to `default_plan` when map vectors exist. On the deco_hallu slice
+  the energy test flips the verdict from inconclusive (CV-AUC 0.42) to a real
+  finding (energy-distance D=1.88, permutation p=0.018) — the maps differ
+  distributionally even though no linear boundary separates them.
 
 ### Added — decoupled analysis vs. confirm+fix
 

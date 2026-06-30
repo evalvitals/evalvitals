@@ -810,8 +810,52 @@ def _cv_oof_scores(X: "np.ndarray", y: "np.ndarray", folds: int, lam: float, see
     return oof
 
 
+def _energy_distance_test(X: "np.ndarray", y: "np.ndarray", *,
+                          n_perm: int, alpha: float, seed: int) -> "tuple[float, float, bool]":
+    """Two-sample ENERGY-DISTANCE permutation test: do the FAIL and PASS rows of
+    *X* come from different distributions?
+
+    E = 2·mean‖x_fail − x_pass‖ − mean‖x_fail − x_fail'‖ − mean‖x_pass − x_pass'‖
+    (≥0; larger = more different). More powerful than linear CV-decoding at low n —
+    parameter-free and sensitive to nonlinear / higher-moment differences a linear
+    boundary misses. The pairwise distance matrix is precomputed ONCE; each
+    permutation only re-indexes it (and class sizes are preserved, so the diagonal
+    bias cancels), so cost is O(n_perm · n²). Returns ``(energy, perm_p, reject)``."""
+    n = len(y)
+    sq = (X * X).sum(1)
+    d2 = sq[:, None] + sq[None, :] - 2.0 * (X @ X.T)
+    np.maximum(d2, 0.0, out=d2)
+    dist = np.sqrt(d2)
+    yb = np.asarray(y, dtype=bool)
+
+    def _estat(mask: "np.ndarray") -> float:
+        na = int(mask.sum())
+        nb = n - na
+        if na == 0 or nb == 0:
+            return 0.0
+        nm = ~mask
+        daa = dist[np.ix_(mask, mask)].sum() / (na * na)
+        dbb = dist[np.ix_(nm, nm)].sum() / (nb * nb)
+        dab = dist[np.ix_(mask, nm)].sum() / (na * nb)
+        return 2.0 * dab - daa - dbb
+
+    obs = _estat(yb)
+    rng = np.random.default_rng(seed)
+    ge = 1  # +1 (observed) in both numerator and denominator → a valid permutation p
+    for _ in range(n_perm):
+        if _estat(rng.permutation(yb)) >= obs:
+            ge += 1
+    p = ge / (n_perm + 1)
+    return float(obs), float(p), bool(p < alpha)
+
+
 def _tool_attention_decoding(inp: StatsInput, config: dict) -> StatsToolResult:
-    """Omnibus: can a CV linear decoder read FAIL from the per-case attention map?"""
+    """Tensor-level omnibus: do FAIL and PASS per-case attention maps differ?
+
+    Primary test: a two-sample ENERGY-DISTANCE permutation test over the full
+    (standardized, resized) maps — parameter-free and more powerful than linear
+    decoding at low n. A cross-validated linear-decoder out-of-fold AUC is
+    reported alongside as an interpretable (but weaker) companion."""
     key = config.get("signal") or next(iter(inp.per_case_vectors), None)
     cfg = {**config, "signal": key}
     if not key or key not in inp.per_case_vectors:
@@ -822,7 +866,7 @@ def _tool_attention_decoding(inp: StatsInput, config: dict) -> StatsToolResult:
     vecmap = inp.per_case_vectors[key]
     g = int(config.get("grid", 8))
     lam = float(config.get("lam", 1.0))
-    n_perm = int(config.get("n_perm", 200))
+    n_perm = int(config.get("n_perm", 500))   # tighter p floor (1/(n_perm+1)) than the old 200
     alpha = float(config.get("alpha", 0.05))
     seed = int(config.get("seed", 0))
 
@@ -846,33 +890,33 @@ def _tool_attention_decoding(inp: StatsInput, config: dict) -> StatsToolResult:
     if n < _DECODE_MIN_N or n_fail < _DECODE_MIN_PER_CLASS or (n - n_fail) < _DECODE_MIN_PER_CLASS:
         return StatsToolResult(
             tool="attention_decoding", config=cfg, ok=False,
-            error=f"insufficient maps to decode (n={n}, fail={n_fail})",
+            error=f"insufficient maps for the omnibus (n={n}, fail={n_fail})",
             summary="attention_decoding: underpowered", underpowered=True,
             details={"n": n, "n_fail": n_fail},
         )
 
     X = np.vstack(xs)
     y = np.asarray(ys, dtype=np.float64)
+    # Standardize each map cell so no single high-variance patch dominates the
+    # distance (or the decoder); both tests then see the map's SHAPE, not scale.
+    Xz = (X - X.mean(0)) / (X.std(0) + 1e-8)
+
+    energy, p, reject = _energy_distance_test(Xz, y, n_perm=n_perm, alpha=alpha, seed=seed + 1)
     folds = max(2, min(int(config.get("folds", 5)), n_fail, n - n_fail))
-    obs = _auc(_cv_oof_scores(X, y, folds, lam, seed).tolist(), [int(v) for v in y])
-    rng = np.random.default_rng(seed + 1)
-    ge = 1  # +1 (observed) in numerator and denominator — a valid permutation p
-    for i in range(n_perm):
-        yp = rng.permutation(y)
-        a = _auc(_cv_oof_scores(X, yp, folds, lam, seed + 1000 + i).tolist(), [int(v) for v in yp])
-        if a >= obs:
-            ge += 1
-    p = ge / (n_perm + 1)
-    reject = bool(p < alpha)
+    cv_auc = _auc(_cv_oof_scores(Xz, y, folds, lam, seed).tolist(), [int(v) for v in y])
+
     return StatsToolResult(
         tool="attention_decoding",
-        config={**cfg, "grid": g, "folds": folds, "n_perm": n_perm},
-        ok=True, effect=round(float(obs), 4), reject=reject, p_value=round(float(p), 4),
-        summary=(f"attention map decodes FAIL: CV-AUC={obs:.3f}, permutation "
-                 f"p={p:.3f} → {'reject H0 (maps differ)' if reject else 'inconclusive'}"),
-        details={"n": n, "n_fail": n_fail, "cv_auc": round(float(obs), 4),
-                 "perm_p": round(float(p), 4), "grid": g, "n_perm": n_perm,
-                 "n_features": int(X.shape[1])},
+        config={**cfg, "grid": g, "n_perm": n_perm, "method": "energy_distance"},
+        ok=True, effect=round(float(energy), 4), reject=reject, p_value=round(float(p), 4),
+        underpowered=bool(not reject and p > 0.2 and n < 60),
+        summary=(f"FAIL/PASS attention maps differ: energy-distance={energy:.3f}, "
+                 f"permutation p={p:.3f} → {'reject H0 (maps differ)' if reject else 'inconclusive'} "
+                 f"(companion CV-AUC={cv_auc:.3f}, n={n})"),
+        details={"n": n, "n_fail": n_fail, "energy_distance": round(float(energy), 4),
+                 "perm_p": round(float(p), 4), "cv_auc": round(float(cv_auc), 4),
+                 "grid": g, "n_perm": n_perm, "n_features": int(X.shape[1]),
+                 "method": "energy_distance"},
     )
 
 
@@ -917,11 +961,12 @@ STATS_TOOL_CATALOG: dict[str, str] = {
         "association). Needs a continuous per-case signal."
     ),
     "attention_decoding": (
-        "Tensor-level OMNIBUS: cross-validated linear decoding of FAIL from the "
-        "FULL per-case attention map (not a scalar reduction), calibrated by a "
-        "label-permutation null. Answers 'do FAIL and PASS attend differently "
-        "anywhere?' — feature-agnostic. Needs per-case map vectors "
-        "(findings carry the scalars; the maps come from artifacts['per_case_maps'])."
+        "Tensor-level OMNIBUS: a two-sample ENERGY-DISTANCE permutation test over "
+        "the FULL per-case attention map (not a scalar reduction), with a CV "
+        "linear-decoder AUC reported alongside. Answers 'do FAIL and PASS attend "
+        "differently anywhere?' — feature-agnostic and sensitive to nonlinear / "
+        "distributional differences. Needs per-case map vectors (findings carry "
+        "the scalars; the maps come from artifacts['per_case_maps'])."
     ),
 }
 

@@ -42,18 +42,20 @@ def _maps(n_fail=15, n_pass=15, *, structured: bool, seed=0, g=6):
 class TestAttentionDecoding:
     def test_detects_structured_difference(self):
         inp = _maps(structured=True, seed=1)
-        r = run_stats_tool("attention_decoding", inp, {"n_perm": 100, "seed": 0})
+        r = run_stats_tool("attention_decoding", inp, {"n_perm": 200, "seed": 0})
         assert r.ok
-        assert r.effect > 0.8                      # CV-AUC clearly above chance
-        assert r.reject is True                    # permutation-significant
+        assert r.details["method"] == "energy_distance"
+        assert r.effect > 0.0                       # positive energy distance
+        assert r.reject is True                     # permutation-significant
         assert r.p_value is not None and r.p_value < 0.05
+        assert r.details["cv_auc"] > 0.8            # companion decoder also separates
         assert r.details["n"] == 30 and r.details["n_fail"] == 15
 
     def test_null_on_unstructured_maps(self):
         inp = _maps(structured=False, seed=2)
-        r = run_stats_tool("attention_decoding", inp, {"n_perm": 100, "seed": 0})
+        r = run_stats_tool("attention_decoding", inp, {"n_perm": 200, "seed": 0})
         assert r.ok
-        # No class structure → decoder cannot beat the permutation null.
+        # No class structure → neither energy distance nor the decoder beats the null.
         assert r.reject is False
         assert r.p_value is not None and r.p_value >= 0.05
 
