@@ -23,7 +23,18 @@ def compile_diagnostic_report(
     signals = _candidate_signals(explore_report)
     evidence = _compile_evidence(explore_report, story)
     claims = _compile_claims(explore_report, story, signals)
-    answer = _answer(explore_report, claims)
+
+    # Analysis-phase (descriptive) mode: M2 ran with the e-BH validity verdict
+    # DEFERRED to the confirm phase, so the dashboard must NOT show
+    # supported/not-supported claims — only distributions, charts, and proposed
+    # hypotheses. Demote every signal claim to descriptive until confirmation.
+    descriptive_only = _is_descriptive_only(story)
+    caveats = [str(c) for c in (explore_report.get("caveats") or [])]
+    if descriptive_only:
+        claims = [_demote_to_descriptive(c) for c in claims]
+        caveats.insert(0, _DESCRIPTIVE_BANNER)
+
+    answer = _answer(explore_report, claims) if not descriptive_only else _DESCRIPTIVE_ANSWER
     confidence = _confidence(claims)
 
     return DiagnosticReport(
@@ -37,8 +48,53 @@ def compile_diagnostic_report(
         chart_readings=list(explore_report.get("chart_readings") or []),
         dashboard_storyboard=_dashboard_storyboard(explore_report, story, claims),
         critique=_critique(explore_report, signals),
-        caveats=[str(c) for c in (explore_report.get("caveats") or [])],
+        caveats=caveats,
         next_actions=_next_actions(explore_report, claims),
+    )
+
+
+_DESCRIPTIVE_BANNER = (
+    "ANALYSIS PHASE (descriptive): distributions, charts, and proposed hypotheses "
+    "only — signal/hypothesis VALIDITY (e-BH + M5) is deferred to the confirm phase "
+    "and is not shown here."
+)
+_DESCRIPTIVE_ANSWER = (
+    "Analysis phase — candidate signals and proposed hypotheses are shown without a "
+    "validity verdict; run the confirm phase to adjudicate them."
+)
+
+
+def _is_descriptive_only(story: dict[str, Any]) -> bool:
+    """True when every M2 analysis in the story deferred its validity verdict and
+    no confirmation (M5/surgery) has run yet — i.e. the loaded run is analysis-only.
+
+    A single confirmatory M2 (``descriptive_only=False``, logged by the confirm
+    phase or the all-in-one loop) or any recorded surgery flips this off, so the
+    full validity rendering returns once the run is confirmed."""
+    analyses = story.get("analyses") or []
+    if not analyses:
+        return False
+    if not all(a.get("descriptive_only") for a in analyses):
+        return False
+    return not (story.get("surgeries") or [])
+
+
+def _demote_to_descriptive(claim: Claim) -> Claim:
+    """Strip a claim's validity verdict (supported/inconclusive/refuted) to
+    descriptive for the analysis-phase view, preserving its text and evidence."""
+    if claim.status == "descriptive":
+        return claim
+    note = "Association shown descriptively; validity is deferred to the confirm phase."
+    interp = (claim.interpretation + " " if claim.interpretation else "") + note
+    return Claim(
+        id=claim.id,
+        text=claim.text,
+        status="descriptive",
+        evidence_ids=list(claim.evidence_ids),
+        counter_evidence_ids=list(claim.counter_evidence_ids),
+        interpretation=interp.strip(),
+        do_not_infer=claim.do_not_infer,
+        downstream=list(claim.downstream),
     )
 
 

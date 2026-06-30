@@ -376,6 +376,10 @@ class RelativeAttentionAnalyzer(Analyzer):
         maps_pass: list[np.ndarray] = []
         fail_rep_id: str | None = None
         pass_rep_id: str | None = None
+        # Per-case spatial maps (float16) — kept as an artifact (dropped from the
+        # light result.json) so the WS4 attention_decoding omnibus can read the
+        # full map per case, not just the scalar reductions.
+        per_case_maps: dict[str, np.ndarray] = {}
 
         for case in cases.stratified_head(self.max_cases):
             try:
@@ -391,12 +395,15 @@ class RelativeAttentionAnalyzer(Analyzer):
 
             k = min(self.top_k, rel_np.size)
             topk_share = float(np.sort(rel_np)[::-1][:k].sum() / (rel_np.sum() + 1e-8))
-            per_case.append({
+            entry = {
                 "id": case.id,
                 "max_relative_weight": round(float(rel_np.max()), 4),
                 "mean_relative_weight": round(float(rel_np.mean()), 4),
                 "focus_share": round(topk_share, 4),
-            })
+            }
+            entry.update(_attention_features(rel_np, spatial_map))
+            per_case.append(entry)
+            per_case_maps[case.id] = spatial_map.astype(np.float16)
 
             label = getattr(getattr(case, "label", None), "value", None)
             if label == "fail":
@@ -421,6 +428,8 @@ class RelativeAttentionAnalyzer(Analyzer):
         ]
 
         artifacts: dict = {"attn_map": rel_np, "spatial_map": spatial_map}
+        if per_case_maps:
+            artifacts["per_case_maps"] = per_case_maps
         fail_mean = _group_mean_map(maps_fail)
         pass_mean = _group_mean_map(maps_pass)
         if fail_mean is not None:
@@ -537,6 +546,50 @@ class RelativeAttentionAnalyzer(Analyzer):
             spatial_map = rel_np.reshape(side, side) if side * side == n_img else rel_np
 
         return rel_np, spatial_map, n_img, n_layers
+
+
+def _attention_features(rel_np: np.ndarray, spatial_map: np.ndarray) -> dict:
+    """Richer per-case scalars derived from one case's relative-attention map.
+
+    Beyond the raw max/mean weight, these capture the SHAPE of attention so M2
+    can test the mechanisms M3 reasons about:
+      - ``attention_entropy``  normalized Shannon entropy of the weight
+        distribution (1 = diffuse/smeared, 0 = a single spike) → the
+        "diffuse vs. concentrated" regime split.
+      - ``top1_share``         fraction of total weight on the single peak patch
+        (single-patch dominance).
+      - ``center_offset``      distance of the attention centre-of-mass from the
+        image centre, normalized to [0, 1] (peripheral vs. central attention).
+      - ``edge_mass``          fraction of weight on the border ring of patches
+        (a positional-sink proxy — sinks tend to sit at edges/corners).
+    All are continuous in [0, 1] (or ≥0), so they enter M2 as genuine
+    discriminators, never as a label-reconstructing flag.
+    """
+    w = rel_np.astype(np.float64).ravel()
+    total = float(w.sum()) + 1e-12
+    p = w / total
+    nz = p[p > 0]
+    ent = float(-(nz * np.log(nz)).sum())
+    ent_norm = ent / (np.log(max(w.size, 2))) if w.size > 1 else 0.0
+    feats: dict = {
+        "attention_entropy": round(float(ent_norm), 4),
+        "top1_share": round(float(w.max() / total), 4),
+    }
+    if spatial_map.ndim == 2 and spatial_map.size > 1:
+        m = spatial_map.astype(np.float64)
+        msum = float(m.sum()) + 1e-12
+        h, w2 = m.shape
+        rows = np.arange(h)[:, None]
+        cols = np.arange(w2)[None, :]
+        com_r = float((m * rows).sum() / msum)
+        com_c = float((m * cols).sum() / msum)
+        cr, cc = (h - 1) / 2.0, (w2 - 1) / 2.0
+        off = np.hypot((com_r - cr) / (cr + 1e-9), (com_c - cc) / (cc + 1e-9)) / np.sqrt(2.0)
+        feats["center_offset"] = round(float(min(off, 1.0)), 4)
+        border = np.zeros((h, w2), dtype=bool)
+        border[0, :] = border[-1, :] = border[:, 0] = border[:, -1] = True
+        feats["edge_mass"] = round(float(m[border].sum() / msum), 4)
+    return feats
 
 
 def _group_mean_map(maps: "list[np.ndarray]") -> "np.ndarray | None":

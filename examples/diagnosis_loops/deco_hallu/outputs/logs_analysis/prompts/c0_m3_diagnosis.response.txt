@@ -1,0 +1,11 @@
+HYPOTHESIS: The model emits false "Yes" detections when its visual attention collapses onto a single dominant patch (high max_relative_weight, high focus_share/top1_share, low entropy), i.e. an attention-sink that fabricates evidence for an absent object.
+FAILURE_MODE: attention_sink
+TEST: relative_attention.max_relative_weight and relative_attention.attention_entropy vs FAIL (already REJECT H0; confirm direction holds on a held-out split with larger n, since attention is present for only 22/32 cases).
+
+HYPOTHESIS: False detections concentrate on cases where peaked attention lands off-object / near the periphery (high center_offset, peripheral_attention=1), meaning the model anchors on background or edge artifacts rather than the queried region.
+FAILURE_MODE: mislocalized_attention
+TEST: explored.peripheral_attention and relative_attention.center_offset vs FAIL; render the diff_map (fail_minus_pass) overlay to verify FAIL attention sits off the target region.
+
+HYPOTHESIS: Failing cases are prompt-insensitive — the "Yes" answer does not change under the describe_first or sensitive prompt rewrites, indicating a hard prior toward affirmation rather than genuine image grounding.
+FAILURE_MODE: hallucination/prompt_insensitivity
+TEST: prompt_contrast describe_first contrast and explored.prompt_insensitive vs FAIL (note Friedman/McNemar showed no net strategy gain — describe_first broke 5, fixed 0 — so test whether prompt-insensitive cases are the persistent failers).

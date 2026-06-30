@@ -1,0 +1,17 @@
+signal,group,mean
+attention_entropy,FAIL,0.7284
+attention_entropy,PASS,0.8506
+center_offset,FAIL,0.2679
+center_offset,PASS,0.1341
+focus_share,FAIL,0.3583
+focus_share,PASS,0.2089
+top1_share,FAIL,0.1213
+top1_share,PASS,0.0648
+prompt_sensitivity,FAIL,0.0533
+prompt_sensitivity,PASS,0.0
+mean_relative_weight,FAIL,6.1744
+mean_relative_weight,PASS,2.8522
+max_relative_weight,FAIL,220.7055
+max_relative_weight,PASS,84.6055
+edge_mass,FAIL,0.1733
+edge_mass,PASS,0.1936

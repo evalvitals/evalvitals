@@ -902,6 +902,201 @@ class TestVLDiagnoseLoop:
             pass  # acceptable if Gemini key absent; we just check no crash
 
 
+class TestVLDiagnoseTwoPhase:
+    """run_analysis() / run_confirm() — analyse+propose, then deferred confirm."""
+
+    def _signal_setup(self, **loop_kw):
+        """A loop whose probe fires a per-case signal exactly on the FAIL cases,
+        so M5 can confirm. Returns (loop, data)."""
+        from evalvitals.core.result import Result as R
+        from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+
+        cases = [
+            FailureCase(inputs=Inputs(prompt="q1"), label=Label.FAIL),
+            FailureCase(inputs=Inputs(prompt="q2"), label=Label.FAIL),
+            FailureCase(inputs=Inputs(prompt="q3"), label=Label.PASS),
+            FailureCase(inputs=Inputs(prompt="q4"), label=Label.PASS),
+        ]
+        data = CaseBatch(cases)
+        fail_ids = [cases[0].id, cases[1].id]
+
+        class SignalProbe(ProbeAgent):
+            def probe(self, model, data, **kw):
+                findings = {
+                    "per_case": [{"sample_id": cid, "attention_flag": True} for cid in fail_ids]
+                }
+                return {"attention": R(analyzer="attention", model="fake",
+                                       cases=data, findings=findings)}
+
+        loop = VLDiagnoseLoop(
+            model=_vlm(),
+            protocol=_spatial_protocol(),
+            probe_agent=SignalProbe(),
+            diagnosis_agent=_scripted_diagnosis_agent("attention"),
+            hypothesis_tester=HypothesisTester(min_effect=0.05),
+            max_cycles=5,
+            **loop_kw,
+        )
+        return loop, data
+
+    def test_run_analysis_proposes_without_confirming(self):
+        loop, data = self._signal_setup()
+        report = loop.run_analysis(data)
+        assert report.stopped_by == "analysis_complete"
+        assert report.cycles == 1
+        assert len(report.all_hypotheses) >= 1
+        # M5 did not run: no test results, nothing verified.
+        assert report.all_test_results == []
+        assert report.verified_hypotheses == []
+        # M2 ran: the stats report (charts/signal verdicts) is present for the dashboard.
+        assert report.final_stats_report is not None
+
+    def test_run_analysis_no_hypotheses_when_m3_empty(self):
+        # An M3 that yields nothing still leaves a valid analysis (stats) report.
+        loop, data = self._signal_setup()
+        # Swap in a diagnosis agent whose judge returns no hypotheses.
+        loop.diagnosis_agent = DiagnosisAgent(judge=ScriptedModel(["[]"]))
+        report = loop.run_analysis(data)
+        assert report.all_hypotheses == []
+        assert report.stopped_by == "no_hypotheses"
+        assert report.final_stats_report is not None
+
+    def test_run_confirm_with_reloaded_hypotheses_and_stats(self):
+        # Phase 1 → serialize/reload the proposed hypotheses → Phase 2 confirms
+        # against the EXACT stats report the analysis dashboard showed.
+        from evalvitals.eval_agent.hypothesis import (
+            hypothesis_from_dict,
+            hypothesis_to_dict,
+        )
+
+        loop, data = self._signal_setup()
+        analysis = loop.run_analysis(data)
+        reloaded = [hypothesis_from_dict(hypothesis_to_dict(h))
+                    for h in analysis.all_hypotheses]
+
+        confirmed = loop.run_confirm(
+            data, reloaded, stats_report=analysis.final_stats_report
+        )
+        assert len(confirmed.all_test_results) == len(reloaded)
+        # Signal aligns with failures → at least one SUPPORTED, protocol-consistent.
+        assert confirmed.stopped_by == "criteria_met"
+        assert len(confirmed.verified_hypotheses) >= 1
+
+    def test_run_confirm_regenerates_stats_when_omitted(self):
+        from evalvitals.eval_agent.hypothesis import (
+            hypothesis_from_dict,
+            hypothesis_to_dict,
+        )
+
+        loop, data = self._signal_setup()
+        analysis = loop.run_analysis(data)
+        reloaded = [hypothesis_from_dict(hypothesis_to_dict(h))
+                    for h in analysis.all_hypotheses]
+        # No stats_report supplied → run_confirm re-runs M1→M2 silently.
+        confirmed = loop.run_confirm(data, reloaded)
+        assert len(confirmed.all_test_results) == len(reloaded)
+        assert confirmed.final_stats_report is not None
+
+    def test_confirm_then_run_m4(self):
+        from evalvitals.eval_agent.hypothesis import (
+            hypothesis_from_dict,
+            hypothesis_to_dict,
+        )
+
+        loop, data = self._signal_setup()
+        analysis = loop.run_analysis(data)
+        reloaded = [hypothesis_from_dict(hypothesis_to_dict(h))
+                    for h in analysis.all_hypotheses]
+        confirmed = loop.run_confirm(
+            data, reloaded, stats_report=analysis.final_stats_report
+        )
+        # The confirm report drives the post-loop fix step just like run().
+        iv = loop.run_m4(confirmed, data)
+        assert iv is not None
+        assert confirmed.fix_proposal is iv
+
+    def test_run_confirm_empty_hypotheses_is_safe(self):
+        loop, data = self._signal_setup()
+        analysis = loop.run_analysis(data)
+        report = loop.run_confirm(
+            data, [], stats_report=analysis.final_stats_report
+        )
+        assert report.all_test_results == []
+        assert report.verified_hypotheses == []
+
+    # ── WS2: analysis phase is descriptive (e-BH validity deferred to confirm) ──
+
+    def test_run_analysis_defers_validity_verdict(self):
+        loop, data = self._signal_setup()
+        report = loop.run_analysis(data)
+        sr = report.final_stats_report
+        assert sr is not None
+        # M2 ran (effect sizes + charts) but the e-BH verdict is deferred.
+        assert sr.descriptive_only is True
+        assert (sr.corrected_rejections or {}).get("deferred") is True
+
+    def test_run_confirm_promotes_to_confirmatory(self):
+        loop, data = self._signal_setup()
+        analysis = loop.run_analysis(data)
+        confirmed = loop.run_confirm(
+            data, list(analysis.all_hypotheses),
+            stats_report=analysis.final_stats_report,
+        )
+        sr = confirmed.final_stats_report
+        # The confirm phase computes e-BH and flips descriptive_only off.
+        assert sr.descriptive_only is False
+        assert not (sr.corrected_rejections or {}).get("deferred")
+        assert "method" in (sr.corrected_rejections or {})
+
+    def test_run_keeps_validity_inline(self):
+        # The all-in-one run() path is confirmatory by default — unchanged.
+        loop = VLDiagnoseLoop(
+            model=_vlm(), protocol=_spatial_protocol(),
+            diagnosis_agent=_scripted_diagnosis_agent(), max_cycles=1,
+        )
+        report = loop.run(_labeled_batch())
+        assert report.final_stats_report.descriptive_only is False
+
+
+class TestDescriptivePhaseCompiler:
+    """The compiler hides validity in analysis-phase (descriptive) mode."""
+
+    _EXPLORE = {
+        "candidate_signals": [
+            {"name": "focus_share", "reject": True, "effect": 0.4, "ci": [0.1, 0.7]}
+        ]
+    }
+
+    def test_descriptive_mode_demotes_claims(self):
+        from evalvitals.reporting.compiler import compile_diagnostic_report
+
+        story = {"analyses": [{"cycle": 0, "descriptive_only": True}], "surgeries": []}
+        rep = compile_diagnostic_report(story, self._EXPLORE).to_dict()
+        assert rep["claims"], "expected at least one claim"
+        assert all(c["status"] == "descriptive" for c in rep["claims"])
+        assert any("ANALYSIS PHASE" in c for c in rep["caveats"])
+
+    def test_confirmatory_mode_shows_validity(self):
+        from evalvitals.reporting.compiler import compile_diagnostic_report
+
+        # A confirmatory M2 (descriptive_only False) restores the supported verdict.
+        story = {"analyses": [{"cycle": 0, "descriptive_only": False}], "surgeries": []}
+        rep = compile_diagnostic_report(story, self._EXPLORE).to_dict()
+        assert any(c["status"] == "supported" for c in rep["claims"])
+
+    def test_surgery_presence_restores_validity(self):
+        from evalvitals.reporting.compiler import compile_diagnostic_report
+
+        # Even a descriptive analysis flips to validity once a confirm-phase
+        # surgery (M5) is recorded in the merged story.
+        story = {
+            "analyses": [{"cycle": 0, "descriptive_only": True}],
+            "surgeries": [{"cycle": 0, "module": "m5"}],
+        }
+        rep = compile_diagnostic_report(story, self._EXPLORE).to_dict()
+        assert any(c["status"] == "supported" for c in rep["claims"])
+
+
 class TestM3FaultTolerance:
     def test_judge_exception_in_m3_does_not_kill_loop(self):
         """A judge timeout/quota error in M3 must end the loop gracefully

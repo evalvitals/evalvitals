@@ -1,5 +1,9 @@
 signal,separation
-relative_attention_focus_share,1.20625217647381
-relative_attention_mean_relative_weight,0.7882474001924902
-relative_attention_max_relative_weight,0.684182153071373
-generated_probe1_false_detection,0.0
+attention_entropy,1.253
+center_offset,1.05
+focus_share,1.0303
+top1_share,0.875
+prompt_sensitivity,0.7952
+mean_relative_weight,0.7904
+max_relative_weight,0.5991
+edge_mass,0.2017

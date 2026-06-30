@@ -612,6 +612,10 @@ class RunLogger:
             "n_findings": len(report.findings),
             "findings": [str(f) for f in report.findings],
             "narrative": report.narrative,
+            # True when M2 ran descriptively (effect sizes + charts) with the e-BH
+            # validity verdict DEFERRED — the analysis phase; the dashboard hides
+            # supported/not-supported claims until a confirmatory M2 is logged.
+            "descriptive_only": bool(getattr(report, "descriptive_only", False)),
         }
         # StatsAnalysisReport extras (present when VLDiagnoseLoop is used)
         conclusion = getattr(report, "conclusion", None)

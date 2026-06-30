@@ -625,6 +625,9 @@ _STOPPED_BY_MAX       = "max_cycles"
 _STOPPED_BY_BUDGET    = "budget"
 _STOPPED_BY_NO_HYPS   = "no_hypotheses"
 _STOPPED_BY_NO_PROBE  = "no_probe_results"
+# run_analysis() ran M1->M2->M3 and proposed hypotheses without confirming them
+# (M5 deferred to run_confirm()). Not a failure — the analysis dashboard is ready.
+_STOPPED_BY_ANALYSIS  = "analysis_complete"
 
 
 def _coerce_explore_context(value: "Any | None") -> "Any | None":
@@ -672,7 +675,9 @@ class VLDiagnoseReport:
         cycles:               Number of M1→M5 cycles executed.
         stopped_by:           Why the loop stopped: ``"criteria_met"``,
                               ``"max_cycles"``, ``"budget"``,
-                              ``"no_hypotheses"``, or ``"no_probe_results"``.
+                              ``"no_hypotheses"``, ``"no_probe_results"``, or
+                              ``"analysis_complete"`` (from :meth:`run_analysis`,
+                              which proposes hypotheses without confirming them).
         verified_hypotheses:  Statistically supported, protocol-consistent
                               test results from M5 — sorted highest confidence
                               first.  Feed into :meth:`VLDiagnoseLoop.run_m4`.
@@ -716,6 +721,20 @@ class VLDiagnoseLoop:
 
     Stopping criteria: at least one M5-verified hypothesis that is also
     consistent with the user's experiment protocol.
+
+    **Decoupled two-phase use** (analysis → deferred confirm + fix)::
+
+        # Phase 1 — analyse + propose, build the dashboard. No M5, no fix.
+        report = loop.run_analysis(data)        # M1 → M2 → M3, stop
+        save(report.all_hypotheses, report.final_stats_report)
+
+        # Phase 2 — later, reuse the saved artifacts to confirm + repair.
+        report = loop.run_confirm(data, hypotheses, stats_report=stats)  # M5
+        loop.run_fix(report, data)              # tiered repair
+
+    :meth:`run` is the all-in-one path (M1→M2→M3→M5 + stopping). Use
+    :meth:`run_analysis` + :meth:`run_confirm` when you want the analysis
+    dashboard *before* deciding whether to confirm hypotheses and repair.
 
     Args:
         model:              The model under evaluation.
@@ -885,6 +904,178 @@ class VLDiagnoseLoop:
         )
 
     # ──────────────────────────────────────────────────────────────────
+    # Stage helpers (shared by run / run_analysis / run_confirm)
+    # ──────────────────────────────────────────────────────────────────
+
+    def _get_diagnosis_agent(self) -> "Any":
+        """Resolve M3 lazily so the default Gemini fallback matches
+        AutoDiagnoseLoop — a DiagnosisAgent() built eagerly would raise if
+        GEMINI_API_KEY is absent even when the caller passed diagnosis_agent=None."""
+        if self.diagnosis_agent is not None:
+            return self.diagnosis_agent
+        from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
+        return DiagnosisAgent()
+
+    def _do_m1(
+        self, cycle: int, data: "Any", all_hypotheses: "list[Any]",
+        timings: "dict[str, float]", *, log: bool = True,
+    ) -> "tuple[dict[str, Any], list]":
+        """M1: protocol-guided probing + signal bridge.
+
+        Returns ``(probe_results, artifact_pngs)``; ``probe_results`` is empty
+        when M1 produced nothing (caller decides whether to stop). When
+        ``log`` is False the probe events are not written — used by
+        :meth:`run_confirm` when it only needs to regenerate the stats the
+        tester reads (M1/M2 already belong to the analysis phase's log)."""
+        prior_modes = list(dict.fromkeys(
+            h.predicted_failure_mode for h in all_hypotheses
+            if getattr(h, "predicted_failure_mode", None)
+        ))
+        _t0 = time.monotonic()
+        probe_results = self.probe_agent.probe(
+            self.model,
+            data,
+            protocol=self.protocol,
+            prior_hypotheses=all_hypotheses or None,
+            hint_failure_modes=prior_modes or None,
+        )
+        _dt = time.monotonic() - _t0
+        timings["m1"] = timings.get("m1", 0.0) + _dt
+        artifact_pngs: list = []
+        if log and self.run_logger:
+            artifact_pngs = self.run_logger.log_probe(
+                cycle, probe_results, schema=self.probe_agent.last_schema,
+                judge_prompt=getattr(self.probe_agent, "last_selection_prompt", ""),
+                judge_raw=getattr(self.probe_agent, "last_selection_raw", ""),
+                duration_sec=_dt,
+            ) or []
+            _log_generated_tools(self.run_logger, cycle, "m1_probe", self.probe_agent)
+        if not probe_results:
+            return {}, []
+        for r in probe_results.values():
+            self.store.add_result(r)
+        # Operationalization bridge: pre-registered recipes -> synthetic
+        # "explored" analyzer Result (no-op when none configured).
+        self._bridge_signals(probe_results, data)
+        return probe_results, artifact_pngs
+
+    def _do_m2(
+        self, cycle: int, probe_results: "dict[str, Any]", data: "Any",
+        artifact_pngs: "list", timings: "dict[str, float]", *, log: bool = True,
+        confirmatory: bool = True,
+    ) -> "Any":
+        """M2: protocol-aware rigorous stats analysis (effect sizes + charts).
+
+        ``confirmatory=False`` defers the e-BH validity verdict (the analysis
+        phase shows distributions only); the confirm phase recomputes it."""
+        _t0 = time.monotonic()
+        stats_report = self.stats_agent.analyze(
+            probe_results,
+            model_name=repr(self.model),
+            protocol=self.protocol,
+            data=data,
+            extra_figures=artifact_pngs,
+            confirmatory=confirmatory,
+        )
+        _dt = time.monotonic() - _t0
+        timings["m2"] = timings.get("m2", 0.0) + _dt
+        if log and self.run_logger:
+            self.run_logger.log_analysis(cycle, stats_report, duration_sec=_dt)
+            _log_generated_tools(self.run_logger, cycle, "m2_stats", self.stats_agent)
+        return stats_report
+
+    def _do_m3(
+        self, cycle: int, stats_report: "Any", prior_cycles: "list[Any]",
+        timings: "dict[str, float]", *, log: bool = True,
+    ) -> "Any | None":
+        """M3: hypothesis generation. Returns the diagnosis result, or ``None``
+        when M3 could not run (judge unavailable / timeout / quota) — the caller
+        stops gracefully on ``None`` (regression guard: an M3 timeout must not
+        kill the whole run after M1+M2 succeeded). Also accrues token usage."""
+        try:
+            diag_agent = self._get_diagnosis_agent()
+        except Exception as exc:
+            logger.warning("Could not resolve DiagnosisAgent: %s", exc)
+            return None
+
+        _t0 = time.monotonic()
+        try:
+            diag = _diagnose_with_optional_context(
+                diag_agent, stats_report, prior_cycles, self._explore_context
+            )
+        except Exception as exc:  # judge timeout/quota must not kill the loop
+            logger.warning(
+                "M3 diagnosis failed at cycle %d (%s) — stopping with the "
+                "evidence collected so far.", cycle, exc,
+            )
+            return None
+        _dt = time.monotonic() - _t0
+        timings["m3"] = timings.get("m3", 0.0) + _dt
+
+        _tok = getattr(diag, "tokens_used", None)
+        if _tok is None:
+            _tok = max(1, len(diag.raw_judge_output) // 4)
+        self._tokens_used += _tok
+
+        if log and self.run_logger:
+            # Log only the figures that actually existed (the same existence
+            # filter M3 applies) so the audit trail reflects what the judge saw.
+            _explore_figs = None
+            if self._explore_context is not None:
+                from pathlib import Path as _P
+
+                _explore_figs = [
+                    f for f in self._explore_context.figure_paths if _P(f).exists()
+                ]
+            self.run_logger.log_diagnosis(
+                cycle, diag, duration_sec=_dt, explore_figures=_explore_figs or None
+            )
+        return diag
+
+    @staticmethod
+    def _finalize_confirmatory_stats(stats_report: "Any") -> None:
+        """Promote a descriptive (analysis-phase) stats report to confirmatory.
+
+        The analysis phase runs M2 with the e-BH validity verdict DEFERRED
+        (``descriptive_only=True``). The confirm phase recomputes e-BH FDR
+        correction over the report's stats results so M5 and the dashboard see
+        the family-level reject decision. No-op when already confirmatory."""
+        if stats_report is None:
+            return
+        corr = getattr(stats_report, "corrected_rejections", None) or {}
+        if getattr(stats_report, "descriptive_only", False) or corr.get("deferred"):
+            from evalvitals.eval_agent.stages.stats_tools import fdr_correct
+
+            stats_report.corrected_rejections = fdr_correct(
+                list(getattr(stats_report, "stats_results", None) or [])
+            )
+            stats_report.descriptive_only = False
+
+    def _do_m5(
+        self, cycle: int, hypotheses: "list[Any]", stats_report: "Any",
+        data: "Any", timings: "dict[str, float]", *, log: bool = True,
+    ) -> "list[Any]":
+        """M5: statistical test + protocol consistency for each hypothesis,
+        writing the verdict back onto ``hypothesis.status``."""
+        _t0 = time.monotonic()
+        test_results = self.hypothesis_tester.test(
+            hypotheses,
+            stats_report,
+            data,
+            protocol=self.protocol,
+        )
+        _dt = time.monotonic() - _t0
+        timings["m5"] = timings.get("m5", 0.0) + _dt
+        for tr in test_results:
+            tr.hypothesis.status = tr.status
+        if log and self.run_logger:
+            # Reuse the surgery log slot for M5 results (backward compat).
+            for tr in test_results:
+                _iv = _make_intervention_result_from_test(tr)
+                self.run_logger.log_surgery(cycle, tr.hypothesis, _iv, duration_sec=_dt)
+        return test_results
+
+    # ──────────────────────────────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────────────────────────────
 
@@ -928,16 +1119,6 @@ class VLDiagnoseLoop:
                 _run_config(self, data, loop_name="VLDiagnoseLoop")
             )
 
-        # Resolve M3 lazily so the default Gemini fallback is consistent with
-        # AutoDiagnoseLoop — a DiagnosisAgent() created here would raise
-        # immediately if GEMINI_API_KEY is absent, even if the caller
-        # passes diagnosis_agent=None intentionally.
-        def _get_diagnosis_agent() -> "Any":
-            if self.diagnosis_agent is not None:
-                return self.diagnosis_agent
-            from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
-            return DiagnosisAgent()
-
         for cycle in range(self.max_cycles):
             if self.token_budget > 0 and self._tokens_used >= self.token_budget:
                 logger.warning(
@@ -949,111 +1130,30 @@ class VLDiagnoseLoop:
             if self.run_logger is not None:
                 self.run_logger.current_cycle = cycle
 
-            # ── M1: protocol-guided probing ──────────────────────────
-            # Extract failure modes from prior M3 hypotheses for the static
-            # fallback path (used when ProbeAgent has no judge model).
-            prior_modes = list(dict.fromkeys(
-                h.predicted_failure_mode for h in all_hypotheses
-                if getattr(h, "predicted_failure_mode", None)
-            ))
-            _t0 = time.monotonic()
-            probe_results = self.probe_agent.probe(
-                self.model,
-                data,
-                protocol=self.protocol,
-                prior_hypotheses=all_hypotheses or None,
-                hint_failure_modes=prior_modes or None,
+            # ── M1: protocol-guided probing (+ signal bridge) ─────────
+            probe_results, artifact_pngs = self._do_m1(
+                cycle, data, all_hypotheses, timings
             )
-            _dt = time.monotonic() - _t0
-            timings["m1"] = timings.get("m1", 0.0) + _dt
-            artifact_pngs: list = []
-            if self.run_logger:
-                artifact_pngs = self.run_logger.log_probe(
-                    cycle, probe_results, schema=self.probe_agent.last_schema,
-                    judge_prompt=getattr(self.probe_agent, "last_selection_prompt", ""),
-                    judge_raw=getattr(self.probe_agent, "last_selection_raw", ""),
-                    duration_sec=_dt,
-                ) or []
-            if self.run_logger:
-                _log_generated_tools(self.run_logger, cycle, "m1_probe", self.probe_agent)
             if not probe_results:
                 logger.info("M1 produced no probe results — stopping.")
                 stopped_by = _STOPPED_BY_NO_PROBE
                 break
-            for r in probe_results.values():
-                self.store.add_result(r)
-
-            # Operationalization bridge: pre-registered recipes -> synthetic
-            # "explored" analyzer Result, injected so M2's family includes the
-            # LAMBDA-discovered composite signals (no-op when none configured).
-            self._bridge_signals(probe_results, data)
 
             # ── M2: protocol-aware stats analysis ────────────────────
-            _t0 = time.monotonic()
-            stats_report = self.stats_agent.analyze(
-                probe_results,
-                model_name=repr(self.model),
-                protocol=self.protocol,
-                data=data,
-                extra_figures=artifact_pngs,
+            stats_report = self._do_m2(
+                cycle, probe_results, data, artifact_pngs, timings
             )
-            _dt = time.monotonic() - _t0
-            timings["m2"] = timings.get("m2", 0.0) + _dt
             final_stats_report = stats_report
-            if self.run_logger:
-                self.run_logger.log_analysis(cycle, stats_report, duration_sec=_dt)
-                _log_generated_tools(self.run_logger, cycle, "m2_stats", self.stats_agent)
 
             if self.analysis_only:
                 stopped_by = _STOPPED_BY_NO_HYPS
                 break
 
             # ── M3: hypothesis generation ("AI scientist") ────────────
-            try:
-                diag_agent = _get_diagnosis_agent()
-            except Exception as exc:
-                logger.warning("Could not resolve DiagnosisAgent: %s", exc)
-                stopped_by = _STOPPED_BY_NO_HYPS
-                break
-
-            _t0 = time.monotonic()
-            try:
-                diag = _diagnose_with_optional_context(
-                    diag_agent, stats_report, prior_cycles, self._explore_context
-                )
-            except Exception as exc:  # judge timeout/quota must not kill the loop
-                logger.warning(
-                    "M3 diagnosis failed at cycle %d (%s) — stopping with the "
-                    "evidence collected so far.", cycle, exc,
-                )
-                stopped_by = _STOPPED_BY_NO_HYPS
-                break
-            _dt = time.monotonic() - _t0
-            timings["m3"] = timings.get("m3", 0.0) + _dt
-
-            # Track token usage
-            _tok = getattr(diag, "tokens_used", None)
-            if _tok is None:
-                _tok = max(1, len(diag.raw_judge_output) // 4)
-            self._tokens_used += _tok
-
-            if self.run_logger:
-                # Log only the figures that actually existed (the same existence
-                # filter M3 applies when attaching them) so the audit trail reflects
-                # what the judge truly saw, not every chart with a figure_path key.
-                _explore_figs = None
-                if self._explore_context is not None:
-                    from pathlib import Path as _P
-
-                    _explore_figs = [
-                        f for f in self._explore_context.figure_paths if _P(f).exists()
-                    ]
-                self.run_logger.log_diagnosis(
-                    cycle, diag, duration_sec=_dt, explore_figures=_explore_figs or None
-                )
-
-            if not diag.hypotheses:
-                logger.info("M3 produced no hypotheses at cycle %d.", cycle)
+            diag = self._do_m3(cycle, stats_report, prior_cycles, timings)
+            if diag is None or not diag.hypotheses:
+                if diag is not None:
+                    logger.info("M3 produced no hypotheses at cycle %d.", cycle)
                 stopped_by = _STOPPED_BY_NO_HYPS
                 break
 
@@ -1062,24 +1162,10 @@ class VLDiagnoseLoop:
             all_hypotheses.extend(diag.hypotheses)
 
             # ── M5: hypothesis testing (stats + protocol consistency) ─
-            _t0 = time.monotonic()
-            test_results = self.hypothesis_tester.test(
-                diag.hypotheses,
-                stats_report,
-                data,
-                protocol=self.protocol,
+            test_results = self._do_m5(
+                cycle, diag.hypotheses, stats_report, data, timings
             )
-            _dt = time.monotonic() - _t0
-            timings["m5"] = timings.get("m5", 0.0) + _dt
             all_test_results.extend(test_results)
-            for tr in test_results:
-                tr.hypothesis.status = tr.status
-
-            if self.run_logger:
-                # Reuse the surgery log slot for M5 results (backward compat)
-                for tr in test_results:
-                    _iv = _make_intervention_result_from_test(tr)
-                    self.run_logger.log_surgery(cycle, tr.hypothesis, _iv, duration_sec=_dt)
 
             # ── Stopping criteria ────────────────────────────────────
             if self.hypothesis_tester.stopping_criteria_met(test_results, self.protocol):
@@ -1115,6 +1201,192 @@ class VLDiagnoseLoop:
             all_hypotheses=all_hypotheses,
             all_test_results=all_test_results,
             final_stats_report=final_stats_report,
+            store=self.store,
+            _run_id=self._run_id,
+        )
+        if self.run_logger:
+            self.run_logger.log_loop_end(
+                report, tokens_used=self._tokens_used, timings=timings
+            )
+        return report
+
+    def run_analysis(self, data: "CaseBatch") -> VLDiagnoseReport:
+        """Phase 1 — analyse + propose, WITHOUT confirming (no M5, no fix).
+
+        Runs a single **M1 → M2 → M3** pass: select+execute analyzers (M1),
+        rigorous protocol-aware stats + charts (M2, e-BH adjudication kept),
+        and propose root-cause hypotheses (M3) — then stop. This is the path
+        that feeds the dashboard *before* deciding whether to confirm and
+        repair.
+
+        The returned :class:`VLDiagnoseReport` carries:
+          - ``all_hypotheses``     — the M3 proposals (UNCONFIRMED), and
+          - ``final_stats_report`` — the M2 report,
+        with ``all_test_results`` / ``verified_hypotheses`` left empty (M5 has
+        not run). Persist ``all_hypotheses`` (via
+        :func:`~evalvitals.eval_agent.hypothesis.hypothesis_to_dict`) and
+        ``final_stats_report``, then hand them to :meth:`run_confirm` for the
+        deferred confirmation + repair phase.
+
+        Unlike :meth:`run`, there is no M5 stopping signal, so this is a single
+        pass (one M1→M2→M3), not a multi-cycle loop; ``max_cycles`` is ignored.
+        """
+        self._tokens_used = 0
+        timings: dict[str, float] = {}
+
+        # Same deterministic explore/confirm partition as run() / run_fix() —
+        # M1-M3 see only EXPLORE so the deferred fix can validate on the
+        # untouched CONFIRM partition. No-op when confirm_split=0.
+        explore, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            logger.info(
+                "confirm split: explore=%d cases, confirm=%d held out (frac=%.2f)",
+                len(list(explore)), len(list(confirm)), self.confirm_split,
+            )
+            data = explore
+
+        _attach_run_logger(self.run_logger, self.probe_agent, self.stats_agent)
+        if self.run_logger is not None:
+            self.run_logger.current_cycle = 0
+            self.run_logger.log_run_start(
+                _run_config(self, data, loop_name="VLDiagnoseLoop.analysis")
+            )
+
+        all_hypotheses: list[Any] = []
+        final_stats_report = None
+        stopped_by = _STOPPED_BY_ANALYSIS
+
+        probe_results, artifact_pngs = self._do_m1(0, data, all_hypotheses, timings)
+        if not probe_results:
+            logger.info("M1 produced no probe results — stopping.")
+            stopped_by = _STOPPED_BY_NO_PROBE
+        else:
+            # Descriptive M2: effect sizes + charts, but DEFER the e-BH validity
+            # verdict to run_confirm so the analysis dashboard shows no
+            # "supported/not-supported" claim (Q2: no validity before confirm).
+            final_stats_report = self._do_m2(
+                0, probe_results, data, artifact_pngs, timings, confirmatory=False
+            )
+            diag = self._do_m3(0, final_stats_report, [], timings)
+            if diag is None or not diag.hypotheses:
+                # Stats + dashboard are still valid; just no hypotheses to confirm.
+                if diag is not None:
+                    logger.info("M3 produced no hypotheses.")
+                stopped_by = _STOPPED_BY_NO_HYPS
+            else:
+                for h in diag.hypotheses:
+                    self.store.add_hypothesis(h)
+                all_hypotheses.extend(diag.hypotheses)
+
+        report = VLDiagnoseReport(
+            cycles=1,
+            stopped_by=stopped_by,
+            verified_hypotheses=[],
+            all_hypotheses=all_hypotheses,
+            all_test_results=[],
+            final_stats_report=final_stats_report,
+            store=self.store,
+            _run_id=self._run_id,
+        )
+        if self.run_logger:
+            self.run_logger.log_loop_end(
+                report, tokens_used=self._tokens_used, timings=timings
+            )
+        return report
+
+    def run_confirm(
+        self,
+        data: "CaseBatch",
+        hypotheses: "list[Any]",
+        *,
+        stats_report: "Any | None" = None,
+    ) -> VLDiagnoseReport:
+        """Phase 2a — confirm previously-proposed hypotheses with M5.
+
+        Runs **M5** (:class:`~evalvitals.eval_agent.stages.hypothesis_tester.HypothesisTester`)
+        on ``hypotheses`` — typically reloaded from :meth:`run_analysis`'s output
+        via :func:`~evalvitals.eval_agent.hypothesis.hypothesis_from_dict` — so
+        the *same* hypotheses the dashboard showed are the ones confirmed.
+
+        ``stats_report`` is the M2 report M5 reads its rigorous evidence from
+        (effect + CI + e-value, FDR-corrected). Pass the
+        ``final_stats_report`` persisted by :meth:`run_analysis` to confirm
+        against the *exact* statistics the dashboard displayed; when omitted,
+        M1→M2 are re-run silently (not logged — they belong to the analysis
+        phase) to regenerate it.
+
+        Returns a :class:`VLDiagnoseReport` with ``all_test_results`` and
+        ``verified_hypotheses`` populated. Feed it into :meth:`run_m4` /
+        :meth:`run_fix` for the repair step.
+        """
+        self._tokens_used = 0
+        timings: dict[str, float] = {}
+        hypotheses = list(hypotheses or [])
+
+        # Mirror run()'s partition so M5 tests on the same EXPLORE cases the
+        # hypotheses were generated on (run_m4/run_fix re-split to CONFIRM).
+        explore, confirm = self._split_explore_confirm(data)
+        if confirm is not None:
+            data = explore
+
+        _attach_run_logger(self.run_logger, self.probe_agent, self.stats_agent)
+        if self.run_logger is not None:
+            self.run_logger.current_cycle = 0
+            self.run_logger.log_run_start(
+                _run_config(self, data, loop_name="VLDiagnoseLoop.confirm")
+            )
+
+        # Regenerate the stats the tester needs only when not supplied. The M1/M2
+        # events are NOT logged here — they were recorded in the analysis phase,
+        # and re-logging them would double up the dashboard's analysis story.
+        if stats_report is None:
+            probe_results, artifact_pngs = self._do_m1(
+                0, data, hypotheses, timings, log=False
+            )
+            if not probe_results:
+                logger.warning(
+                    "run_confirm: probe produced no results and no stats_report "
+                    "was supplied — cannot confirm."
+                )
+                report = VLDiagnoseReport(
+                    cycles=1, stopped_by=_STOPPED_BY_NO_PROBE,
+                    all_hypotheses=hypotheses, store=self.store, _run_id=self._run_id,
+                )
+                if self.run_logger:
+                    self.run_logger.log_loop_end(
+                        report, tokens_used=self._tokens_used, timings=timings
+                    )
+                return report
+            stats_report = self._do_m2(
+                0, probe_results, data, artifact_pngs, timings, log=False
+            )
+
+        # The confirm phase OWNS the validity verdict: if the reused report came
+        # from the descriptive analysis phase (e-BH deferred), compute e-BH now,
+        # flip descriptive_only off, and log the confirmatory M2 so the dashboard
+        # surfaces the signal validity it withheld before confirmation.
+        self._finalize_confirmatory_stats(stats_report)
+        if self.run_logger and stats_report is not None:
+            self.run_logger.log_analysis(0, stats_report)
+
+        test_results: list[Any] = []
+        if hypotheses:
+            for h in hypotheses:
+                self.store.add_hypothesis(h)
+            test_results = self._do_m5(0, hypotheses, stats_report, data, timings)
+        else:
+            logger.info("run_confirm: no hypotheses to confirm.")
+
+        verified = self.hypothesis_tester.best_hypotheses(test_results)
+        stopped_by = _STOPPED_BY_CRITERIA if verified else _STOPPED_BY_MAX
+
+        report = VLDiagnoseReport(
+            cycles=1,
+            stopped_by=stopped_by,
+            verified_hypotheses=verified,
+            all_hypotheses=hypotheses,
+            all_test_results=test_results,
+            final_stats_report=stats_report,
             store=self.store,
             _run_id=self._run_id,
         )

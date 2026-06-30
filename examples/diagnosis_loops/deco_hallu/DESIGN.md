@@ -139,8 +139,30 @@ a tool the agent can write itself did not cost the loop its repair.
 ```
 examples/diagnosis_loops/deco_hallu/
 ├── DESIGN.md          this file
-├── build_cases.py     offline slice -> hallucination FAIL + interleaved controls
 ├── run.py             load -> observation-only protocol -> VLDiagnoseLoop -> run_fix
+│                      (also: shared ReplayProbeAgent / FrozenModel for the staged scripts)
+├── build_cases.py     offline slice -> hallucination FAIL + interleaved controls
+├── run_m1.py          STAGE 1: M1 only, frozen to outputs/m1_state.pkl       [GPU]
+├── run_fused.py       STEP 1: explore -> held-out confirm (signals + charts)  [no GPU]
+├── run_m2-5.py        one-shot Step 2: M2 -> M3 -> M5 -> M4 -> Fix            [GPU + claude]
+├── run_analysis.py    DECOUPLED PHASE 1: M2 stats+charts -> M3 PROPOSE, no M5/Fix [no GPU]
+├── run_confirm_fix.py DECOUPLED PHASE 2: M5 confirm (reuses PHASE 1) -> M4 + Fix  [GPU + claude]
+├── run_all.sh / run_from_m1.sh   one-shot wrappers (the M2-5 path)
+├── run_analysis.sh / run_confirm_fix.sh   decoupled wrappers (analyse → dashboard → confirm+fix)
 ├── config.yaml        opus-4-8-low judge/coder, L3b fix tier, 80-case validation
 └── data/cases/        frozen manifests (committed; images shared w/ deco_pope)
 ```
+
+## 6. Decoupled analysis vs. confirm+fix (run_analysis / run_confirm_fix)
+
+The default loop confirms hypotheses (M5) before any fix or dashboard. The
+**decoupled** path splits that so the **analysis dashboard comes first, without
+confirming**: `VLDiagnoseLoop.run_analysis()` runs M1→M2→M3 (rigorous e-BH stats +
+charts + *proposed* hypotheses) and stops; the dashboard then tells the
+analysis story with the hypotheses marked proposed-not-confirmed. Confirmation
+(M5) and repair are deferred to `VLDiagnoseLoop.run_confirm()` + `run_fix`, which
+**reuse the analysis artifacts** (`outputs/analysis/analysis_state.pkl` = the
+proposed hypotheses + the exact M2 stats report) so the hypotheses confirmed are
+the *same* ones the dashboard showed. M2 keeps its full rigor in both paths —
+only the M5 hypothesis-confirmation gate moves out of the analysis phase. The
+no-free-lunch fix guard (§2) is unchanged; it still runs in PHASE 2.
