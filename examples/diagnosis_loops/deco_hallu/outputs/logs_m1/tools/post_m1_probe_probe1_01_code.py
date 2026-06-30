@@ -4,40 +4,38 @@ import numpy as np
 with open("m1_probe_input.json") as f:
     data = json.load(f)
 
-def first_word_yes(text):
-    if not text:
-        return None
-    m = re.search(r"[a-zA-Z]+", text)
-    if not m:
-        return None
-    w = m.group(0).lower()
-    if w in ("yes", "yeah", "yep", "correct", "true"):
+def says_yes(text):
+    t = (text or "").strip().lower()
+    m = re.search(r"\b(yes|no)\b", t)
+    if m:
+        return m.group(1) == "yes"
+    # fall back: affirmative phrasing
+    if re.search(r"\bthere (is|are)\b", t) and "no " not in t[:20]:
         return True
-    if w in ("no", "nope", "false", "not"):
-        return False
-    return None
+    return False
 
 per_case = []
-fp = 0
+false_detections = 0
 absent_total = 0
 for c in data.get("cases", []):
-    ans = first_word_yes(c.get("output", ""))
+    out_yes = says_yes(c.get("output"))
     exp = c.get("expected")
-    # determine ground truth presence: expected may be bool or string yes/no
+    # expected truth: object present -> answer should be yes
+    exp_yes = None
     if isinstance(exp, bool):
-        gt = exp
+        exp_yes = exp
     elif isinstance(exp, str):
-        gt = first_word_yes(exp)
-    else:
-        gt = None
-    false_detection = 0
-    if gt is False:
+        exp_yes = says_yes(exp)
+    # false detection: absent object (expected No) but model said Yes
+    fd = 0
+    if exp_yes is False:
         absent_total += 1
-        if ans is True:
-            false_detection = 1
-            fp += 1
-    per_case.append({"sample_id": c.get("id"), "false_detection": int(false_detection)})
+        if out_yes:
+            fd = 1
+            false_detections += 1
+    per_case.append({"sample_id": c.get("id"), "false_detection": int(fd)})
 
-rate = float(fp / absent_total) if absent_total else 0.0
-result = {"findings": {"false_detection_rate": rate}, "per_case": per_case}
-print("PROBE_RESULT_JSON=" + json.dumps(result))
+rate = float(false_detections) / absent_total if absent_total else 0.0
+print(json.dumps({"absent_total": absent_total, "false_detections": false_detections}))
+print("PROBE_RESULT_JSON=" + json.dumps(
+    {"findings": {"false_detection_rate": round(rate, 4)}, "per_case": per_case}))

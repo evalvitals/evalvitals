@@ -1,20 +1,9 @@
 [
   {
-    "statement": "The failure set is a mixture of two distinct attention regimes \u2014 one where image attention spikes onto a single wrong/background patch (high max_relative_weight, high focus_share) and one where it is diffusely smeared (low focus_share) \u2014 so a single \"misallocation\" story conflates two mechanisms.",
-    "target_model": "qwen3-vl-2b-instruct",
-    "predicted_failure_mode": "attention_sink + diffuse_attention (bimodal)",
-    "test_design": "cross-tabulate `relative_attention.focus_share` against `explored.low_focus_share` within the FAIL set (probe1_positive=1) and check for bimodality; confirm the high-focus failures concentrate on a fixed patch via `relative_attention.max_relative_weight`.",
-    "status": "proposed",
-    "parent_id": null,
-    "id": "",
-    "evidence": [],
-    "metadata": {}
-  },
-  {
-    "statement": "The high-attention failures are driven by a content-independent positional attention sink \u2014 the same physical patches (e.g. idx 58/59/80/69) absorb weight regardless of image, so attention concentration is an artifact of token position rather than misdirected object search.",
+    "statement": "The model emits false \"Yes\" detections when its visual attention collapses onto a single dominant patch (high max_relative_weight, high focus_share/top1_share, low entropy), i.e. an attention-sink that fabricates evidence for an absent object.",
     "target_model": "qwen3-vl-2b-instruct",
     "predicted_failure_mode": "attention_sink",
-    "test_design": "tabulate top-patch indices from `relative_attention.top_patches`/per_case across all 32 attention cases; if the same indices dominate independent of image, the sink is positional \u2014 next-cycle analyzer should compute per-patch attention frequency across cases.",
+    "test_design": "relative_attention.max_relative_weight and relative_attention.attention_entropy vs FAIL (already REJECT H0; confirm direction holds on a held-out split with larger n, since attention is present for only 22/32 cases).",
     "status": "proposed",
     "parent_id": null,
     "id": "",
@@ -22,10 +11,21 @@
     "metadata": {}
   },
   {
-    "statement": "The model has a global \"Yes\" response bias on absent-object yes/no questions that is independent of scene plausibility, so false detections occur even for objects that are NOT contextually plausible (not just plausible ones).",
+    "statement": "False detections concentrate on cases where peaked attention lands off-object / near the periphery (high center_offset, peripheral_attention=1), meaning the model anchors on background or edge artifacts rather than the queried region.",
     "target_model": "qwen3-vl-2b-instruct",
-    "predicted_failure_mode": "hallucination (yes-bias, not plausibility-driven)",
-    "test_design": "run a new probe contrasting absent-but-plausible vs absent-and-implausible queried objects on the same images; if false_detection rate is equally high for implausible objects, the cause is yes-bias rather than scene-prior \u2014 compare against `generated:probe1.false_detection`.",
+    "predicted_failure_mode": "mislocalized_attention",
+    "test_design": "explored.peripheral_attention and relative_attention.center_offset vs FAIL; render the diff_map (fail_minus_pass) overlay to verify FAIL attention sits off the target region.",
+    "status": "proposed",
+    "parent_id": null,
+    "id": "",
+    "evidence": [],
+    "metadata": {}
+  },
+  {
+    "statement": "Failing cases are prompt-insensitive \u2014 the \"Yes\" answer does not change under the describe_first or sensitive prompt rewrites, indicating a hard prior toward affirmation rather than genuine image grounding.",
+    "target_model": "qwen3-vl-2b-instruct",
+    "predicted_failure_mode": "hallucination/prompt_insensitivity",
+    "test_design": "prompt_contrast describe_first contrast and explored.prompt_insensitive vs FAIL (note Friedman/McNemar showed no net strategy gain \u2014 describe_first broke 5, fixed 0 \u2014 so test whether prompt-insensitive cases are the persistent failers).",
     "status": "proposed",
     "parent_id": null,
     "id": "",

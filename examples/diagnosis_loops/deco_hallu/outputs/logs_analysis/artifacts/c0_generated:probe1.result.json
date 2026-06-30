@@ -2,806 +2,806 @@
   "analyzer": "generated:probe1",
   "model": "HFLocalModel(key='qwen3-vl-2b-instruct', loaded)",
   "findings": {
-    "false_detection_rate": 0.34710743801652894,
+    "false_detection_rate": 0.3388,
     "per_case": [
       {
-        "sample_id": "6ebe00ddf386",
+        "sample_id": "06b494e0c42e",
         "false_detection": 1
       },
       {
-        "sample_id": "86e794df592c",
+        "sample_id": "35782a09b0f9",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "6236204b9906",
         "false_detection": 1
       },
       {
-        "sample_id": "1188ff04064e",
+        "sample_id": "7fcc9b06bc00",
         "false_detection": 1
       },
       {
-        "sample_id": "1f7f0f03728a",
+        "sample_id": "763f308487d1",
         "false_detection": 1
       },
       {
-        "sample_id": "92340eb2b4bf",
+        "sample_id": "8293f730d5ec",
         "false_detection": 1
       },
       {
-        "sample_id": "8a6bd51a877b",
+        "sample_id": "c8e037d4cbae",
         "false_detection": 1
       },
       {
-        "sample_id": "ead9fb9f0794",
+        "sample_id": "e02db088ed9f",
         "false_detection": 1
       },
       {
-        "sample_id": "df9252ab7455",
+        "sample_id": "d670c7f21bfa",
         "false_detection": 1
       },
       {
-        "sample_id": "45b56a3a767f",
+        "sample_id": "bb347d793155",
         "false_detection": 1
       },
       {
-        "sample_id": "afa6e9a0a337",
+        "sample_id": "cbee7bd24cbb",
         "false_detection": 1
       },
       {
-        "sample_id": "95280df42336",
+        "sample_id": "967ca3823df5",
         "false_detection": 1
       },
       {
-        "sample_id": "c9708d64631d",
+        "sample_id": "89595f0bbfdd",
         "false_detection": 1
       },
       {
-        "sample_id": "47cefa2c4f28",
+        "sample_id": "3572394d0ec8",
         "false_detection": 1
       },
       {
-        "sample_id": "4efaf6638356",
+        "sample_id": "aafb86de0186",
         "false_detection": 1
       },
       {
-        "sample_id": "d51ea851c13a",
+        "sample_id": "7e6a8e2ca328",
         "false_detection": 1
       },
       {
-        "sample_id": "d1edf34bb1bb",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "18192c113a93",
+        "sample_id": "05af17fd0a40",
         "false_detection": 1
       },
       {
-        "sample_id": "b60e743b380c",
+        "sample_id": "c25df11462dc",
         "false_detection": 1
       },
       {
-        "sample_id": "ce53fa061bbc",
+        "sample_id": "adf2d4eacdf1",
         "false_detection": 1
       },
       {
-        "sample_id": "1e5235248aa8",
+        "sample_id": "b614a798bf89",
         "false_detection": 1
       },
       {
-        "sample_id": "5befb1bbec9d",
+        "sample_id": "5ed653307147",
         "false_detection": 1
       },
       {
-        "sample_id": "09d651295764",
+        "sample_id": "90e02f752684",
         "false_detection": 1
       },
       {
-        "sample_id": "69b35320e334",
+        "sample_id": "f4a8e4b761fd",
         "false_detection": 1
       },
       {
-        "sample_id": "36ad6a303c91",
+        "sample_id": "3410536beea9",
         "false_detection": 1
       },
       {
-        "sample_id": "44250189a779",
+        "sample_id": "6ff42917b49a",
         "false_detection": 1
       },
       {
-        "sample_id": "f7d72d6362e9",
+        "sample_id": "5f5dbb0a9dbe",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d4300e79b88f",
         "false_detection": 1
       },
       {
-        "sample_id": "64dea5ad693f",
+        "sample_id": "c726b5cae449",
         "false_detection": 1
       },
       {
-        "sample_id": "f4180dce7c58",
+        "sample_id": "53dc86476b8f",
         "false_detection": 1
       },
       {
-        "sample_id": "065252fe7b95",
+        "sample_id": "934a08092d3e",
         "false_detection": 1
       },
       {
-        "sample_id": "9906d4f70c33",
+        "sample_id": "edeaec524104",
         "false_detection": 1
       },
       {
-        "sample_id": "8f10599af865",
+        "sample_id": "0316913a58b9",
         "false_detection": 1
       },
       {
-        "sample_id": "f4fff43d4af0",
+        "sample_id": "527ba69d3131",
         "false_detection": 1
       },
       {
-        "sample_id": "4ac56ef01ef8",
+        "sample_id": "040a2f7822f8",
         "false_detection": 1
       },
       {
-        "sample_id": "9b919d8aeb57",
+        "sample_id": "3954bfe6f19b",
         "false_detection": 1
       },
       {
-        "sample_id": "c8952e6d8856",
+        "sample_id": "ba6cb764c3e8",
         "false_detection": 1
       },
       {
-        "sample_id": "4a1bb22e89b7",
+        "sample_id": "cbf116dcf8a2",
         "false_detection": 1
       },
       {
-        "sample_id": "c560bf98c4ca",
+        "sample_id": "59f5b4b8f2ee",
         "false_detection": 1
       },
       {
-        "sample_id": "8bb028c9a225",
+        "sample_id": "9d995d2ddf7a",
         "false_detection": 1
       },
       {
-        "sample_id": "53f065ac6e65",
+        "sample_id": "00284241553b",
         "false_detection": 1
       },
       {
-        "sample_id": "eb30b5b7d628",
+        "sample_id": "1e6f05188e2c",
         "false_detection": 1
       },
       {
-        "sample_id": "6a5d7f74d534",
+        "sample_id": "a52d91c3b7b2",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "db01a5bd9f3e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "a0bd712f57d5",
         "false_detection": 1
       },
       {
-        "sample_id": "f87f3ae9d294",
+        "sample_id": "f28d0e74b2be",
         "false_detection": 0
       },
       {
-        "sample_id": "15f5dae8adcc",
+        "sample_id": "da393196763a",
         "false_detection": 0
       },
       {
-        "sample_id": "44c4ecdf7042",
+        "sample_id": "7df036ae9afe",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "17ada453812d",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "1ed0dcece4a9",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "e825346b6397",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "6ae52f2998e2",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d8e86c8ea562",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "ffb8857c8d11",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "85086d7afefb",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "2782f373f6e5",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "0514941e0155",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "bfd901979818",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "353cf06c3ebe",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "1d7bfe83d733",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "91ebb397b3fe",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "38a77ca0da0e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d4e6cf17ac39",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "5e4da763b97c",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "99d7b624824a",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "9ad81424b92e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "3e49792e4f72",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "2cc5019d5a19",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "4046f25fcf61",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "b4bcca0d2925",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "e50697e5ef72",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "48242eeb187f",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d46ba098951b",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "5f7bb411b278",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "69fae1300ec4",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "903d70281ef2",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "c058b391cf6d",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "5405c1f91c54",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d78e2355589e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "75d845d72f3d",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d4e738ebf463",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "51742fc42566",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "f84ef4fdd7e9",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "3805047d1e26",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "f6ebee87667c",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "e648953e648b",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "e840cf700fde",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "074322ba9f96",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "e919cc46ad6f",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "c5c380929821",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "919dceb43f57",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "1f4cf9a25af5",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "9d0fead40e5a",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "92732dc1b020",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d1da1d3ed780",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "e39873b0a64f",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "712af815425e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "f59f85ac499b",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "bbfc71b5aa68",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "f8d00b14384f",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "830b59962f14",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "b70b05634345",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "55ff19e5a036",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "ebbbfe7bd3aa",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "cc7334ce17b0",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "790fea0f4ba0",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "619dd39a86ec",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d73e457a46b6",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "8f0f3b06f814",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "51dae57c6f56",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "4a064db2f41e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "ac536925de57",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "5717bf1a431b",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "dcf71b646fcd",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "73087b40b3b9",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "d19c48dd1e1e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "8889092b45a4",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "ed449b1995d1",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "31e2e9ffadf2",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "4bac2b0492fb",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "39a6afdbfb16",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "1d750feeeae8",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "12c97e050f6f",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "41f7a927e3ff",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "75a979890306",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "62d2643bdeec",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "01d6d905db5f",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "308016e9b2c1",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "5d8323b0bb1e",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "6a008650289c",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "436ffa57ad78",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "5749fffcbd21",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "1700da7d97b7",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "6786b6d313c6",
+        "false_detection": 0
+      },
+      {
+        "sample_id": "981bd6c13c3e",
         "false_detection": 1
       },
       {
-        "sample_id": "6b60abd8e5f0",
+        "sample_id": "f1f40df8b78f",
         "false_detection": 0
       },
       {
-        "sample_id": "f7b46b7649da",
+        "sample_id": "eb85d37bd1d3",
         "false_detection": 0
       },
       {
-        "sample_id": "b70a85522b58",
+        "sample_id": "fa430e3e384e",
         "false_detection": 0
       },
       {
-        "sample_id": "c6695dc728db",
+        "sample_id": "6473d28a5585",
         "false_detection": 0
       },
       {
-        "sample_id": "9907039d5238",
+        "sample_id": "316c8cad574c",
         "false_detection": 0
       },
       {
-        "sample_id": "2d41348db313",
+        "sample_id": "3c6d47073875",
         "false_detection": 0
       },
       {
-        "sample_id": "52dcaf0c202f",
+        "sample_id": "d56a103f9ed8",
         "false_detection": 0
       },
       {
-        "sample_id": "3394a70b65f3",
+        "sample_id": "dbaf77f84773",
         "false_detection": 0
       },
       {
-        "sample_id": "2651e4194d07",
+        "sample_id": "8bd1a850d50e",
         "false_detection": 0
       },
       {
-        "sample_id": "2b1d9d90231f",
+        "sample_id": "ee9aa61637a7",
         "false_detection": 0
       },
       {
-        "sample_id": "39ad5f358392",
+        "sample_id": "1deee05f8ae2",
         "false_detection": 0
       },
       {
-        "sample_id": "8565c3870da9",
+        "sample_id": "8e0921920452",
         "false_detection": 0
       },
       {
-        "sample_id": "ca3d41b1ecfe",
+        "sample_id": "859f012fcf7c",
         "false_detection": 0
       },
       {
-        "sample_id": "6ab6d695bd11",
+        "sample_id": "af8b1f95cb96",
         "false_detection": 0
       },
       {
-        "sample_id": "8f19e4aa25c4",
+        "sample_id": "5c17f53e3cfb",
         "false_detection": 0
       },
       {
-        "sample_id": "de851b419875",
+        "sample_id": "4d465e6b7919",
         "false_detection": 0
       },
       {
-        "sample_id": "60a92d18772c",
+        "sample_id": "1a414bbd8e7a",
         "false_detection": 0
       },
       {
-        "sample_id": "55de67591bcd",
+        "sample_id": "a21596259b01",
         "false_detection": 0
       },
       {
-        "sample_id": "b3d7be2b42d4",
+        "sample_id": "a7d16c24873e",
         "false_detection": 0
       },
       {
-        "sample_id": "8fd38ea89f87",
+        "sample_id": "27d6cb72ce4d",
         "false_detection": 0
       },
       {
-        "sample_id": "ace6bd5bd57d",
+        "sample_id": "93406f9b0dc4",
         "false_detection": 0
       },
       {
-        "sample_id": "0ccad075d2c9",
+        "sample_id": "c12b648d6af0",
         "false_detection": 0
       },
       {
-        "sample_id": "389858abc32b",
+        "sample_id": "3ad987bf85b9",
         "false_detection": 0
       },
       {
-        "sample_id": "0b42747fce49",
+        "sample_id": "b20899d9f4c3",
         "false_detection": 0
       },
       {
-        "sample_id": "7c523ec98fd0",
+        "sample_id": "9aecd3b1b9e0",
         "false_detection": 0
       },
       {
-        "sample_id": "0e40679a88c2",
+        "sample_id": "b277d2c3e52f",
         "false_detection": 0
       },
       {
-        "sample_id": "38c4f89fc2e6",
+        "sample_id": "25b31d2830d1",
         "false_detection": 0
       },
       {
-        "sample_id": "ff087173f847",
+        "sample_id": "18bf80f21f7f",
         "false_detection": 0
       },
       {
-        "sample_id": "23f4dcbdd9f3",
+        "sample_id": "34af9d9066c9",
         "false_detection": 0
       },
       {
-        "sample_id": "bd5a3b33f66a",
+        "sample_id": "5355023ba8fd",
         "false_detection": 0
       },
       {
-        "sample_id": "06988c13b820",
+        "sample_id": "13c231cfff96",
         "false_detection": 0
       },
       {
-        "sample_id": "d7d1c18a5b92",
+        "sample_id": "5dd00bb0caaa",
         "false_detection": 0
       },
       {
-        "sample_id": "c3da47d47bcb",
+        "sample_id": "1da7c560c656",
         "false_detection": 0
       },
       {
-        "sample_id": "135421668958",
+        "sample_id": "cbaae68d6e9a",
         "false_detection": 0
       },
       {
-        "sample_id": "7e449d9c54f2",
+        "sample_id": "d8b9c55118ba",
         "false_detection": 0
       },
       {
-        "sample_id": "2f7ba901d5bd",
+        "sample_id": "89c33723c5b8",
         "false_detection": 0
       },
       {
-        "sample_id": "42bad9ce5cc1",
+        "sample_id": "095ed7a5aceb",
         "false_detection": 0
       },
       {
-        "sample_id": "874feb4f5c87",
+        "sample_id": "7d9e426c68b8",
         "false_detection": 0
       },
       {
-        "sample_id": "62bcc888fe9f",
+        "sample_id": "1cdab333842b",
         "false_detection": 0
       },
       {
-        "sample_id": "87632ef57acc",
+        "sample_id": "b82e6f0dd32a",
         "false_detection": 0
       },
       {
-        "sample_id": "b5db494927c8",
+        "sample_id": "c756128964e2",
         "false_detection": 0
       },
       {
-        "sample_id": "cf64802ce162",
+        "sample_id": "6aadf1f49737",
         "false_detection": 0
       },
       {
-        "sample_id": "07eb234fff7a",
+        "sample_id": "678416953ffc",
         "false_detection": 0
       },
       {
-        "sample_id": "e349cb33e418",
+        "sample_id": "d480adc73ee2",
         "false_detection": 0
       },
       {
-        "sample_id": "5c90f819fe7b",
+        "sample_id": "25def64ef7f5",
         "false_detection": 0
       },
       {
-        "sample_id": "697c4d12f879",
+        "sample_id": "3efc13e10218",
         "false_detection": 0
       },
       {
-        "sample_id": "596b25adc237",
+        "sample_id": "55c8521daacd",
         "false_detection": 0
       },
       {
-        "sample_id": "c0a82284bfbe",
+        "sample_id": "0db07418083d",
         "false_detection": 0
       },
       {
-        "sample_id": "e01c05914199",
+        "sample_id": "03d86b84b964",
         "false_detection": 0
       },
       {
-        "sample_id": "325b6a3ff592",
+        "sample_id": "dd9aca108005",
         "false_detection": 0
       },
       {
-        "sample_id": "693b69e1a4db",
+        "sample_id": "ed9f74ee66ab",
         "false_detection": 0
       },
       {
-        "sample_id": "1081595a64a5",
+        "sample_id": "24d6ca7a4d2d",
         "false_detection": 0
       },
       {
-        "sample_id": "c2c28b43152d",
+        "sample_id": "94d2957b7168",
         "false_detection": 0
       },
       {
-        "sample_id": "287795183c10",
+        "sample_id": "6ca054d969db",
         "false_detection": 0
       },
       {
-        "sample_id": "8e92e54b7df2",
+        "sample_id": "58a3e80d99f2",
         "false_detection": 0
       },
       {
-        "sample_id": "b779d0e06072",
+        "sample_id": "e275cb3738ca",
         "false_detection": 0
       },
       {
-        "sample_id": "707ff4f967b8",
+        "sample_id": "d7ccb49a1cea",
         "false_detection": 0
       },
       {
-        "sample_id": "6a38c07501c0",
+        "sample_id": "f476f1d2e770",
         "false_detection": 0
       },
       {
-        "sample_id": "553292e1cfc4",
+        "sample_id": "d1a6a449f53d",
         "false_detection": 0
       },
       {
-        "sample_id": "d92172f5aabe",
+        "sample_id": "2b1afc7922d7",
         "false_detection": 0
       },
       {
-        "sample_id": "4324495fde9d",
+        "sample_id": "f15a9481c1f6",
         "false_detection": 0
       },
       {
-        "sample_id": "07dee9d896e5",
+        "sample_id": "6f807a06d240",
         "false_detection": 0
       },
       {
-        "sample_id": "6deabd26a62e",
+        "sample_id": "1a6503ca873c",
         "false_detection": 0
       },
       {
-        "sample_id": "d4f2732a478f",
+        "sample_id": "2e03a2df7cfd",
         "false_detection": 0
       },
       {
-        "sample_id": "c88994a2fef7",
+        "sample_id": "e98afd14f8c5",
         "false_detection": 0
       },
       {
-        "sample_id": "6a8b2750e3a6",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "fd4d21a0d84c",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "8ddc1c6a0987",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "934f8262d75e",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "bf21f4467e54",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b5caa37b885f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "fd3890a49bc0",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "85b3b301bbec",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2fc54f94f8ef",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "da0ec7055a66",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "a4278c0a9e93",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "14fb2de2fd78",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "be8e6f73bd90",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "3ab9a7339e65",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2c973108c497",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b8689744f849",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "ae1a82c67c19",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "fa62e27fe961",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "3abac06c2d37",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "cb4ceb6749fd",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "1ce68d493c27",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "d27362b8fbd2",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b23aa9ad7b88",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "ce7fbf3cec5c",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "18ffb4e4a446",
-        "false_detection": 1
-      },
-      {
-        "sample_id": "3f9b0ba3ea94",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "cdcded846409",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "dba2d4a2216d",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "c958fb62db65",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "7a0b5a775255",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "382881d40f5f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "12e3f523e392",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "65f0fafb1e7f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "ac594fd1c55d",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2928a1134a11",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2277255be0ed",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "edc76ca93aa0",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "9f2e44e6be6a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "ac823f0d7067",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "e82309a844be",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b1df8750fe05",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "d2826254822f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "e4dcbf3a6fc1",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "a6d330c2d85d",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "24cf2d483795",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "441796f1007a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "382043b6697a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "7efe036bcce1",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "919c3f0031d7",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "a194c8a87df4",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2f0696cc816c",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "0e123887d9f8",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "a1c99960a251",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b5bdcfd9417f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "e85476acb7ba",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "bc46a8c3e76f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "3479c725aa3c",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b73451d063e4",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "988d4afaab5a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "fec83b579295",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "853aea27aae6",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "b622b3681422",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "5ed4140b4d30",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "449fe04585f0",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "29f03460433e",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "61e594aff616",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "cc1172a503fe",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "8e7895fc2f2d",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "8397b9415a37",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "bdd916692b2a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "02f9ade80ca3",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "4a2f69999728",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "30eb3bd385de",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "282dde90f7e9",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "1246a5bbc29b",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "41a69f2da30a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "3a29db0a787b",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2550cd854780",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "629fdd0134c3",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "57d7bcacc78a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "4af0f7591f30",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "eeacf58d4178",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "220633cd92bd",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "dde7b194c857",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "5d22e1d50f32",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "179b6711fa22",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "1d0d86906fe7",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "2675f59f829a",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "946484d6ee2f",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "6940becff814",
-        "false_detection": 0
-      },
-      {
-        "sample_id": "074c7136ff95",
+        "sample_id": "13cee760322f",
         "false_detection": 0
       }
     ]
@@ -811,6 +811,6 @@
     "probe": "probe1"
   },
   "n_cases": 201,
-  "summary": "[generated:probe1] on HFLocalModel(key='qwen3-vl-2b-instruct', loaded)\n  false_detection_rate: 0.34710743801652894\n  per_case: [{'sample_id': '6ebe00ddf386', 'false_detection': 1}, {'sample_id': '86e794df592c', 'false_detection': 1}, {'sample_id': '1188ff04064e', 'false_detection': 1}, {'sample_id': '1f7f0f03728a', 'false_detection': 1}, {'sample_id': '92340eb2b4bf', 'false_detection': 1}, {'sample_id': '8a6bd51a877b', 'false_detection': 1}, {'sample_id': 'ead9fb9f0794', 'false_detection': 1}, {'sample_id': 'df9252ab7455', 'false_detection': 1}, {'sample_id': '45b56a3a767f', 'false_detection': 1}, {'sample_id': 'afa6e9a0a337', 'false_detection': 1}, {'sample_id': '95280df42336', 'false_detection': 1}, {'sample_id': 'c9708d64631d', 'false_detection': 1}, {'sample_id': '47cefa2c4f28', 'false_detection': 1}, {'sample_id': '4efaf6638356', 'false_detection': 1}, {'sample_id': 'd51ea851c13a', 'false_detection': 1}, {'sample_id': 'd1edf34bb1bb', 'false_detection': 0}, {'sample_id': '18192c113a93', 'false_detection': 1}, {'sample_id': 'b60e743b380c', 'false_detection': 1}, {'sample_id': 'ce53fa061bbc', 'false_detection': 1}, {'sample_id': '1e5235248aa8', 'false_detection': 1}, {'sample_id': '5befb1bbec9d', 'false_detection': 1}, {'sample_id': '09d651295764', 'false_detection': 1}, {'sample_id': '69b35320e334', 'false_detection': 1}, {'sample_id': '36ad6a303c91', 'false_detection': 1}, {'sample_id': '44250189a779', 'false_detection': 1}, {'sample_id': 'f7d72d6362e9', 'false_detection': 1}, {'sample_id': '64dea5ad693f', 'false_detection': 1}, {'sample_id': 'f4180dce7c58', 'false_detection': 1}, {'sample_id': '065252fe7b95', 'false_detection': 1}, {'sample_id': '9906d4f70c33', 'false_detection': 1}, {'sample_id': '8f10599af865', 'false_detection': 1}, {'sample_id': 'f4fff43d4af0', 'false_detection': 1}, {'sample_id': '4ac56ef01ef8', 'false_detection': 1}, {'sample_id': '9b919d8aeb57', 'false_detection': 1}, {'sample_id': 'c8952e6d8856', 'false_detection': 1}, {'sample_id': '4a1bb22e89b7', 'false_detection': 1}, {'sample_id': 'c560bf98c4ca', 'false_detection': 1}, {'sample_id': '8bb028c9a225', 'false_detection': 1}, {'sample_id': '53f065ac6e65', 'false_detection': 1}, {'sample_id': 'eb30b5b7d628', 'false_detection': 1}, {'sample_id': '6a5d7f74d534', 'false_detection': 1}, {'sample_id': 'f87f3ae9d294', 'false_detection': 0}, {'sample_id': '15f5dae8adcc', 'false_detection': 0}, {'sample_id': '44c4ecdf7042', 'false_detection': 1}, {'sample_id': '6b60abd8e5f0', 'false_detection': 0}, {'sample_id': 'f7b46b7649da', 'false_detection': 0}, {'sample_id': 'b70a85522b58', 'false_detection': 0}, {'sample_id': 'c6695dc728db', 'false_detection': 0}, {'sample_id': '9907039d5238', 'false_detection': 0}, {'sample_id': '2d41348db313', 'false_detection': 0}, {'sample_id': '52dcaf0c202f', 'false_detection': 0}, {'sample_id': '3394a70b65f3', 'false_detection': 0}, {'sample_id': '2651e4194d07', 'false_detection': 0}, {'sample_id': '2b1d9d90231f', 'false_detection': 0}, {'sample_id': '39ad5f358392', 'false_detection': 0}, {'sample_id': '8565c3870da9', 'false_detection': 0}, {'sample_id': 'ca3d41b1ecfe', 'false_detection': 0}, {'sample_id': '6ab6d695bd11', 'false_detection': 0}, {'sample_id': '8f19e4aa25c4', 'false_detection': 0}, {'sample_id': 'de851b419875', 'false_detection': 0}, {'sample_id': '60a92d18772c', 'false_detection': 0}, {'sample_id': '55de67591bcd', 'false_detection': 0}, {'sample_id': 'b3d7be2b42d4', 'false_detection': 0}, {'sample_id': '8fd38ea89f87', 'false_detection': 0}, {'sample_id': 'ace6bd5bd57d', 'false_detection': 0}, {'sample_id': '0ccad075d2c9', 'false_detection': 0}, {'sample_id': '389858abc32b', 'false_detection': 0}, {'sample_id': '0b42747fce49', 'false_detection': 0}, {'sample_id': '7c523ec98fd0', 'false_detection': 0}, {'sample_id': '0e40679a88c2', 'false_detection': 0}, {'sample_id': '38c4f89fc2e6', 'false_detection': 0}, {'sample_id': 'ff087173f847', 'false_detection': 0}, {'sample_id': '23f4dcbdd9f3', 'false_detection': 0}, {'sample_id': 'bd5a3b33f66a', 'false_detection': 0}, {'sample_id': '06988c13b820', 'false_detection': 0}, {'sample_id': 'd7d1c18a5b92', 'false_detection': 0}, {'sample_id': 'c3da47d47bcb', 'false_detection': 0}, {'sample_id': '135421668958', 'false_detection': 0}, {'sample_id': '7e449d9c54f2', 'false_detection': 0}, {'sample_id': '2f7ba901d5bd', 'false_detection': 0}, {'sample_id': '42bad9ce5cc1', 'false_detection': 0}, {'sample_id': '874feb4f5c87', 'false_detection': 0}, {'sample_id': '62bcc888fe9f', 'false_detection': 0}, {'sample_id': '87632ef57acc', 'false_detection': 0}, {'sample_id': 'b5db494927c8', 'false_detection': 0}, {'sample_id': 'cf64802ce162', 'false_detection': 0}, {'sample_id': '07eb234fff7a', 'false_detection': 0}, {'sample_id': 'e349cb33e418', 'false_detection': 0}, {'sample_id': '5c90f819fe7b', 'false_detection': 0}, {'sample_id': '697c4d12f879', 'false_detection': 0}, {'sample_id': '596b25adc237', 'false_detection': 0}, {'sample_id': 'c0a82284bfbe', 'false_detection': 0}, {'sample_id': 'e01c05914199', 'false_detection': 0}, {'sample_id': '325b6a3ff592', 'false_detection': 0}, {'sample_id': '693b69e1a4db', 'false_detection': 0}, {'sample_id': '1081595a64a5', 'false_detection': 0}, {'sample_id': 'c2c28b43152d', 'false_detection': 0}, {'sample_id': '287795183c10', 'false_detection': 0}, {'sample_id': '8e92e54b7df2', 'false_detection': 0}, {'sample_id': 'b779d0e06072', 'false_detection': 0}, {'sample_id': '707ff4f967b8', 'false_detection': 0}, {'sample_id': '6a38c07501c0', 'false_detection': 0}, {'sample_id': '553292e1cfc4', 'false_detection': 0}, {'sample_id': 'd92172f5aabe', 'false_detection': 0}, {'sample_id': '4324495fde9d', 'false_detection': 0}, {'sample_id': '07dee9d896e5', 'false_detection': 0}, {'sample_id': '6deabd26a62e', 'false_detection': 0}, {'sample_id': 'd4f2732a478f', 'false_detection': 0}, {'sample_id': 'c88994a2fef7', 'false_detection': 0}, {'sample_id': '6a8b2750e3a6', 'false_detection': 0}, {'sample_id': 'fd4d21a0d84c', 'false_detection': 0}, {'sample_id': '8ddc1c6a0987', 'false_detection': 0}, {'sample_id': '934f8262d75e', 'false_detection': 0}, {'sample_id': 'bf21f4467e54', 'false_detection': 0}, {'sample_id': 'b5caa37b885f', 'false_detection': 0}, {'sample_id': 'fd3890a49bc0', 'false_detection': 0}, {'sample_id': '85b3b301bbec', 'false_detection': 0}, {'sample_id': '2fc54f94f8ef', 'false_detection': 0}, {'sample_id': 'da0ec7055a66', 'false_detection': 0}, {'sample_id': 'a4278c0a9e93', 'false_detection': 0}, {'sample_id': '14fb2de2fd78', 'false_detection': 0}, {'sample_id': 'be8e6f73bd90', 'false_detection': 0}, {'sample_id': '3ab9a7339e65', 'false_detection': 0}, {'sample_id': '2c973108c497', 'false_detection': 0}, {'sample_id': 'b8689744f849', 'false_detection': 0}, {'sample_id': 'ae1a82c67c19', 'false_detection': 0}, {'sample_id': 'fa62e27fe961', 'false_detection': 0}, {'sample_id': '3abac06c2d37', 'false_detection': 0}, {'sample_id': 'cb4ceb6749fd', 'false_detection': 0}, {'sample_id': '1ce68d493c27', 'false_detection': 0}, {'sample_id': 'd27362b8fbd2', 'false_detection': 0}, {'sample_id': 'b23aa9ad7b88', 'false_detection': 0}, {'sample_id': 'ce7fbf3cec5c', 'false_detection': 0}, {'sample_id': '18ffb4e4a446', 'false_detection': 1}, {'sample_id': '3f9b0ba3ea94', 'false_detection': 0}, {'sample_id': 'cdcded846409', 'false_detection': 0}, {'sample_id': 'dba2d4a2216d', 'false_detection': 0}, {'sample_id': 'c958fb62db65', 'false_detection': 0}, {'sample_id': '7a0b5a775255', 'false_detection': 0}, {'sample_id': '382881d40f5f', 'false_detection': 0}, {'sample_id': '12e3f523e392', 'false_detection': 0}, {'sample_id': '65f0fafb1e7f', 'false_detection': 0}, {'sample_id': 'ac594fd1c55d', 'false_detection': 0}, {'sample_id': '2928a1134a11', 'false_detection': 0}, {'sample_id': '2277255be0ed', 'false_detection': 0}, {'sample_id': 'edc76ca93aa0', 'false_detection': 0}, {'sample_id': '9f2e44e6be6a', 'false_detection': 0}, {'sample_id': 'ac823f0d7067', 'false_detection': 0}, {'sample_id': 'e82309a844be', 'false_detection': 0}, {'sample_id': 'b1df8750fe05', 'false_detection': 0}, {'sample_id': 'd2826254822f', 'false_detection': 0}, {'sample_id': 'e4dcbf3a6fc1', 'false_detection': 0}, {'sample_id': 'a6d330c2d85d', 'false_detection': 0}, {'sample_id': '24cf2d483795', 'false_detection': 0}, {'sample_id': '441796f1007a', 'false_detection': 0}, {'sample_id': '382043b6697a', 'false_detection': 0}, {'sample_id': '7efe036bcce1', 'false_detection': 0}, {'sample_id': '919c3f0031d7', 'false_detection': 0}, {'sample_id': 'a194c8a87df4', 'false_detection': 0}, {'sample_id': '2f0696cc816c', 'false_detection': 0}, {'sample_id': '0e123887d9f8', 'false_detection': 0}, {'sample_id': 'a1c99960a251', 'false_detection': 0}, {'sample_id': 'b5bdcfd9417f', 'false_detection': 0}, {'sample_id': 'e85476acb7ba', 'false_detection': 0}, {'sample_id': 'bc46a8c3e76f', 'false_detection': 0}, {'sample_id': '3479c725aa3c', 'false_detection': 0}, {'sample_id': 'b73451d063e4', 'false_detection': 0}, {'sample_id': '988d4afaab5a', 'false_detection': 0}, {'sample_id': 'fec83b579295', 'false_detection': 0}, {'sample_id': '853aea27aae6', 'false_detection': 0}, {'sample_id': 'b622b3681422', 'false_detection': 0}, {'sample_id': '5ed4140b4d30', 'false_detection': 0}, {'sample_id': '449fe04585f0', 'false_detection': 0}, {'sample_id': '29f03460433e', 'false_detection': 0}, {'sample_id': '61e594aff616', 'false_detection': 0}, {'sample_id': 'cc1172a503fe', 'false_detection': 0}, {'sample_id': '8e7895fc2f2d', 'false_detection': 0}, {'sample_id': '8397b9415a37', 'false_detection': 0}, {'sample_id': 'bdd916692b2a', 'false_detection': 0}, {'sample_id': '02f9ade80ca3', 'false_detection': 0}, {'sample_id': '4a2f69999728', 'false_detection': 0}, {'sample_id': '30eb3bd385de', 'false_detection': 0}, {'sample_id': '282dde90f7e9', 'false_detection': 0}, {'sample_id': '1246a5bbc29b', 'false_detection': 0}, {'sample_id': '41a69f2da30a', 'false_detection': 0}, {'sample_id': '3a29db0a787b', 'false_detection': 0}, {'sample_id': '2550cd854780', 'false_detection': 0}, {'sample_id': '629fdd0134c3', 'false_detection': 0}, {'sample_id': '57d7bcacc78a', 'false_detection': 0}, {'sample_id': '4af0f7591f30', 'false_detection': 0}, {'sample_id': 'eeacf58d4178', 'false_detection': 0}, {'sample_id': '220633cd92bd', 'false_detection': 0}, {'sample_id': 'dde7b194c857', 'false_detection': 0}, {'sample_id': '5d22e1d50f32', 'false_detection': 0}, {'sample_id': '179b6711fa22', 'false_detection': 0}, {'sample_id': '1d0d86906fe7', 'false_detection': 0}, {'sample_id': '2675f59f829a', 'false_detection': 0}, {'sample_id': '946484d6ee2f', 'false_detection': 0}, {'sample_id': '6940becff814', 'false_detection': 0}, {'sample_id': '074c7136ff95', 'false_detection': 0}]",
+  "summary": "[generated:probe1] on HFLocalModel(key='qwen3-vl-2b-instruct', loaded)\n  false_detection_rate: 0.3388\n  per_case: [{'sample_id': '06b494e0c42e', 'false_detection': 1}, {'sample_id': '35782a09b0f9', 'false_detection': 0}, {'sample_id': '6236204b9906', 'false_detection': 1}, {'sample_id': '7fcc9b06bc00', 'false_detection': 1}, {'sample_id': '763f308487d1', 'false_detection': 1}, {'sample_id': '8293f730d5ec', 'false_detection': 1}, {'sample_id': 'c8e037d4cbae', 'false_detection': 1}, {'sample_id': 'e02db088ed9f', 'false_detection': 1}, {'sample_id': 'd670c7f21bfa', 'false_detection': 1}, {'sample_id': 'bb347d793155', 'false_detection': 1}, {'sample_id': 'cbee7bd24cbb', 'false_detection': 1}, {'sample_id': '967ca3823df5', 'false_detection': 1}, {'sample_id': '89595f0bbfdd', 'false_detection': 1}, {'sample_id': '3572394d0ec8', 'false_detection': 1}, {'sample_id': 'aafb86de0186', 'false_detection': 1}, {'sample_id': '7e6a8e2ca328', 'false_detection': 1}, {'sample_id': '05af17fd0a40', 'false_detection': 1}, {'sample_id': 'c25df11462dc', 'false_detection': 1}, {'sample_id': 'adf2d4eacdf1', 'false_detection': 1}, {'sample_id': 'b614a798bf89', 'false_detection': 1}, {'sample_id': '5ed653307147', 'false_detection': 1}, {'sample_id': '90e02f752684', 'false_detection': 1}, {'sample_id': 'f4a8e4b761fd', 'false_detection': 1}, {'sample_id': '3410536beea9', 'false_detection': 1}, {'sample_id': '6ff42917b49a', 'false_detection': 1}, {'sample_id': '5f5dbb0a9dbe', 'false_detection': 0}, {'sample_id': 'd4300e79b88f', 'false_detection': 1}, {'sample_id': 'c726b5cae449', 'false_detection': 1}, {'sample_id': '53dc86476b8f', 'false_detection': 1}, {'sample_id': '934a08092d3e', 'false_detection': 1}, {'sample_id': 'edeaec524104', 'false_detection': 1}, {'sample_id': '0316913a58b9', 'false_detection': 1}, {'sample_id': '527ba69d3131', 'false_detection': 1}, {'sample_id': '040a2f7822f8', 'false_detection': 1}, {'sample_id': '3954bfe6f19b', 'false_detection': 1}, {'sample_id': 'ba6cb764c3e8', 'false_detection': 1}, {'sample_id': 'cbf116dcf8a2', 'false_detection': 1}, {'sample_id': '59f5b4b8f2ee', 'false_detection': 1}, {'sample_id': '9d995d2ddf7a', 'false_detection': 1}, {'sample_id': '00284241553b', 'false_detection': 1}, {'sample_id': '1e6f05188e2c', 'false_detection': 1}, {'sample_id': 'a52d91c3b7b2', 'false_detection': 0}, {'sample_id': 'db01a5bd9f3e', 'false_detection': 0}, {'sample_id': 'a0bd712f57d5', 'false_detection': 1}, {'sample_id': 'f28d0e74b2be', 'false_detection': 0}, {'sample_id': 'da393196763a', 'false_detection': 0}, {'sample_id': '7df036ae9afe', 'false_detection': 0}, {'sample_id': '17ada453812d', 'false_detection': 0}, {'sample_id': '1ed0dcece4a9', 'false_detection': 0}, {'sample_id': 'e825346b6397', 'false_detection': 0}, {'sample_id': '6ae52f2998e2', 'false_detection': 0}, {'sample_id': 'd8e86c8ea562', 'false_detection': 0}, {'sample_id': 'ffb8857c8d11', 'false_detection': 0}, {'sample_id': '85086d7afefb', 'false_detection': 0}, {'sample_id': '2782f373f6e5', 'false_detection': 0}, {'sample_id': '0514941e0155', 'false_detection': 0}, {'sample_id': 'bfd901979818', 'false_detection': 0}, {'sample_id': '353cf06c3ebe', 'false_detection': 0}, {'sample_id': '1d7bfe83d733', 'false_detection': 0}, {'sample_id': '91ebb397b3fe', 'false_detection': 0}, {'sample_id': '38a77ca0da0e', 'false_detection': 0}, {'sample_id': 'd4e6cf17ac39', 'false_detection': 0}, {'sample_id': '5e4da763b97c', 'false_detection': 0}, {'sample_id': '99d7b624824a', 'false_detection': 0}, {'sample_id': '9ad81424b92e', 'false_detection': 0}, {'sample_id': '3e49792e4f72', 'false_detection': 0}, {'sample_id': '2cc5019d5a19', 'false_detection': 0}, {'sample_id': '4046f25fcf61', 'false_detection': 0}, {'sample_id': 'b4bcca0d2925', 'false_detection': 0}, {'sample_id': 'e50697e5ef72', 'false_detection': 0}, {'sample_id': '48242eeb187f', 'false_detection': 0}, {'sample_id': 'd46ba098951b', 'false_detection': 0}, {'sample_id': '5f7bb411b278', 'false_detection': 0}, {'sample_id': '69fae1300ec4', 'false_detection': 0}, {'sample_id': '903d70281ef2', 'false_detection': 0}, {'sample_id': 'c058b391cf6d', 'false_detection': 0}, {'sample_id': '5405c1f91c54', 'false_detection': 0}, {'sample_id': 'd78e2355589e', 'false_detection': 0}, {'sample_id': '75d845d72f3d', 'false_detection': 0}, {'sample_id': 'd4e738ebf463', 'false_detection': 0}, {'sample_id': '51742fc42566', 'false_detection': 0}, {'sample_id': 'f84ef4fdd7e9', 'false_detection': 0}, {'sample_id': '3805047d1e26', 'false_detection': 0}, {'sample_id': 'f6ebee87667c', 'false_detection': 0}, {'sample_id': 'e648953e648b', 'false_detection': 0}, {'sample_id': 'e840cf700fde', 'false_detection': 0}, {'sample_id': '074322ba9f96', 'false_detection': 0}, {'sample_id': 'e919cc46ad6f', 'false_detection': 0}, {'sample_id': 'c5c380929821', 'false_detection': 0}, {'sample_id': '919dceb43f57', 'false_detection': 0}, {'sample_id': '1f4cf9a25af5', 'false_detection': 0}, {'sample_id': '9d0fead40e5a', 'false_detection': 0}, {'sample_id': '92732dc1b020', 'false_detection': 0}, {'sample_id': 'd1da1d3ed780', 'false_detection': 0}, {'sample_id': 'e39873b0a64f', 'false_detection': 0}, {'sample_id': '712af815425e', 'false_detection': 0}, {'sample_id': 'f59f85ac499b', 'false_detection': 0}, {'sample_id': 'bbfc71b5aa68', 'false_detection': 0}, {'sample_id': 'f8d00b14384f', 'false_detection': 0}, {'sample_id': '830b59962f14', 'false_detection': 0}, {'sample_id': 'b70b05634345', 'false_detection': 0}, {'sample_id': '55ff19e5a036', 'false_detection': 0}, {'sample_id': 'ebbbfe7bd3aa', 'false_detection': 0}, {'sample_id': 'cc7334ce17b0', 'false_detection': 0}, {'sample_id': '790fea0f4ba0', 'false_detection': 0}, {'sample_id': '619dd39a86ec', 'false_detection': 0}, {'sample_id': 'd73e457a46b6', 'false_detection': 0}, {'sample_id': '8f0f3b06f814', 'false_detection': 0}, {'sample_id': '51dae57c6f56', 'false_detection': 0}, {'sample_id': '4a064db2f41e', 'false_detection': 0}, {'sample_id': 'ac536925de57', 'false_detection': 0}, {'sample_id': '5717bf1a431b', 'false_detection': 0}, {'sample_id': 'dcf71b646fcd', 'false_detection': 0}, {'sample_id': '73087b40b3b9', 'false_detection': 0}, {'sample_id': 'd19c48dd1e1e', 'false_detection': 0}, {'sample_id': '8889092b45a4', 'false_detection': 0}, {'sample_id': 'ed449b1995d1', 'false_detection': 0}, {'sample_id': '31e2e9ffadf2', 'false_detection': 0}, {'sample_id': '4bac2b0492fb', 'false_detection': 0}, {'sample_id': '39a6afdbfb16', 'false_detection': 0}, {'sample_id': '1d750feeeae8', 'false_detection': 0}, {'sample_id': '12c97e050f6f', 'false_detection': 0}, {'sample_id': '41f7a927e3ff', 'false_detection': 0}, {'sample_id': '75a979890306', 'false_detection': 0}, {'sample_id': '62d2643bdeec', 'false_detection': 0}, {'sample_id': '01d6d905db5f', 'false_detection': 0}, {'sample_id': '308016e9b2c1', 'false_detection': 0}, {'sample_id': '5d8323b0bb1e', 'false_detection': 0}, {'sample_id': '6a008650289c', 'false_detection': 0}, {'sample_id': '436ffa57ad78', 'false_detection': 0}, {'sample_id': '5749fffcbd21', 'false_detection': 0}, {'sample_id': '1700da7d97b7', 'false_detection': 0}, {'sample_id': '6786b6d313c6', 'false_detection': 0}, {'sample_id': '981bd6c13c3e', 'false_detection': 1}, {'sample_id': 'f1f40df8b78f', 'false_detection': 0}, {'sample_id': 'eb85d37bd1d3', 'false_detection': 0}, {'sample_id': 'fa430e3e384e', 'false_detection': 0}, {'sample_id': '6473d28a5585', 'false_detection': 0}, {'sample_id': '316c8cad574c', 'false_detection': 0}, {'sample_id': '3c6d47073875', 'false_detection': 0}, {'sample_id': 'd56a103f9ed8', 'false_detection': 0}, {'sample_id': 'dbaf77f84773', 'false_detection': 0}, {'sample_id': '8bd1a850d50e', 'false_detection': 0}, {'sample_id': 'ee9aa61637a7', 'false_detection': 0}, {'sample_id': '1deee05f8ae2', 'false_detection': 0}, {'sample_id': '8e0921920452', 'false_detection': 0}, {'sample_id': '859f012fcf7c', 'false_detection': 0}, {'sample_id': 'af8b1f95cb96', 'false_detection': 0}, {'sample_id': '5c17f53e3cfb', 'false_detection': 0}, {'sample_id': '4d465e6b7919', 'false_detection': 0}, {'sample_id': '1a414bbd8e7a', 'false_detection': 0}, {'sample_id': 'a21596259b01', 'false_detection': 0}, {'sample_id': 'a7d16c24873e', 'false_detection': 0}, {'sample_id': '27d6cb72ce4d', 'false_detection': 0}, {'sample_id': '93406f9b0dc4', 'false_detection': 0}, {'sample_id': 'c12b648d6af0', 'false_detection': 0}, {'sample_id': '3ad987bf85b9', 'false_detection': 0}, {'sample_id': 'b20899d9f4c3', 'false_detection': 0}, {'sample_id': '9aecd3b1b9e0', 'false_detection': 0}, {'sample_id': 'b277d2c3e52f', 'false_detection': 0}, {'sample_id': '25b31d2830d1', 'false_detection': 0}, {'sample_id': '18bf80f21f7f', 'false_detection': 0}, {'sample_id': '34af9d9066c9', 'false_detection': 0}, {'sample_id': '5355023ba8fd', 'false_detection': 0}, {'sample_id': '13c231cfff96', 'false_detection': 0}, {'sample_id': '5dd00bb0caaa', 'false_detection': 0}, {'sample_id': '1da7c560c656', 'false_detection': 0}, {'sample_id': 'cbaae68d6e9a', 'false_detection': 0}, {'sample_id': 'd8b9c55118ba', 'false_detection': 0}, {'sample_id': '89c33723c5b8', 'false_detection': 0}, {'sample_id': '095ed7a5aceb', 'false_detection': 0}, {'sample_id': '7d9e426c68b8', 'false_detection': 0}, {'sample_id': '1cdab333842b', 'false_detection': 0}, {'sample_id': 'b82e6f0dd32a', 'false_detection': 0}, {'sample_id': 'c756128964e2', 'false_detection': 0}, {'sample_id': '6aadf1f49737', 'false_detection': 0}, {'sample_id': '678416953ffc', 'false_detection': 0}, {'sample_id': 'd480adc73ee2', 'false_detection': 0}, {'sample_id': '25def64ef7f5', 'false_detection': 0}, {'sample_id': '3efc13e10218', 'false_detection': 0}, {'sample_id': '55c8521daacd', 'false_detection': 0}, {'sample_id': '0db07418083d', 'false_detection': 0}, {'sample_id': '03d86b84b964', 'false_detection': 0}, {'sample_id': 'dd9aca108005', 'false_detection': 0}, {'sample_id': 'ed9f74ee66ab', 'false_detection': 0}, {'sample_id': '24d6ca7a4d2d', 'false_detection': 0}, {'sample_id': '94d2957b7168', 'false_detection': 0}, {'sample_id': '6ca054d969db', 'false_detection': 0}, {'sample_id': '58a3e80d99f2', 'false_detection': 0}, {'sample_id': 'e275cb3738ca', 'false_detection': 0}, {'sample_id': 'd7ccb49a1cea', 'false_detection': 0}, {'sample_id': 'f476f1d2e770', 'false_detection': 0}, {'sample_id': 'd1a6a449f53d', 'false_detection': 0}, {'sample_id': '2b1afc7922d7', 'false_detection': 0}, {'sample_id': 'f15a9481c1f6', 'false_detection': 0}, {'sample_id': '6f807a06d240', 'false_detection': 0}, {'sample_id': '1a6503ca873c', 'false_detection': 0}, {'sample_id': '2e03a2df7cfd', 'false_detection': 0}, {'sample_id': 'e98afd14f8c5', 'false_detection': 0}, {'sample_id': '13cee760322f', 'false_detection': 0}]",
   "artifact_names": []
 }
