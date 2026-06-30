@@ -171,6 +171,70 @@ def test_hypotheses_join_with_m5_outcomes():
     assert out[1]["tests"] == []              # H two was never tested
 
 
+def _build_analysis_phase_run(root):
+    """Same fused report as the confirmatory fixture, but the loop log is an
+    analysis-phase pass (descriptive_only, no surgery) under logs_analysis/."""
+    _build_loop_run(root)
+    # Replace the confirmatory M2_5 log with an analysis-phase logs_analysis/ log.
+    import shutil
+    shutil.rmtree(root / "logs_m2_5")
+    logs = root / "logs_analysis"
+    logs.mkdir(parents=True)
+    events = [
+        {"event": "analysis", "cycle": 0, "descriptive_only": True,
+         "conclusion": "Candidate signals described; verdict deferred."},
+        {"event": "diagnosis", "cycle": 0, "n_hypotheses": 1,
+         "hypotheses": [{"statement": "language-prior hallucination", "failure_mode": "lp"}],
+         "referenced_charts": ["Fail rate by signal"]},
+        {"event": "loop_end", "stopped_by": "analysis_complete"},
+    ]
+    (logs / "run_log.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    return root
+
+
+def test_analysis_phase_dashboard_shows_no_supported_verdicts(tmp_path):
+    # WS2 / decoupling: an analysis-phase run must present candidate signals
+    # DESCRIPTIVELY — no "Supported" / "Not supported" verdict pills, since the
+    # explorer's reject flags are not confirmation.
+    _build_analysis_phase_run(tmp_path)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # the descriptive evidence pills carry "Descriptive", never a verdict
+    assert "Descriptive</span>" in blob
+    assert ">Supported</span>" not in blob
+    assert ">Not supported</span>" not in blob
+    # the confirmatory method card ("tested signals survived") is replaced
+    assert "tested signals survived" not in blob
+    # an explicit analysis-phase banner orients the reader
+    assert any("Analysis phase" in str(i.value) for i in at.info)
+
+
+def test_resolve_scatter_axes_handles_real_named_and_legacy_columns():
+    import pandas as pd
+
+    from evalvitals.analysis.dashboard_app import _resolve_scatter_axes
+
+    # (a) newer schema: real signal names as columns, no report hint available.
+    d = pd.DataFrame({"attention_entropy": [0.8, 0.6], "center_offset": [0.2, 0.4],
+                      "outcome": ["PASS", "FAIL"]})
+    _d, xs, ys, oc = _resolve_scatter_axes(d, {}, "scatter_top_attention_pair.csv")
+    assert (xs, ys, oc) == ("attention_entropy", "center_offset", "outcome")
+
+    # (b) legacy schema: literal x/y renamed from the report's chart title.
+    d2 = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0], "outcome": ["FAIL", "PASS"]})
+    report = {"charts": [{"name": "scatter_pair",
+                          "title": "focus_share vs edge_mass by outcome"}]}
+    d2r, xs, ys, oc = _resolve_scatter_axes(d2, report, "scatter_pair.csv")
+    assert (xs, ys, oc) == ("focus_share", "edge_mass", "outcome")
+    assert {"focus_share", "edge_mass"} <= set(d2r.columns)  # columns were renamed
+
+    # (c) unresolvable (no two value axes) → all-None sentinel, no crash.
+    bad = pd.DataFrame({"outcome": ["FAIL", "PASS"]})
+    _b, xs, ys, oc = _resolve_scatter_axes(bad, {}, "scatter_bad.csv")
+    assert (xs, ys, oc) == (None, None, None)
+
+
 def test_signals_dataframe_and_effect_figure_helpers():
     from evalvitals.analysis.dashboard_app import _signal_effect_figure, _signals_dataframe
 

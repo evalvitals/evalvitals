@@ -155,6 +155,22 @@ def _candidate_signals(explore_report: dict[str, Any] | None) -> list[dict[str, 
     return [s for s in ((explore_report or {}).get("candidate_signals") or []) if isinstance(s, dict)]
 
 
+def _story_is_descriptive(story: dict[str, Any] | None) -> bool:
+    """True when the loaded run is analysis-phase only: every M2 deferred its
+    validity verdict (``descriptive_only``) and no confirm/surgery has run yet.
+
+    Mirrors ``reporting.compiler._is_descriptive_only`` so the analysis dashboard
+    presents candidate signals + hypotheses WITHOUT a supported/not-supported
+    verdict. The explorer's per-recipe ``reject`` flags are NOT confirmation; they
+    are shown descriptively until the confirm phase adjudicates them."""
+    if not story:
+        return False
+    analyses = story.get("analyses") or []
+    if not analyses or not all(a.get("descriptive_only") for a in analyses):
+        return False
+    return not (story.get("surgeries") or [])
+
+
 def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
     """Join each M3 hypothesis with the explore artifacts it cited and the
     M5/M4 tests that later evaluated it (matched by statement)."""
@@ -475,9 +491,17 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
     adj = explore_report.get("adjudication") or {}
     readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
     storyboard = _storyboard_panels(explore_report, story=story)
+    descriptive = _story_is_descriptive(story)
 
     st.markdown("### Analysis")
     _render_stage_map(active={"M2"})
+    if descriptive:
+        st.info(
+            "Analysis phase — candidate signals and proposed hypotheses are shown "
+            "**descriptively, without a validity verdict**. Run the confirm phase to "
+            "adjudicate them on the held-out split.",
+            icon="🔍",
+        )
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -489,20 +513,29 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
     )
 
     if signals:
-        st.markdown("#### Evidence you can use")
-        _render_confirmatory_evidence(signals, explore_report, explore_dir)
+        st.markdown("#### Candidate signals" if descriptive else "#### Evidence you can use")
+        _render_confirmatory_evidence(signals, explore_report, explore_dir, descriptive=descriptive)
 
     with st.expander("Method details and generated storyboard", expanded=False):
         _render_storyboard_panel(storyboard, "analysis")
         c1, c2 = st.columns(2, gap="large")
         with c1:
-            _render_method_card(
-                "Confirmatory signal testing",
-                str(adj.get("method") or "held-out host adjudication"),
-                "Effect sizes, confidence intervals, and e-BH/FDR verdicts.",
-                f"{adj.get('n_signals_rejected', adj.get('n_rejected', 0))} of "
-                f"{adj.get('n_signals_tested', adj.get('n_in_family', len(signals)))} tested signals survived.",
-            )
+            if descriptive:
+                _render_method_card(
+                    "Descriptive signal screening",
+                    "host-computed effect sizes + CIs (no validity verdict)",
+                    "Effect sizes and confidence intervals only — e-BH/FDR adjudication is deferred.",
+                    f"{len(signals)} candidate signal(s) described; none adjudicated yet "
+                    "(run the confirm phase to test them).",
+                )
+            else:
+                _render_method_card(
+                    "Confirmatory signal testing",
+                    str(adj.get("method") or "held-out host adjudication"),
+                    "Effect sizes, confidence intervals, and e-BH/FDR verdicts.",
+                    f"{adj.get('n_signals_rejected', adj.get('n_rejected', 0))} of "
+                    f"{adj.get('n_signals_tested', adj.get('n_in_family', len(signals)))} tested signals survived.",
+                )
         with c2:
             _render_method_card(
                 "Exploratory visualization",
@@ -1249,13 +1282,25 @@ def _render_confirmatory_evidence(
     signals: list[dict[str, Any]],
     explore_report: dict[str, Any] | None = None,
     explore_dir: Path | None = None,
+    *,
+    descriptive: bool = False,
 ) -> None:
-    rows = _evidence_rows(signals)
+    rows = _evidence_rows(signals, descriptive=descriptive)
+    diagnostic = [r for r in rows if r["role"] == "diagnostic signal"]
     supported = [r for r in rows if r["decision"] == "Supported" and r["role"] == "diagnostic signal"]
     audits = [r for r in rows if r["role"] == "sanity check"]
     lead = supported[0] if supported else None
 
-    if lead:
+    if descriptive:
+        lead_desc = diagnostic[0] if diagnostic else None
+        summary = (
+            f"{lead_desc['finding']} shows the largest FAIL-vs-PASS separation in this run "
+            f"(effect {lead_desc['effect']}, CI {lead_desc['ci']}) — shown descriptively, "
+            "not yet adjudicated. Run the confirm phase to test whether it holds out."
+            if lead_desc else
+            "Candidate signals are listed descriptively; run the confirm phase to adjudicate them."
+        )
+    elif lead:
         summary = (
             f"{lead['finding']} is the main usable finding. FAIL cases have higher values "
             f"for this signal on the confirmation split (effect {lead['effect']}, CI {lead['ci']})."
@@ -1281,11 +1326,13 @@ def _render_confirmatory_evidence(
     signal_by_name = {str(s.get("name") or ""): s for s in signals}
     for row in rows:
         signal = signal_by_name.get(row["raw_signal"], {})
-        _render_evidence_panel(row, signal, explore_report or {}, explore_dir)
+        _render_evidence_panel(row, signal, explore_report or {}, explore_dir, descriptive=descriptive)
     st.caption(
-        "Cards are computed by the host on the confirmation split. Positive effect means the "
-        "signal is more common/larger in FAIL than PASS; CI crossing 0 means weak evidence. "
-        "Sanity checks validate the pipeline and are not root-cause explanations."
+        "Cards are computed by the host. Positive effect means the signal is more "
+        "common/larger in FAIL than PASS; CI crossing 0 means weak separation. "
+        + ("Verdicts are deferred to the confirm phase; these are descriptive only. "
+           if descriptive else
+           "Sanity checks validate the pipeline and are not root-cause explanations.")
     )
 
     with st.expander("Technical forest plot", expanded=False):
@@ -1303,6 +1350,8 @@ def _render_evidence_panel(
     signal: dict[str, Any],
     explore_report: dict[str, Any],
     explore_dir: Path | None,
+    *,
+    descriptive: bool = False,
 ) -> None:
     with st.container(border=True):
         kind = "ev-evidence-audit" if row["role"] == "sanity check" else "ev-evidence-signal"
@@ -1326,7 +1375,7 @@ def _render_evidence_panel(
 
         charts = _supporting_charts_for_signal(signal, explore_report)
         reading = _supporting_reading_for_signal(signal, explore_report, charts)
-        takeaway = _evidence_takeaway(row, signal)
+        takeaway = _evidence_takeaway(row, signal, descriptive=descriptive)
         st.markdown(
             f"""
             <div class="ev-evidence-takeaway">
@@ -1352,7 +1401,7 @@ def _render_evidence_panel(
             st.caption("Held-out effect estimate and confidence interval above.")
 
 
-def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _evidence_rows(signals: list[dict[str, Any]], *, descriptive: bool = False) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for s in signals:
         leaky = _is_leaky_signal(s)
@@ -1370,12 +1419,22 @@ def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
             )
         else:
             role = "diagnostic signal"
-            meaning = (
-                f"{label} separates FAIL from PASS in this run."
-                if reject is True else
-                f"{label} was tested but did not clearly separate FAIL from PASS."
-            )
-        decision = "Supported" if reject is True else ("Not supported" if reject is False else "Descriptive")
+            if descriptive:
+                meaning = (
+                    f"{label}: FAIL/PASS group means differ by effect {effect} in this run "
+                    "(descriptive; validity not yet tested)."
+                )
+            else:
+                meaning = (
+                    f"{label} separates FAIL from PASS in this run."
+                    if reject is True else
+                    f"{label} was tested but did not clearly separate FAIL from PASS."
+                )
+        if descriptive:
+            # Analysis phase: no verdict — the explorer's reject flag is not confirmation.
+            decision = "Descriptive"
+        else:
+            decision = "Supported" if reject is True else ("Not supported" if reject is False else "Descriptive")
         rows.append({
             "finding": label,
             "raw_signal": str(s.get("name") or ""),
@@ -1385,7 +1444,17 @@ def _evidence_rows(signals: list[dict[str, Any]]) -> list[dict[str, str]]:
             "ci": ci,
             "plain meaning": meaning,
         })
-    rows.sort(key=lambda r: (r["role"] != "diagnostic signal", r["decision"] != "Supported", r["finding"]))
+    # In descriptive mode rank diagnostics by |effect| (no verdict to sort on).
+    if descriptive:
+        def _abs_eff(s: dict[str, Any]) -> float:
+            try:
+                return abs(float(s.get("effect")))
+            except (TypeError, ValueError):
+                return 0.0
+        eff_by_name = {str(s.get("name") or ""): _abs_eff(s) for s in signals}
+        rows.sort(key=lambda r: (r["role"] != "diagnostic signal", -eff_by_name.get(r["raw_signal"], 0.0), r["finding"]))
+    else:
+        rows.sort(key=lambda r: (r["role"] != "diagnostic signal", r["decision"] != "Supported", r["finding"]))
     return rows
 
 
@@ -1430,10 +1499,15 @@ def _supporting_reading_for_signal(
     return "The chart below is the experiment behind this finding: it shows the same signal split by FAIL/PASS outcome."
 
 
-def _evidence_takeaway(row: dict[str, str], signal: dict[str, Any]) -> str:
+def _evidence_takeaway(row: dict[str, str], signal: dict[str, Any], *, descriptive: bool = False) -> str:
     name = row["finding"]
     if row["role"] == "sanity check":
         return f"{name} validates the measurement path, but it is not a root-cause explanation."
+    if descriptive:
+        return (
+            f"{name} is a descriptive lead (effect {row['effect']}, CI {row['ci']}). "
+            "Its validity is deferred to the confirm phase — do not treat it as confirmed yet."
+        )
     if signal.get("reject") is True:
         return (
             f"{name} is the actionable M2 finding: it separates FAIL from PASS on the "
@@ -1528,6 +1602,27 @@ def _scatter_axis_names(explore_report, csv_name: str) -> tuple[str | None, str 
                 right = right.split(" by outcome")[0].strip()
                 return left.strip() or None, right or None
     return None, None
+
+
+def _resolve_scatter_axes(d, explore_report, name):
+    """Resolve a scatter CSV's (x_sig, y_sig, outcome_col), tolerating both schemas.
+
+    Newer fused tables store the real signal names as columns directly
+    (``[attention_entropy, center_offset, outcome]``); older ones used literal
+    ``x``/``y`` recovered from the report's chart title. Falls back to the CSV's
+    own non-outcome columns so a non-existent name is never handed to plotly.
+    Returns ``(df, x_sig, y_sig, outcome_col)`` with the trailing three None when
+    a two-axis scatter cannot be formed."""
+    outcome_col = next((c for c in d.columns if c.lower() == "outcome"), None)
+    xs, ys = _scatter_axis_names(explore_report, name)
+    if {"x", "y"} <= set(d.columns) and xs and ys:
+        d = d.rename(columns={"x": xs, "y": ys})  # legacy x/y → recovered names
+    if not (xs and ys and xs in d.columns and ys in d.columns):
+        value_cols = [c for c in d.columns if c != outcome_col]
+        xs, ys = (value_cols + [None, None])[:2]
+    if not (xs and ys and xs in d.columns and ys in d.columns and outcome_col):
+        return d, None, None, None
+    return d, xs, ys, outcome_col
 
 
 def _counts_bar_agg(df: pd.DataFrame):
@@ -1680,16 +1775,17 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
                 d = pd.read_csv(path)
             except Exception:
                 continue
-            xs, ys = _scatter_axis_names(explore_report, name)
-            binary_axis = any(d[c].nunique(dropna=True) <= 2 for c in ("x", "y") if c in d.columns)
+            d, xs, ys, outcome_col = _resolve_scatter_axes(d, explore_report, name)
+            if not (xs and ys and outcome_col):
+                st.caption(f"↳ scatter {name}: could not resolve its two value axes — skipped.")
+                continue
+            binary_axis = any(d[c].nunique(dropna=True) <= 2 for c in (xs, ys))
             if binary_axis:
-                lbl = f"{viz.short(xs) if xs else 'x'} vs {viz.short(ys) if ys else 'y'}"
-                st.caption(f"↳ scatter {lbl}: one axis is binary — suppressed "
-                           f"(see the quadrant / distribution views above).")
+                st.caption(f"↳ scatter {viz.short(xs)} vs {viz.short(ys)}: one axis is binary — "
+                           "suppressed (see the quadrant / distribution views above).")
             else:
-                d2 = d.rename(columns={"x": xs, "y": ys}) if xs and ys else d
                 st.plotly_chart(
-                    viz.joint_scatter(d2, xs or "x", ys or "y", outcome="outcome"),
+                    viz.joint_scatter(d, xs, ys, outcome=outcome_col),
                     width="stretch",
                     key=f"explore_scatter_{name}",
                 )

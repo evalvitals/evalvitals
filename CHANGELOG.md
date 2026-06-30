@@ -51,6 +51,31 @@ Versions follow [Semantic Versioning](https://semver.org/).
   finding (energy-distance D=1.88, permutation p=0.018) — the maps differ
   distributionally even though no linear boundary separates them.
 
+### Fixed — analysis-phase dashboard rendering
+
+- **Stale confirm runs no longer leak verdicts into the analysis view**
+  (`analysis/dashboard.py`): `load_loop_story` merged events from *every*
+  `logs*/` dir, so a directory holding both a descriptive `logs_analysis/` run
+  and a stale all-in-one `logs_m2_5/` run would resurrect the old surgeries +
+  supported/not-supported verdicts on top of the descriptive run. It now keeps
+  the shared M1 probe log plus only the **single most-recent M2+ arc** (by
+  mtime), so an analysis-phase directory renders descriptively without a symlink
+  workaround.
+- **Analysis phase shows candidate signals descriptively** (`analysis/dashboard_app.py`):
+  when the loaded run is analysis-only (`_story_is_descriptive`: every M2
+  `descriptive_only`, no surgery), evidence cards render a **"Descriptive"**
+  badge ranked by |effect| instead of mapping the explorer's `reject` flags to
+  "Supported"/"Not supported", the method card drops the e-BH/"tested signals
+  survived" framing, and an "Analysis phase" banner orients the reader. The
+  explorer's per-recipe `reject` is not confirmation.
+- **Scatter tables with real-named columns no longer crash** (`_resolve_scatter_axes`):
+  the explorer now writes scatter CSVs with real signal columns
+  (`attention_entropy, center_offset, outcome`); the dashboard assumed legacy
+  `x`/`y` columns and fell back to literal `"x"`/`"y"`, raising plotly's
+  `Value of 'x' is not the name of a column`. Axis resolution now prefers the
+  report's recovered names, then the CSV's own non-outcome columns, and skips
+  cleanly when two value axes can't be formed.
+
 ### Added — decoupled analysis vs. confirm+fix
 
 - **`VLDiagnoseLoop.run_analysis()` + `VLDiagnoseLoop.run_confirm()`**
