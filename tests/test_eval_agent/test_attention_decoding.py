@@ -70,11 +70,14 @@ class TestAttentionDecoding:
         rng = np.random.default_rng(3)
         labels, vec = {}, {}
         for i in range(14):
-            cid = f"f{i}"; labels[cid] = True
-            m = rng.normal(0, 0.1, size=(4, 4)); m[0, 0] += 2.0
+            cid = f"f{i}"
+            labels[cid] = True
+            m = rng.normal(0, 0.1, size=(4, 4))
+            m[0, 0] += 2.0
             vec[cid] = m
         for i in range(14):
-            cid = f"p{i}"; labels[cid] = False
+            cid = f"p{i}"
+            labels[cid] = False
             vec[cid] = rng.normal(0, 0.1, size=(8, 8))  # different shape
         inp = StatsInput(labels=labels, per_case_vectors={"attn.map": vec})
         r = run_stats_tool("attention_decoding", inp, {"n_perm": 60, "grid": 6, "seed": 0})
