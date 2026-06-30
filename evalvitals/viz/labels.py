@@ -5,23 +5,25 @@ from __future__ import annotations
 from typing import Any
 
 DISPLAY_NAMES = {
-    "generated_probe1_false_detection": "Label audit: probe false-detection flag",
-    "probe1_false_detection": "Label audit: probe false-detection flag",
+    "generated_probe1_false_detection": "Sanity check: probe false-detection flag",
+    "probe1_false_detection": "Sanity check: probe false-detection flag",
     "probe1_positive": "Probe says object is present",
     "relative_attention_focus_share": "Attention focus share",
     "relative_attention_max_relative_weight": "Maximum relative attention",
     "relative_attention_mean_relative_weight": "Mean relative attention",
-    "low_focus_share": "Low attention focus",
+    "low_focus": "High attention focus",
+    "low_focus_share": "High attention focus",
 }
 
 COMPACT_NAMES = {
-    "generated_probe1_false_detection": "Label audit",
-    "probe1_false_detection": "Label audit",
+    "generated_probe1_false_detection": "Sanity check",
+    "probe1_false_detection": "Sanity check",
     "probe1_positive": "Probe positive",
     "relative_attention_focus_share": "Attention focus",
     "relative_attention_max_relative_weight": "Max attention",
     "relative_attention_mean_relative_weight": "Mean attention",
-    "low_focus_share": "Low focus",
+    "low_focus": "High focus",
+    "low_focus_share": "High focus",
 }
 
 PREFIXES = (
@@ -48,6 +50,9 @@ def display_name(value: Any, *, compact: bool = False) -> str:
     lookup = COMPACT_NAMES if compact else DISPLAY_NAMES
     if base in lookup:
         return lookup[base]
+    for raw, label in sorted(lookup.items(), key=lambda item: len(item[0]), reverse=True):
+        if raw in base:
+            base = base.replace(raw, label)
 
     for prefix, phrase in PREFIXES:
         if base == prefix:
@@ -57,7 +62,7 @@ def display_name(value: Any, *, compact: bool = False) -> str:
             return phrase + display_name(suffix, compact=compact)
 
     if "false_detection" in base:
-        return "Label audit: false-detection flag" if not compact else "Label audit"
+        return "Sanity check: false-detection flag" if not compact else "Sanity check"
     if base.startswith("generated_"):
         return display_name(base.removeprefix("generated_"), compact=compact)
     if base.startswith("probe") and "positive" in base:
@@ -70,4 +75,3 @@ def display_name(value: Any, *, compact: bool = False) -> str:
 def raw_hint(value: Any) -> str:
     text = raw_name(value)
     return f"Raw field: {text}" if text else ""
-

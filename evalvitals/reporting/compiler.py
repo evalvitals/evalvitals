@@ -234,8 +234,8 @@ def _compile_timeline(story: dict[str, Any], explore_report: dict[str, Any]) -> 
 def _answer(explore_report: dict[str, Any], claims: list[Claim]) -> str:
     supported = [c.text for c in claims if c.status == "supported"]
     if supported:
-        leaky = sum(1 for c in claims if "label-like" in c.do_not_infer or "label" in c.text)
-        suffix = f" ({leaky} label-like sanity-check claim(s) demoted.)" if leaky else ""
+        leaky = sum(1 for c in claims if "sanity check" in c.do_not_infer.lower())
+        suffix = f" ({leaky} {_plural(leaky, 'sanity check')} demoted.)" if leaky else ""
         return supported[0] + suffix
     conclusion = str(explore_report.get("conclusion") or "").strip()
     if conclusion:
@@ -297,8 +297,12 @@ def _signal_interpretation(signal: dict[str, Any]) -> str:
 
 def _do_not_infer(signal: dict[str, Any]) -> str:
     if _is_leaky_signal(signal):
-        return "Do not rank this as a root cause; it is label-like."
+        return "Sanity check only: do not rank this as a root cause."
     return "Do not infer causality from association without M5/M4 support."
+
+
+def _plural(count: int, singular: str, plural: str | None = None) -> str:
+    return singular if count == 1 else (plural or f"{singular}s")
 
 
 def _downstream_for_signal(name: str, story: dict[str, Any]) -> list[str]:
@@ -331,7 +335,7 @@ def _critique(explore_report: dict[str, Any], signals: list[dict[str, Any]]) -> 
         return [str(x) for x in raw]
     notes = [str(c) for c in (explore_report.get("caveats") or [])]
     if any(_is_leaky_signal(s) for s in signals):
-        notes.append("One or more signals look label-like and are demoted to descriptive evidence.")
+        notes.append("One or more signals are sanity checks and are demoted to descriptive evidence.")
     if not notes:
         notes.append("No explicit critique was recorded; inspect raw artifacts before over-claiming.")
     return notes

@@ -21,7 +21,7 @@ browser. Structure the output as three reader-facing panels:
 2. Analysis (M2)
    - For each analysis method, produce: method, evidence/chart, takeaway.
    - Lead with held-out confirmatory findings, not exploratory observations.
-   - Demote label-like/probe-derived audit fields to sanity checks.
+   - Demote probe-derived or label-reconstructing fields to sanity checks.
    - Every chart needs a human title and a one-sentence reading.
 
 3. Hypotheses & Artifacts (M3-M5)

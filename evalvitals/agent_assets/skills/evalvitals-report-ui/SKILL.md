@@ -90,18 +90,18 @@ Required storyboard panel shape:
 ## Label-Like And Probe-Derived Signals
 
 Signals such as `generated_probe1_false_detection`, `probe1_false_detection`,
-or anything that perfectly re-measures the FAIL label are audit plumbing. Treat
-them as label checks, never as root causes.
+or anything that perfectly re-measures the FAIL label are sanity checks. Treat
+them as measurement checks, never as root causes.
 
 Use labels like:
 
-- `Label audit: probe false-detection flag`
+- `Sanity check: probe false-detection flag`
 - `Probe says object is present`
 - `Attention focus share`
 - `Maximum relative attention`
 - `Mean relative attention`
 
-Do not lead a report with a label-like signal even when it has the largest
+Do not lead a report with a label-reconstructing signal even when it has the largest
 effect size. Mention it as a sanity check, then rank non-leaky explanatory
 signals first.
 
@@ -110,7 +110,7 @@ signals first.
 The final answer should be claim-first:
 
 1. State the supported non-leaky finding in plain language.
-2. Mention label-like audit signals only as demoted sanity checks.
+2. Mention label-reconstructing signals only as demoted sanity checks.
 3. Link each claim to evidence: confirmed signal, chart, or downstream test.
 4. Say what not to infer: association is not causality unless intervention tests
    support it.

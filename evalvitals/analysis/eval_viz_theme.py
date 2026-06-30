@@ -75,8 +75,8 @@ SHORT_NAMES = {
     "relative_attention_focus_share":        "Attention focus",
     "relative_attention_max_relative_weight":"Max attention",
     "relative_attention_mean_relative_weight":"Mean attention",
-    "generated_probe1_false_detection":      "Label audit",
-    "low_focus_share":                       "Low focus",
+    "generated_probe1_false_detection":      "Sanity check",
+    "low_focus_share":                       "High focus",
     "probe1_positive":                       "Probe positive",
 }
 
