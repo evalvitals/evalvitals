@@ -6,6 +6,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — decoupled analysis vs. confirm+fix
+
+- **`VLDiagnoseLoop.run_analysis()` + `VLDiagnoseLoop.run_confirm()`**
+  (`eval_agent/loop.py`): split the diagnosis pipeline so the analysis
+  dashboard can be produced *before* hypotheses are confirmed. `run_analysis()`
+  runs **M1 → M2 → M3** (the same rigorous e-BH stats + charts, then *propose*
+  hypotheses) and stops — the returned `VLDiagnoseReport` carries
+  `all_hypotheses` (proposed, unconfirmed) and `final_stats_report`, with
+  `all_test_results` / `verified_hypotheses` empty (`stopped_by="analysis_complete"`).
+  `run_confirm(data, hypotheses, stats_report=...)` runs **M5** on those
+  hypotheses — typically reloaded via `hypothesis_from_dict` and confirmed
+  against the *exact* M2 report the dashboard showed (regenerated from the
+  frozen M1 when omitted) — then feeds `run_m4` / `run_fix` as before. The
+  shared per-stage helpers (`_do_m1/_do_m2/_do_m3/_do_m5`) are factored out of
+  `run()`, whose behavior is unchanged. The dashboard renders proposed
+  hypotheses without M5/M4/Fix verdicts and gains them once the confirm phase's
+  log dir is present.
+
+- **deco_hallu decoupled scripts** (`examples/diagnosis_loops/deco_hallu/`):
+  `run_analysis.py` (GPU-free: replay M1 → M2 stats/charts → M3 propose →
+  dashboard, persisting `outputs/analysis/{proposed_hypotheses.json,
+  analysis_state.pkl}`) and `run_confirm_fix.py` (reload those artifacts → M5
+  confirm → M4 + tiered Fix), with matching `run_analysis.sh` /
+  `run_confirm_fix.sh` wrappers. The shared frozen-M1 `ReplayProbeAgent` and a
+  GPU-free `FrozenModel` stub now live in `run.py`. The one-shot `run_m2-5.py`
+  path is unchanged.
+
 ### Added — run output ownership & tiered repair
 
 - **`RunContext`** (`eval_agent/run_context.py`): single owner of a diagnosis

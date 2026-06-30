@@ -48,6 +48,34 @@ PORT=8501 ./run_all.sh`. Set `DASHBOARD=0` to finish the pipeline without launch
 Streamlit (it just prints the dashboard command). The manual steps below are what the
 scripts wrap.
 
+### Decoupled flow — analyse → dashboard → *then* confirm + fix
+
+`run_all.sh` / `run_from_m1.sh` run the loop end to end (M2→M3→**M5**→Fix in one
+go). If you'd rather **see the analysis and proposed hypotheses on the dashboard
+before** spending GPU/claude on confirmation + repair, split it in two:
+
+```bash
+cd <repo-root>/examples/diagnosis_loops/deco_hallu
+
+./run_analysis.sh     # fused → run_analysis (M2 stats+charts → M3 PROPOSE) → dashboard
+                      #   no GPU; hypotheses are proposed, NOT yet confirmed (no M5/M4/Fix)
+./run_confirm_fix.sh  # later: M5 confirm (same hypotheses) → M4 + tiered Fix → dashboard
+                      #   GPU + claude; reuses outputs/analysis/ so the SAME hypotheses
+                      #   the dashboard showed are the ones confirmed
+```
+
+- **`run_analysis.py`** runs `VLDiagnoseLoop.run_analysis()` — M1 (replayed) → M2
+  (the *same* rigorous e-BH stats + charts) → M3 (propose) — and stops. It writes
+  `outputs/logs_analysis/run_log.jsonl` plus `outputs/analysis/{proposed_hypotheses.json,
+  analysis_state.pkl}` (the proposed hypotheses + the exact M2 stats report).
+- **`run_confirm_fix.py`** reloads those artifacts and runs `VLDiagnoseLoop.run_confirm()`
+  (M5) on the **same** hypotheses, then `run_m4` + `run_fix`, into
+  `outputs/logs_confirm_fix/run_log.jsonl`. The dashboard merges both log dirs, so
+  after this each proposed hypothesis gains its M5/M4/Fix verdict.
+
+The one-shot `run_m2-5.py` (M2→M3→M5→Fix together) is still here for the
+all-in-one path.
+
 ## Run it (4 steps)
 
 ```bash
@@ -118,7 +146,13 @@ outputs/
     fused_report.json                   # Step 1: observations, charts, signal verdicts
     confirmed_recipes.json              # signals fed to Step 2
     figures/*.png  sandbox/tables/*.csv # rendered charts + their data
-  logs_m2_5/run_log.jsonl               # Step 2: analysis / diagnosis / surgery / fix
+  logs_m2_5/run_log.jsonl               # one-shot Step 2: analysis / diagnosis / surgery / fix
+
+  # decoupled flow (run_analysis.sh → run_confirm_fix.sh):
+  logs_analysis/run_log.jsonl           # PHASE 1: M1 + M2 stats/charts + M3 proposed hyps
+  analysis/proposed_hypotheses.json     # PHASE 1: the proposed hypotheses (human-readable)
+  analysis/analysis_state.pkl           # PHASE 1: {hypotheses, M2 stats_report} → reused by PHASE 2
+  logs_confirm_fix/run_log.jsonl        # PHASE 2: M5 verdicts + M4 surgery + Fix
 ```
 
 ## Adapt to a new case
