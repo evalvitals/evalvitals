@@ -1,5 +1,0 @@
-n_cases: 64.0
-metric_a: 0.7031
-metric_b: 0.9219
-metric_c: 0.6875
-verdict: 1.0
