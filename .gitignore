@@ -232,3 +232,6 @@ examples/deco_*/outputs/
 examples/diagnosis_loops/deco_pope/data/images/
 examples/diagnosis_loops/deco_hallu/outputs/m1_state.pkl
 .gstack/
+
+# large analysis state (keep local, do not commit)
+*.pkl

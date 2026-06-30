@@ -1,0 +1,11 @@
+HYPOTHESIS: The failure set is a mixture of two distinct attention regimes — one where image attention spikes onto a single wrong/background patch (high max_relative_weight, high focus_share) and one where it is diffusely smeared (low focus_share) — so a single "misallocation" story conflates two mechanisms.
+FAILURE_MODE: attention_sink + diffuse_attention (bimodal)
+TEST: cross-tabulate `relative_attention.focus_share` against `explored.low_focus_share` within the FAIL set (probe1_positive=1) and check for bimodality; confirm the high-focus failures concentrate on a fixed patch via `relative_attention.max_relative_weight`.
+
+HYPOTHESIS: The high-attention failures are driven by a content-independent positional attention sink — the same physical patches (e.g. idx 58/59/80/69) absorb weight regardless of image, so attention concentration is an artifact of token position rather than misdirected object search.
+FAILURE_MODE: attention_sink
+TEST: tabulate top-patch indices from `relative_attention.top_patches`/per_case across all 32 attention cases; if the same indices dominate independent of image, the sink is positional — next-cycle analyzer should compute per-patch attention frequency across cases.
+
+HYPOTHESIS: The model has a global "Yes" response bias on absent-object yes/no questions that is independent of scene plausibility, so false detections occur even for objects that are NOT contextually plausible (not just plausible ones).
+FAILURE_MODE: hallucination (yes-bias, not plausibility-driven)
+TEST: run a new probe contrasting absent-but-plausible vs absent-and-implausible queried objects on the same images; if false_detection rate is equally high for implausible objects, the cause is yes-bias rather than scene-prior — compare against `generated:probe1.false_detection`.
