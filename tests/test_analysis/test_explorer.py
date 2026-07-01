@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from evalvitals.analysis import M2ExplorerAgent, load_records_from_path
+from evalvitals.analysis import ExploratoryAnalysisAgent, load_records_from_path
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 _GOOD_CODE = """
@@ -88,8 +88,8 @@ def _rows() -> list[dict]:
     ]
 
 
-def test_m2_explorer_runs_generated_local_analysis(tmp_path):
-    agent = M2ExplorerAgent(
+def test_explorer_runs_generated_local_analysis(tmp_path):
+    agent = ExploratoryAnalysisAgent(
         judge=ScriptedJudge(f"```python\n{_GOOD_CODE}\n```"),
         sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False),
     )
@@ -110,9 +110,9 @@ def test_m2_explorer_runs_generated_local_analysis(tmp_path):
     assert (tmp_path / "records.json").exists()
 
 
-def test_m2_explorer_prompt_requires_visual_plan(tmp_path):
+def test_explorer_prompt_requires_visual_plan(tmp_path):
     judge = ScriptedJudge(f"```python\n{_GOOD_CODE}\n```")
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         judge=judge,
         sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False),
     )
@@ -129,11 +129,11 @@ def test_m2_explorer_prompt_requires_visual_plan(tmp_path):
     assert "critique" in prompt
 
 
-def test_m2_explorer_uses_inspector_for_repair(tmp_path):
+def test_explorer_uses_inspector_for_repair(tmp_path):
     bad_code = "raise RuntimeError('broken')"
     judge = ScriptedJudge(f"```python\n{bad_code}\n```")
     inspector = ScriptedJudge(f"```python\n{_GOOD_CODE}\n```")
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         judge=judge,
         inspector=inspector,
         sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False),
@@ -149,8 +149,8 @@ def test_m2_explorer_uses_inspector_for_repair(tmp_path):
     assert "Previous code" in inspector.prompts[0]
 
 
-def test_m2_explorer_reports_missing_backend(tmp_path):
-    agent = M2ExplorerAgent(sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False))
+def test_explorer_reports_missing_backend(tmp_path):
+    agent = ExploratoryAnalysisAgent(sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False))
 
     report = agent.explore_records(_rows())
 
@@ -200,14 +200,14 @@ def test_load_records_from_path_samples_across_files(tmp_path):
     assert {r["_source_dir"] for r in loaded} == {"agent-a", "agent-b"}
 
 
-def test_m2_explorer_explore_path(tmp_path):
+def test_explorer_explore_path(tmp_path):
     data_dir = tmp_path / "logs" / "agent-a"
     data_dir.mkdir(parents=True)
     (data_dir / "agent-a_20260701.json").write_text(
         "\n".join(json.dumps(r) for r in _rows()),
         encoding="utf-8",
     )
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         judge=ScriptedJudge(f"```python\n{_GOOD_CODE}\n```"),
         sandbox=ExperimentSandbox(workdir=tmp_path / "sandbox", cleanup=False),
     )

@@ -1,4 +1,4 @@
-"""Streamlit app for EvalVitals M2 chat outputs."""
+"""Streamlit app for EvalVitals exploratory-analysis and diagnosis-loop runs."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import streamlit as st
 
 from evalvitals.analysis.dashboard import load_run
 from evalvitals.reporting.stages import stage_specs_as_dicts
-from evalvitals.viz.labels import display_name, raw_hint
+from evalvitals.viz.labels import display_name
 
 # Eval-chart-style house theme (FAIL-red / PASS-slate palette, distribution-first
 # chart builders, short names + number/bin formatting). See eval_viz_theme.py and
@@ -246,7 +246,8 @@ def _render_problem_setting(
             n_pass = cb.get("PASS", n_pass)
 
     st.markdown("### Problem Setting")
-    _render_stage_map(active={"M1", "M2"} if not story else {"M1"})
+    if story:
+        _render_stage_map(active={"M1"})
     _render_storyboard_panel(storyboard, "problem_setting")
     if not _has_storyboard_panel(storyboard, "problem_setting"):
         st.markdown(
@@ -295,8 +296,10 @@ def _render_problem_setting(
                 if c not in {"case_id", "label", "is_fail", "model_yes", "truth_yes"}
             ]
             st.caption(
-                "Dashboard reconstructed the per-case M1 feature matrix. "
-                "M2 analyses compare these per-case signals against FAIL/PASS labels."
+                "Dashboard reconstructed the per-case feature matrix. "
+                "The analysis below compares these per-case signals against FAIL/PASS labels."
+                if story else
+                "Reconstructed per-case feature matrix from the sampled input records."
             )
             preview = pd.DataFrame({
                 "field": fields[:12],
@@ -612,54 +615,127 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
 
 
 def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
-    signals = _candidate_signals(report)
+    """The primary exploratory-analysis view: pure descriptive EDA, no hypotheses.
+
+    Each takeaway is rendered as title -> its supporting chart(s)/table(s) ->
+    the analysis paragraph, so a reader never has to hunt for the evidence
+    behind a claim in a separate section."""
+    st.markdown("### Exploratory Analysis")
     storyboard = _storyboard_panels(report, story=None)
-    st.markdown("### Analysis")
-    _render_stage_map(active={"M2"})
-    _render_storyboard_panel(storyboard, "analysis")
-    st.markdown(
-        f"""
-        <div class="ev-report-answer">
-          <div class="ev-brief-label">Analysis takeaway</div>
-          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(report))}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    _render_method_card(
-        "Standalone M2 exploration",
-        "Agent-authored EDA plus host-rendered deterministic chart specs.",
-        f"{len(signals)} candidate signal(s), {len(report.get('charts') or [])} chart spec(s).",
-        "Use these findings to choose confirmatory follow-up tests; exploratory charts are not causal evidence.",
-    )
-    _render_visual_plan(report)
-    if signals:
-        st.markdown("#### Candidate signal table")
-        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
-    _render_charts_and_plots(report, turn_dir)
-    _render_tables(report, turn_dir)
+    _render_storyboard_panel(storyboard, "problem_setting")
+
+    observations = [str(o) for o in (report.get("observations") or [])]
+    if observations:
+        with st.expander("Data overview", expanded=False):
+            for obs in observations:
+                st.markdown(f"- {obs}")
+
+    caveats = [str(c) for c in (report.get("caveats") or [])]
+    if caveats:
+        with st.expander("Caveats", expanded=False):
+            for caveat in caveats:
+                st.markdown(f"- {caveat}")
+
+    takeaways = [t for t in report.get("takeaways") or [] if isinstance(t, dict) and t.get("title")]
+    if not takeaways:
+        st.info(
+            "No structured takeaways were recorded for this report — showing the "
+            "raw charts and tables instead."
+        )
+        _render_charts_and_plots(report, turn_dir)
+        _render_tables(report, turn_dir)
+        return
+
+    charts_by_name = _chart_lookup(report)
+    plots_by_stem = _plot_lookup(report)
+    tables = report.get("tables") or {}
+    referenced_charts: set[str] = set()
+    referenced_tables: set[str] = set()
+
+    for i, takeaway in enumerate(takeaways, start=1):
+        st.markdown(
+            f'<div class="ev-card-title">Takeaway {i}: {_html_escape(str(takeaway.get("title", "")))}</div>',
+            unsafe_allow_html=True,
+        )
+        chart_names = [str(x) for x in takeaway.get("chart_names") or []]
+        table_names = [str(x) for x in takeaway.get("table_names") or []]
+        found_charts = []
+        for name in chart_names:
+            referenced_charts.add(name)
+            if name in charts_by_name:
+                found_charts.append(("chart", charts_by_name[name]))
+            elif name in plots_by_stem:
+                found_charts.append(("plot", plots_by_stem[name]))
+        if found_charts:
+            cols = st.columns(min(2, len(found_charts)))
+            for idx, (kind, item) in enumerate(found_charts):
+                with cols[idx % len(cols)]:
+                    if kind == "chart":
+                        _render_chart_card(item, turn_dir, key_prefix=f"takeaway{i}")
+                    else:
+                        _render_plot_card(item, turn_dir)
+        for name in table_names:
+            referenced_tables.add(name)
+            source = tables.get(name)
+            if source is None:
+                continue
+            df = _table_to_dataframe(source, turn_dir)
+            if df is not None:
+                st.dataframe(df, width="stretch", height=220)
+        if chart_names or table_names:
+            if not found_charts and not any(n in tables for n in table_names):
+                st.caption("(referenced evidence not found among this report's artifacts)")
+        if takeaway.get("analysis"):
+            st.markdown(_html_escape(str(takeaway["analysis"])))
+        if takeaway.get("caveat"):
+            st.caption(f"Caveat: {takeaway['caveat']}")
+        st.markdown("---")
+
+    orphan_charts = [c for name, c in charts_by_name.items() if name not in referenced_charts]
+    orphan_plots = [p for stem, p in plots_by_stem.items() if stem not in referenced_charts]
+    orphan_tables = {k: v for k, v in tables.items() if k not in referenced_tables}
+    if orphan_charts or orphan_plots or orphan_tables:
+        with st.expander("Additional charts & tables (not tied to a specific takeaway)", expanded=False):
+            _render_chart_grid(orphan_charts, turn_dir, key_prefix="orphan_chart")
+            if orphan_plots:
+                plot_cols = st.columns(2)
+                for idx, path in enumerate(orphan_plots):
+                    with plot_cols[idx % 2]:
+                        _render_plot_card(path, turn_dir)
+            for name, source in orphan_tables.items():
+                df = _table_to_dataframe(source, turn_dir)
+                if df is not None:
+                    st.markdown(f"**{display_name(name)}**")
+                    st.dataframe(df, width="stretch", height=220)
+
+    signals = _candidate_signals(report)
+    with st.expander("Run details", expanded=False):
+        st.caption(
+            f"Agent-authored EDA plus host-rendered deterministic chart specs. "
+            f"{len(signals)} candidate signal(s), {len(report.get('charts') or [])} chart spec(s), "
+            f"{len(takeaways)} takeaway(s)."
+        )
+        _render_visual_plan(report)
 
 
 def _render_standalone_artifacts(report: dict[str, Any], turn_dir: Path) -> None:
-    storyboard = _storyboard_panels(report, story=None)
     st.markdown("### Artifacts")
-    _render_stage_map(active={"M2"})
-    _render_storyboard_panel(storyboard, "artifacts")
     st.caption(
-        "M2 is exploratory data analysis only. Candidate signals and charts are "
-        "inputs for later hypothesis formation, not M3 hypotheses or M5 tests."
+        "This is descriptive exploratory analysis only — no hypotheses were "
+        "generated or validated. The items below are optional inputs for a "
+        "separate, downstream confirmatory pipeline, not conclusions."
     )
-    claims = [c for c in report.get("claims") or [] if isinstance(c, dict)]
+    signals = _candidate_signals(report)
     tests = report.get("recommended_confirmatory_tests") or []
-    if claims:
-        st.markdown("#### Exploratory claims to carry forward")
-        st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
+    if signals:
+        st.markdown("#### Candidate signals (optional follow-up)")
+        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
     if tests:
         st.markdown("#### Suggested next steps")
         for item in tests:
             st.markdown(f"- {item}")
-    if not claims and not tests:
-        st.info("No carry-forward claims or suggested next steps were recorded.")
+    if not signals and not tests:
+        st.info("No candidate signals or suggested next steps were recorded.")
     with st.expander("Inspect generated artifacts", expanded=True):
         _render_artifacts(report, turn_dir)
 
@@ -1853,7 +1929,7 @@ def _render_header(root: Path, turn: dict[str, Any], report: dict[str, Any]) -> 
         f"""
         <div class="ev-header">
           <div>
-            <div class="ev-kicker">Standalone M2 Analysis</div>
+            <div class="ev-kicker">Exploratory Data Analysis</div>
             <h1>{_html_escape(question)}</h1>
             <div class="ev-path">{_html_escape(str(root))}</div>
           </div>
@@ -1902,64 +1978,31 @@ def _render_top_metrics(report: dict[str, Any]) -> None:
         st.error(report["error"])
 
 
-def _render_overview(report: dict[str, Any]) -> None:
-    left, right = st.columns([1.25, 1], gap="large")
+def _chart_lookup(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map a chart's ``name`` (falling back to ``title``) -> its spec dict."""
+    out: dict[str, dict[str, Any]] = {}
+    for c in report.get("charts", []) or []:
+        if not isinstance(c, dict):
+            continue
+        key = str(c.get("name") or c.get("title") or "")
+        if key:
+            out[key] = c
+    return out
 
-    with left:
-        st.markdown("### Observations")
-        observations = report.get("observations") or []
-        if observations:
-            for i, obs in enumerate(observations, start=1):
-                st.markdown(
-                    f"""
-                    <div class="ev-note">
-                      <div class="ev-note-index">{i}</div>
-                      <div>{_html_escape(str(obs))}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption("No observations.")
 
-        tests = report.get("recommended_confirmatory_tests") or []
-        if tests:
-            st.markdown("### Confirmatory Next Steps")
-            for item in tests:
-                st.markdown(f"- {item}")
+def _plot_lookup(report: dict[str, Any]) -> dict[str, str]:
+    """Map an agent-authored plot's filename stem -> its path, so a takeaway
+    can reference a PNG under ``figures/`` by its short name."""
+    return {Path(str(p)).stem: str(p) for p in (report.get("plots") or [])}
 
-    with right:
-        st.markdown("### Candidate Signals")
-        signals = report.get("candidate_signals") or []
-        if signals:
-            for signal in signals:
-                if not isinstance(signal, dict):
-                    st.markdown(f"- {signal}")
-                    continue
-                raw = str(signal.get("name") or "Signal")
-                name = str(signal.get("display_name") or display_name(raw))
-                rationale = str(signal.get("rationale") or "")
-                suggested = str(signal.get("suggested_test") or "")
-                raw = raw_hint(raw)
-                st.markdown(
-                    f"""
-                    <div class="ev-signal">
-                      <div class="ev-signal-title">{_html_escape(name)}</div>
-                      <div class="ev-signal-body">{_html_escape(rationale)}</div>
-                      <div class="ev-signal-test">{_html_escape(suggested)}</div>
-                      <div class="ev-signal-test">{_html_escape(raw)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption("No candidate signals.")
 
-        caveats = report.get("caveats") or []
-        if caveats:
-            with st.expander("Caveats", expanded=True):
-                for caveat in caveats:
-                    st.markdown(f"- {caveat}")
+def _render_chart_grid(charts: list[dict[str, Any]], turn_dir: Path, *, key_prefix: str, columns: int = 2) -> None:
+    if not charts:
+        return
+    cols = st.columns(columns)
+    for idx, chart in enumerate(charts):
+        with cols[idx % columns]:
+            _render_chart_card(chart, turn_dir, key_prefix=f"{key_prefix}{idx}")
 
 
 def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
@@ -1972,10 +2015,7 @@ def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
 
     if charts:
         st.markdown("### Interactive Charts")
-        chart_cols = st.columns(2)
-        for idx, chart in enumerate(charts):
-            with chart_cols[idx % 2]:
-                _render_chart_card(chart, turn_dir)
+        _render_chart_grid(charts, turn_dir, key_prefix="chart_and_plot")
 
     if plots:
         st.markdown("### Generated Figures")
@@ -2000,7 +2040,7 @@ def _render_chart_card(
     cls = "ev-card-title" if heading_level == "title" else "ev-card-subtitle"
     st.markdown(f'<div class="{cls}">{_html_escape(title)}</div>', unsafe_allow_html=True)
 
-    # Prefer the host-rendered PNG (deterministic, what M3 saw) when present.
+    # Prefer the host-rendered PNG (deterministic, from the chart spec) when present.
     fig_path = chart.get("figure_path")
     if prefer_rendered_artifact and fig_path:
         p = _resolve_artifact_path(fig_path, turn_dir)

@@ -110,31 +110,42 @@ ADDITIONALLY you MAY draw richer figures (box / violin / heatmap / scatter-matri
 directly as PNG under "figures/" and list them in "plots"; a figure-styling skill
 (when available) will make these publication-quality.
 
-Report/dashboard contract:
-- Think in three reader-facing panels, even though you only emit JSON artifacts:
-  (1) Problem Setting = dataset/run context and what the outcome (if any) means;
-  (2) Analysis = methods, evidence/charts, and takeaways; (3) Hypotheses &
-  Artifacts = follow-up questions and decision evidence.
-- Emit this structure as "dashboard_storyboard": a list of panel dicts
-  {{"id","title","stages","summary","items","artifact_refs"}}. The Streamlit
-  dashboard will render this artifact; do not rely on hard-coded UI copy.
-- For each important analysis method, make the relationship explicit in
-  chart_readings or claims: method -> evidence/chart -> takeaway.
-- "stages" is free text for the dashboard's tag chips. If this data or question
-  is from an EvalVitals M1-M5 diagnosis run (mentions probes/analyzers/M1-M5, or
-  the outcome is a diagnostic pass/fail label), use M1=measurement/features,
-  M2=confirmatory statistics, M3=hypotheses, M4=mechanism test, M5=repair/surgery
-  test. Otherwise use plain labels like "context"/"analysis"/"follow-up" — do
-  not force M-stage language onto data that isn't from that pipeline.
+This is PURE EXPLORATORY DATA ANALYSIS. Describe what the data shows. Do NOT
+propose causal explanations, do NOT claim anything is "confirmed" or
+"validated", and do NOT frame findings as hypotheses to be tested — hypothesis
+generation and validation are a different, separate step that this tool does
+not perform. Stick to descriptive, evidence-grounded statements.
 
-Discovery outputs:
-- does NOT claim causal/statistical confirmation; this is exploratory only
-- after creating charts, add "chart_readings": one short dict per important
-  visual with {{"chart": "<name/title>", "reading": "<what a human should see>",
+Takeaways (THE PRIMARY OUTPUT — this is what a reader sees first):
+- "takeaways": a ranked list of 4-8 dicts, most important/surprising finding
+  first, each shaped exactly like:
+    {{"title": "<one punchy sentence — the finding itself, with real numbers>",
+      "chart_names": ["<name(s) from 'charts' or 'plots' that support it>"],
+      "table_names": ["<key(s) from 'tables' that support it, if any>"],
+      "analysis": "<2-4 sentences explaining WHY this matters, citing the
+                    actual numbers/columns behind the chart(s)>",
+      "caveat": "<what this does NOT show, or '' if nothing notable>"}}
+  EVERY important chart/plot you produce should be referenced by at least one
+  takeaway's "chart_names" — never leave a chart orphaned with no explanation,
+  and never write a takeaway with no supporting chart/table unless the data
+  genuinely has none to offer (rare).
+
+Report/dashboard contract:
+- Emit ONE "dashboard_storyboard" panel dict (a list with one entry) orienting
+  the reader on the data/question before the takeaways:
+    {{"id": "problem_setting", "title": "Problem Setting", "summary": "...",
+      "items": ["..."], "artifact_refs": ["data_profile"]}}
+  Do not add "analysis" or "hypotheses" panels — "takeaways" already covers
+  that ground, and this tool does not generate hypotheses.
+
+Secondary fields (for programmatic consumers such as a downstream confirmatory
+pipeline — NOT the primary reader-facing narrative; keep these terse):
+- add "chart_readings": one short dict per important visual with
+  {{"chart": "<name/title>", "reading": "<what a human should see>",
   "do_not_infer": "<what this chart cannot prove>"}}.
 - add "claims" only for carefully worded descriptive/confirmable statements. Each
   claim must cite chart/signal identifiers in "evidence_ids"; set status to
-  "descriptive" unless the host later confirms it.
+  "descriptive" (never "supported" — this tool does not confirm anything).
 - add "critique": agent self-audit notes about leakage, small n, double-dipping,
   missingness, misleading plot choices, or alternative explanations.
 - Never use raw internal IDs like "generated_probe1_false_detection" as user-facing
@@ -142,8 +153,9 @@ Discovery outputs:
   false-detection flag", and demote probe-derived fields to sanity-check
   evidence rather than explanatory findings.
 - PREFERRED: for any composite / threshold / interaction signal that is a
-  DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so the host can
-  compute it on a HELD-OUT split and confirm it rigorously:
+  DETERMINISTIC FUNCTION of the numeric columns, attach a "recipe" so a
+  downstream confirmatory pipeline can compute it on a HELD-OUT split later
+  (this tool itself does not run that confirmation):
     "recipe": {{"name": "<new signal key>", "kind": "expr",
                 "expr": "<boolean/numeric expression over the numeric columns above>"}}
   The expr may use the columns BY NAME, comparisons (< <= > >= == !=), and/or/not,
@@ -155,9 +167,9 @@ Discovery outputs:
   from the rows, as ONE of these shapes:
     {{"kind": "two_group", "a": [0/1, ...], "b": [0/1, ...]}}   # is_fail indicators among signal-ABSENT (a) vs signal-PRESENT (b) cases
     {{"kind": "paired_binary", "b": <int>, "c": <int>}}          # discordant counts of a paired intervention (b = flips the good way, c = the bad way)
-  Do NOT emit "reject"/"e_value"/"p_value" anywhere — the HOST recomputes the
-  verdict from "recipe"/"sufficient" with its validated, multiplicity-aware core; a
-  self-declared verdict is ignored. Omit both for descriptive-only signals.
+  Do NOT emit "reject"/"e_value"/"p_value" anywhere — this tool never adjudicates
+  a verdict itself; a self-declared verdict is ignored. Omit both for
+  descriptive-only signals.
 - prints the final result as the LAST stdout line exactly like (note "charts" is a
   RICH list here, one entry per CSV you wrote). The example below illustrates the
   JSON SHAPE using a binary-outcome dataset; KEEP THE SAME KEYS but replace the
@@ -176,6 +188,13 @@ Discovery outputs:
         "required_columns": ["obj_size", "label"],
         "rationale": "Ordered bins show risk trend without assuming linearity."}}
     ],
+    "takeaways": [
+      {{"title": "Small objects fail far more often (18% vs 4%, n=120).",
+        "chart_names": ["failrate_by_objsize"],
+        "table_names": [],
+        "analysis": "The fail rate rises sharply below obj_size=40 (18% vs a 4% baseline above it), across 120 rows. This is the single strongest split in the ranked-discriminator chart.",
+        "caveat": "Descriptive only — object size and other factors may be confounded; no causal claim is made."}}
+    ],
     "chart_readings": [
       {{"chart": "failrate_by_objsize",
         "reading": "Failure rate rises in the smallest object-size bins.",
@@ -186,22 +205,14 @@ Discovery outputs:
         "text": "Small object size is a descriptive failure correlate.",
         "status": "descriptive",
         "evidence_ids": ["chart:failrate_by_objsize"],
-        "interpretation": "Worth confirming as a deterministic signal.",
-        "do_not_infer": "Not causal until M5/M4 support it."}}
+        "interpretation": "A candidate signal for downstream confirmatory analysis.",
+        "do_not_infer": "Not causal; not yet confirmed by any statistical test."}}
     ],
     "dashboard_storyboard": [
-      {{"id": "problem_setting", "title": "Problem Setting", "stages": ["M1"],
-        "summary": "Labeled FAIL/PASS cases with per-case signals from M1.",
+      {{"id": "problem_setting", "title": "Problem Setting",
+        "summary": "Labeled FAIL/PASS cases with per-case signals.",
         "items": ["FAIL means false positive on absent object."],
-        "artifact_refs": ["data_profile"]}},
-      {{"id": "analysis", "title": "Analysis", "stages": ["M2"],
-        "summary": "Held-out signal testing plus chart readings.",
-        "items": ["Method: compare FAIL/PASS effect sizes.", "Takeaway: ..."],
-        "artifact_refs": ["candidate_signals", "charts"]}},
-      {{"id": "hypotheses_artifacts", "title": "Hypotheses & Artifacts",
-        "stages": ["M3", "M4", "M5"],
-        "summary": "Candidate mechanisms and follow-up tests.",
-        "items": ["Test whether ..."], "artifact_refs": ["claims"]}}
+        "artifact_refs": ["data_profile"]}}
     ],
     "candidate_signals": [
       {{"name": "...", "display_name": "<human-readable signal label>",
@@ -259,8 +270,37 @@ Rewrite the script. It must read "{input_filename}" and print a final
 
 
 @dataclass
+class Takeaway:
+    """One finding paired with its supporting evidence — the primary UI unit.
+
+    The dashboard renders each takeaway as: title -> chart(s)/table(s) ->
+    analysis, so a reader never sees an orphaned chart or a claim with no
+    evidence next to it. Always descriptive: this agent does not generate or
+    validate hypotheses, so a takeaway is a description of the data, not a
+    claim of causation or statistical confirmation.
+    """
+
+    title: str = ""
+    analysis: str = ""
+    chart_names: list[str] = field(default_factory=list)
+    table_names: list[str] = field(default_factory=list)
+    caveat: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "analysis": self.analysis,
+            "chart_names": self.chart_names,
+            "table_names": self.table_names,
+            "caveat": self.caveat,
+        }
+
+
+@dataclass
 class CandidateSignal:
-    """A signal worth testing later in confirmatory M2.
+    """A signal worth testing later with a confirmatory pipeline
+    (:class:`~evalvitals.analysis.stats_agent.StatsAnalysisAgent`, or the
+    diagnosis loop) — not something this agent tests or confirms itself.
 
     The explorer PROPOSES this signal; it has no adjudication authority. When the
     explorer attaches host-adjudicable ``sufficient`` statistics, the host
@@ -309,11 +349,16 @@ class CandidateSignal:
 
 @dataclass
 class ExploratoryAnalysisReport:
-    """Output of the standalone exploratory M2 backend."""
+    """Output of the exploratory analysis agent: a data profile, a ranked list
+    of takeaways (each paired with its supporting chart/table), and the raw
+    charts/tables/code behind them. Purely descriptive — this agent does not
+    generate or validate hypotheses; see ``StatsAnalysisAgent`` for that.
+    """
 
     question: str = ""
     ok: bool = False
     observations: list[str] = field(default_factory=list)
+    takeaways: list[Takeaway] = field(default_factory=list)
     visual_plan: list[dict[str, Any]] = field(default_factory=list)
     chart_readings: list[dict[str, Any]] = field(default_factory=list)
     dashboard_storyboard: list[dict[str, Any]] = field(default_factory=list)
@@ -346,6 +391,7 @@ class ExploratoryAnalysisReport:
             "question": self.question,
             "ok": self.ok,
             "observations": self.observations,
+            "takeaways": [t.to_dict() for t in self.takeaways],
             "visual_plan": self.visual_plan,
             "chart_readings": self.chart_readings,
             "dashboard_storyboard": self.dashboard_storyboard,
@@ -368,7 +414,7 @@ class ExploratoryAnalysisReport:
         }
 
 
-class M2ExplorerAgent:
+class ExploratoryAnalysisAgent:
     """Backend-only exploratory analysis agent.
 
     Args:
@@ -448,7 +494,7 @@ class M2ExplorerAgent:
                 raw_outputs.append(raw)
             except Exception as exc:  # noqa: BLE001
                 last_error = f"code writing failed: {exc}"
-                logger.warning("M2ExplorerAgent: %s", last_error)
+                logger.warning("ExploratoryAnalysisAgent: %s", last_error)
                 break
 
             if not code.strip():
@@ -857,6 +903,17 @@ def _report_from_sandbox(
         )
 
     plots = _normalize_plot_paths(parsed.get("plots", []), workdir)
+    takeaways = [
+        Takeaway(
+            title=str(item.get("title", "")),
+            analysis=str(item.get("analysis", "")),
+            chart_names=[str(x) for x in item.get("chart_names", []) or []],
+            table_names=[str(x) for x in item.get("table_names", []) or []],
+            caveat=str(item.get("caveat", "")),
+        )
+        for item in parsed.get("takeaways", []) or []
+        if isinstance(item, dict) and item.get("title")
+    ]
     signals = [
         CandidateSignal(
             name=str(item.get("name", "")),
@@ -874,6 +931,7 @@ def _report_from_sandbox(
             question=question,
             ok=True,
             observations=[str(x) for x in parsed.get("observations", []) or []],
+            takeaways=takeaways,
             visual_plan=_normalize_visual_plan(parsed.get("visual_plan", [])),
             chart_readings=_normalize_list_of_dicts(parsed.get("chart_readings", [])),
             dashboard_storyboard=_normalize_list_of_dicts(parsed.get("dashboard_storyboard", [])),

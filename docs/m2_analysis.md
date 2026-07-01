@@ -1,18 +1,18 @@
-# M2 Statistical Analysis
+# Exploratory Analysis & Confirmatory Statistics
 
-M2 is EvalVitals' statistical analysis layer. It can run inside the full
-M1-M5 diagnosis loop, or as a standalone analyst over an existing results
-directory.
+EvalVitals' data-analysis layer (`evalvitals.analysis`) has two distinct
+tools, usable standalone or inside the full M1-M5 diagnosis loop:
 
-There are two standalone modes:
-
-- `evalvitals explore`: no-code exploratory analysis over JSON/JSONL logs (a
-  single-shot run; there is no interactive REPL).
-- `StatsAnalysisAgent`: confirmatory statistical tests over standardized records.
+- `evalvitals explore` (`ExploratoryAnalysisAgent`): no-code, general-purpose
+  exploratory data analysis over JSON/JSONL logs — profile the data, find
+  patterns, produce takeaways with charts. Purely descriptive: it does not
+  generate or validate hypotheses.
+- `StatsAnalysisAgent`: confirmatory statistical tests over standardized
+  records — effect sizes, confidence intervals, e-values, FDR-aware decisions.
 
 Use `explore` first when you do not yet know which signals matter. Promote
-the useful candidate signals into `StatsAnalysisAgent` when you need effect
-sizes, confidence intervals, e-values, and FDR-aware decisions.
+the useful candidate signals into `StatsAnalysisAgent` when you need a
+confirmatory verdict.
 
 ## Install
 
@@ -77,7 +77,7 @@ prompt adapts its framing and standard chart battery accordingly:
 
 Outcome detection is name-heuristic by default (`label`, `outcome`, `target`,
 `is_correct`, ...). Pass `--outcome-col <name>` (CLI) or
-`outcome_col="<name>"` (`M2ExplorerAgent.explore_records` /
+`outcome_col="<name>"` (`ExploratoryAnalysisAgent.explore_records` /
 `explore_path`) to point it at an arbitrarily-named target column, e.g. a
 continuous metric like `revenue` or `yield_pct` that no heuristic would catch.
 
@@ -109,17 +109,18 @@ evalvitals_explore_output/
 
 Important files:
 
-- `exploratory_report.json`: structured answer, including summary, metrics,
-  candidate signals (with host-adjudicated verdicts when applicable), charts,
-  tables, limitations, and next questions.
+- `exploratory_report.json`: structured answer — a ranked list of
+  `takeaways` (each paired with the chart/table that supports it), plus
+  observations, candidate signals (with host-adjudicated verdicts when
+  applicable), charts, and tables.
 - `analysis.py`: generated analysis code that was actually executed.
 - `records.json`: sampled records given to the generated script.
 - `figures/` and `tables/`: rendered charts (host-side, from spec + CSV) and
   tabular artifacts, if any.
 
-The exploratory report is intentionally discovery-oriented. It is allowed to
-surface hypotheses, patterns, suspicious correlations, and suggested follow-up
-tests. It is not the final confirmatory statistics layer.
+The exploratory report is intentionally discovery-oriented and purely
+descriptive: patterns, correlations, and candidate signals, not hypotheses or
+causal claims. It is not the confirmatory statistics layer.
 
 ### Figure styling (Agent Skills)
 
@@ -185,35 +186,45 @@ single-rate e-values. It applies e-BH FDR correction and returns a
 Standalone explore mode does not require a standardized `StatsInput`. It accepts
 messy logs and uses a local coding agent to inspect their shape.
 
-## Generalized M2 Core
+## Generalized Analysis Core
 
-M2 now has a reusable analysis core beneath the M1-M5 loop:
+Both tools share a reusable profiling core (`evalvitals.analysis.profile`):
+
+```text
+records
+  -> DatasetProfile        # column types, roles, missingness, grain
+  -> describe_outcome()    # binary / categorical / continuous / none — feeds
+                            # ExploratoryAnalysisAgent's adaptive framing
+```
+
+The confirmatory side builds on the same `DatasetProfile` for its own
+ranked, estimand-explicit test plan:
 
 ```text
 records / StatsInput
-  -> DatasetProfile        # column types, roles, missingness, grain
+  -> DatasetProfile
   -> AnalysisPlan          # ranked estimands, not first-N column order
   -> EvidenceResult        # effect, CI, p/e-value, correction family
   -> MultiplicityController# BH for p-values, e-BH for e-values
 ```
 
-The diagnosis loop is one consumer of this core. Loop data is still adapted into
-`StatsInput`, but standalone callers can profile records directly with
-`profile_records()` and can inspect the generated plan with `plan_stats_input()`.
-Per-case signal tests now produce exact permutation p-values and enter a BH
-family, while paired/e-value tests continue to use e-BH. Reports preserve the
-legacy `rejected_tools` field for M1-M5 and add precise `rejected_result_keys`
-plus per-family metadata for generalized analysis audits.
+The diagnosis loop is one consumer of the confirmatory core. Loop data is
+still adapted into `StatsInput`, but standalone callers can profile records
+directly with `profile_records()` and can inspect the generated plan with
+`plan_stats_input()`. Per-case signal tests now produce exact permutation
+p-values and enter a BH family, while paired/e-value tests continue to use
+e-BH. Reports preserve the legacy `rejected_tools` field for M1-M5 and add
+precise `rejected_result_keys` plus per-family metadata for audits.
 
 For p-value signal families, the raw effect/CI verdict remains available to the
 M1-M5 loop while `fdr_corrected` marks whether the claim survived BH. Fused and
-standalone analysis should use the FDR metadata for controlled claims; M5 can
-fall back to raw per-case comparison when generalized M2 only produced
-descriptive/global results for a hypothesis.
+standalone analysis should use the FDR metadata for controlled claims; the
+loop's hypothesis-testing stage can fall back to raw per-case comparison when
+the confirmatory pass only produced descriptive/global results.
 
 The full diagnosis loop and confirmatory `StatsAnalysisAgent` do benefit from
-standardized records because M2, M5, logging, and downstream tools need stable
-contracts:
+standardized records because the loop's stats, hypothesis-testing, logging,
+and downstream tools need stable contracts:
 
 ```text
 M1 findings / user records
@@ -229,8 +240,8 @@ Use this rule of thumb:
 - For exploratory questions, use `evalvitals explore` directly on result logs.
 - For claims you want the loop to consume, standardize and run
   `StatsAnalysisAgent`.
-- For M1-M5 automation, keep the standardized contract so M2/M5 can share
-  evidence safely.
+- For M1-M5 automation, keep the standardized contract so the loop's stages
+  can share evidence safely.
 
 ## ChestAgentBench Example
 
@@ -255,7 +266,7 @@ full command line.
 
 `--backend antigravity` uses the local coding-agent path currently used by this
 repository. The generated code runs in EvalVitals' experiment sandbox and writes
-machine-readable JSON back to the M2 wrapper.
+machine-readable JSON back to the exploratory-analysis wrapper.
 
 By default, `tool_calls_*.json` files are skipped because they can dominate log
 volume. Add `--include-tool-calls` only when you specifically want

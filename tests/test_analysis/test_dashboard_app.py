@@ -143,6 +143,59 @@ def test_standalone_m2_dashboard_does_not_show_hypothesis_tab(tmp_path):
     assert "Hypotheses & Artifacts" not in blob
 
 
+def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_path):
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables" / "yield_by_temp.csv").write_text(
+        "temp_bin,mean_yield\nlow,70.1\nhigh,88.4\n", encoding="utf-8"
+    )
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "question": "What predicts yield?",
+        "observations": ["30 batches, no missing values."],
+        "takeaways": [{
+            "title": "Higher temperature batches yield more (70.1% vs 88.4%).",
+            "chart_names": ["yield_by_temp"],
+            "table_names": [],
+            "analysis": "Mean yield rises from 70.1% in low-temperature batches to 88.4% in high-temperature ones.",
+            "caveat": "Descriptive only; temperature and pressure are correlated.",
+        }],
+        "charts": [{
+            "name": "yield_by_temp", "kind": "line",
+            "data": "tables/yield_by_temp.csv", "x": "temp_bin", "y": "mean_yield",
+            "title": "Mean yield by temperature bin",
+        }],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # the takeaway headline, its analysis, and its caveat all render together
+    assert "Takeaway 1: Higher temperature batches yield more" in blob
+    assert "Mean yield rises from 70.1%" in blob
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "Caveat: Descriptive only" in captions
+    # its supporting chart was found and rendered, not left orphaned
+    assert "referenced evidence not found" not in captions
+    assert "Mean yield by temperature bin" in blob  # the chart's own title rendered
+    # no leftover M2/hypothesis-generation branding in the standalone view
+    assert "Standalone M2" not in blob
+    assert "M3 hypotheses" not in blob
+    assert "hypothesis formation" not in blob
+
+
+def test_standalone_dashboard_falls_back_gracefully_with_no_takeaways(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "observations": ["No structured takeaways in this older report."],
+        "charts": [],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(i.value) for i in at.info)
+    assert "no structured takeaways" in blob.lower()
+
+
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
     logs = tmp_path / "logs_m2_5"
     logs.mkdir(parents=True)

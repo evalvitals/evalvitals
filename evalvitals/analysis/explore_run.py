@@ -7,7 +7,7 @@ deterministically, and everything is persisted (optionally a dashboard opens).
 
 Flow::
 
-    M2ExplorerAgent.explore_path        # free-form EDA (a CLI coding agent)
+    ExploratoryAnalysisAgent.explore_path        # free-form EDA (a CLI coding agent)
       -> adjudicate_report              # host recomputes verdicts (in-sample)
       -> render_chart_specs             # spec + CSV -> PNG, host-side
       -> write_report_artifacts         # report.json + figures/ + tables/ + code
@@ -23,7 +23,7 @@ from typing import Any
 
 from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
-from evalvitals.analysis.explorer import M2ExplorerAgent
+from evalvitals.analysis.explorer import ExploratoryAnalysisAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 from evalvitals.viz.renderer import render_chart_specs
 
@@ -79,7 +79,7 @@ def run_explore(
         skills=tuple(skill_dirs),
         allow_skills=allow_skills or bool(skill_dirs),
     )
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         cli_config=cli_config,
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,

@@ -191,7 +191,7 @@ def run_fused_analysis(
     Args:
         records:        list of row dicts (id/label/signal columns).
         explorer:       an object with ``explore_records(rows, question=...) ->
-                        ExploratoryAnalysisReport`` (e.g. :class:`M2ExplorerAgent`).
+                        ExploratoryAnalysisReport`` (e.g. :class:`ExploratoryAnalysisAgent`).
         stats_agent:    optional :class:`StatsAnalysisAgent`; one is built with a
                         high signal cap when omitted so the whole family is tested.
         confirm_split:  fraction held out for confirmation (0 = in-sample fallback).

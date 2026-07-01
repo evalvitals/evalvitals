@@ -11,7 +11,7 @@ from evalvitals.analysis.fused_pipeline import (
 
 
 class _FakeExplorer:
-    """Stand-in for M2ExplorerAgent: returns scripted candidates, records what it saw."""
+    """Stand-in for ExploratoryAnalysisAgent: returns scripted candidates, records what it saw."""
 
     def __init__(self, candidates, *, observations=(), recommended=(), dashboard_storyboard=()):
         self._candidates = candidates

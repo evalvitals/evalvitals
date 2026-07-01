@@ -354,10 +354,10 @@ pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
 ```
 
-See [docs/m2_analysis.md](docs/m2_analysis.md) for the standalone M2 workflow,
-including the single-shot explore entry, dashboard review, generated artifacts,
-and when to promote exploratory signals into confirmatory `StatsAnalysisAgent`
-tests.
+See [docs/m2_analysis.md](docs/m2_analysis.md) for the standalone exploratory
+analysis workflow, including the single-shot explore entry, dashboard review,
+generated artifacts, and when to promote candidate signals into confirmatory
+`StatsAnalysisAgent` tests.
 
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 

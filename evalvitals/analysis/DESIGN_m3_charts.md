@@ -21,7 +21,7 @@
 - **机制语言 informs *哪个* 假设，不 informs *是否* 为真**：chart 启发的假设照走 M5(gated on M2)+M4+e-BH。
 - **explorer 不在循环内重跑**：循环消费 Step 1 的 explore 报告（守 split：explorer 只见 EXPLORE 留出集）。
 - **图表宿主确定性渲染**：从 chart spec + CSV 渲染，不执行 LLM 写的绘图代码。
-- **一引擎一 viz 核**：`M2ExplorerAgent`（探索）+ `render_chart_specs`（渲染）+ `dashboard.load_run`（加载）三者唯一，三入口共用。
+- **一引擎一 viz 核**：`ExploratoryAnalysisAgent`（探索）+ `render_chart_specs`（渲染）+ `dashboard.load_run`（加载）三者唯一，三入口共用。
 
 ---
 
@@ -29,7 +29,7 @@
 
 | 现有件 | 是什么 | 本设计的处置 |
 |---|---|---|
-| `cli.py:main`（`evalvitals-m2-explore`，:13） | **单轮**探索：`M2ExplorerAgent.explore_path` 跑一次写产物 | **保留+增强** → `evalvitals explore`，加 adjudicate+render+`--dashboard` |
+| `cli.py:main`（`evalvitals-m2-explore`，:13） | **单轮**探索：`ExploratoryAnalysisAgent.explore_path` 跑一次写产物 | **保留+增强** → `evalvitals explore`，加 adjudicate+render+`--dashboard` |
 | `cli.py:chat_main`（:90）+ `chat.py:M2ChatShell` | **交互 REPL**：`input()` 多轮循环 | **退役删除**（REPL 是 chat 唯一独有；非交互已被 explore 覆盖） |
 | `run_fused.py`（examples） | **单轮** explore→bridge→confirm | 保留；加 `--dashboard` |
 | `dashboard.py:load_session` | 只读 chat **会话**（`turn_*/exploratory_report.json`） | **泛化** → `load_run`（读单轮产物：explore 输出 / loop run，去掉 turn_* 会话） |
@@ -44,13 +44,13 @@
 
 ```
 共享核（唯一一套）
-  M2ExplorerAgent                         探索引擎（不变）
+  ExploratoryAnalysisAgent                         探索引擎（不变）
   viz/renderer.py: render_chart_specs  spec+CSV → PNG，宿主确定性
   analysis/dashboard.py: load_run(dir)    读单轮产物(explore 输出 / loop run) → 渲染
 
 三条单轮入口（都用上面的核）
   ① evalvitals explore <results> [--dashboard]      ← 替代 chat（非交互）
-       M2ExplorerAgent.explore_path → adjudicate(有label) → render_chart_specs
+       ExploratoryAnalysisAgent.explore_path → adjudicate(有label) → render_chart_specs
        → 写产物 explore_report.json + figures/ → 可选 launch_dashboard
   ② run_fused.py [--dashboard]                       ← 单轮 explore→bridge→confirm
        run_fused_analysis → render_chart_specs → fused_report.json + figures/
@@ -66,7 +66,7 @@
   ✗ chat.py: M2ChatShell（REPL）  ✗ cli.py: chat_main  ✗ dashboard.load_session（turn_* 会话）
 ```
 
-**角色一句话**：探索=M2ExplorerAgent(唯一)；渲染=render_chart_specs(宿主)；看图提假设=M3；渲染面板=load_run；谁**绝不**碰图表=M2/M5/Fix；交互 REPL=**没有了**。
+**角色一句话**：探索=ExploratoryAnalysisAgent(唯一)；渲染=render_chart_specs(宿主)；看图提假设=M3；渲染面板=load_run；谁**绝不**碰图表=M2/M5/Fix；交互 REPL=**没有了**。
 
 ---
 
@@ -95,7 +95,7 @@ def load_run(path) -> dict:
 ```python
 # evalvitals/analysis/explore_run.py（新；吸收 chat.py 的 write_report_artifacts/_verdict_suffix）
 def run_explore(path, *, question, out, backend, dashboard=False, ...) -> int:
-    report = M2ExplorerAgent(cli_config=...).explore_path(path, question=question)
+    report = ExploratoryAnalysisAgent(cli_config=...).explore_path(path, question=question)
     adjudicate_report(report, split_label="in_sample")          # Phase A 宿主裁决(有label时)
     report.charts = render_chart_specs(report.charts, out/"tables", out/"figures")  # A
     write_report_artifacts(report, out)
@@ -208,7 +208,7 @@ claim must still be tested downstream):
 
 ## 8. 开放问题 / 风险 / 迁移
 
-- **chat 退役清单**（删/移）：删 `chat.py:M2ChatShell` + `cli.py:chat_main` + `dashboard.load_session`；移 `write_report_artifacts`/`_verdict_suffix` → `explore_run.py`；留 `M2ExplorerAgent`/`run_fused_analysis`/`adjudicate_report`。**core 分析环节(M1/M2/M3/M5)零改动。**
+- **chat 退役清单**（删/移）：删 `chat.py:M2ChatShell` + `cli.py:chat_main` + `dashboard.load_session`；移 `write_report_artifacts`/`_verdict_suffix` → `explore_run.py`；留 `ExploratoryAnalysisAgent`/`run_fused_analysis`/`adjudicate_report`。**core 分析环节(M1/M2/M3/M5)零改动。**
 - **explore 是否覆盖所有 chat 用例**：chat 唯一独有的是多轮对话；其余(单 question 探索、写产物、dashboard)`evalvitals explore` 全覆盖。需确认无脚本依赖 `evalvitals chat` 入口名（可留一个 `chat`→`explore` 的弃用别名一个版本周期）。
 - **循环信号的图误导 M3**：会启发(如 deco_hallu probe1≈label)，但 M5/M4/e-BH 兜底（实测：语言先验假设被 M4 确证、best-of-N 修复被 e-BH 拒）。把 explorer 自己的循环 caveat 一并呈现给 M3。
 - **多模态 judge 图像支持**：`ClaudeModel.generate` 接受 `images=`，但 claude CLI 实际是否消费图像需实测；不支持则 M3 退化为读图的文字描述（仍有用）。

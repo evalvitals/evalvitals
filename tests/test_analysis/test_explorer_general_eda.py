@@ -1,4 +1,4 @@
-"""M2ExplorerAgent must adapt its framing to the data's actual outcome shape:
+"""ExploratoryAnalysisAgent must adapt its framing to the data's actual outcome shape:
 binary (the old M1 FAIL/PASS behavior), multi-class categorical, continuous,
 or no outcome at all (pure unsupervised EDA). These tests guard against the
 prompt silently reverting to a hardcoded FAIL/PASS story for data that isn't
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from evalvitals.analysis.explorer import M2ExplorerAgent, _framing_block, _profile_rows
+from evalvitals.analysis.explorer import ExploratoryAnalysisAgent, _framing_block, _profile_rows
 from evalvitals.analysis.profile import describe_outcome, profile_records
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
@@ -51,7 +51,7 @@ class _RecordingJudge:
 
 def _run(rows, *, outcome_col=None, tmp_path):
     judge = _RecordingJudge()
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         judge=judge, sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False)
     )
     report = agent.explore_records(rows, question="q", outcome_col=outcome_col)

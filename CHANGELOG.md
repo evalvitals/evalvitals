@@ -9,7 +9,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Changed — M2 explorer adapts to arbitrary outcome shapes, not just FAIL/PASS
 
 - **Outcome-adaptive explorer prompt** (`analysis/explorer.py`, `analysis/profile.py`):
-  `M2ExplorerAgent`'s generated-code prompt used to hardcode a binary FAIL/PASS
+  `ExploratoryAnalysisAgent`'s generated-code prompt used to hardcode a binary FAIL/PASS
   framing (class balance, fail-rate curves, "call the two groups FAIL and PASS")
   regardless of what the data actually was. The host now profiles the outcome
   column via the new `describe_outcome()` (`profile.py`) and classifies it as

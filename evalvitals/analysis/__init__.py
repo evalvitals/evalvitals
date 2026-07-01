@@ -1,15 +1,19 @@
-"""Public statistical analysis API.
+"""Public data-analysis API: exploratory analysis + statistical confirmation.
 
-This package exposes the M2 statistical analysis layer as a standalone
-capability.  The eval-agent loops still use the same implementation internally,
-but callers do not need to import from ``evalvitals.eval_agent.stages``.
+This package exposes EvalVitals' data-analysis layer as a standalone
+capability — ``ExploratoryAnalysisAgent`` for descriptive EDA (no hypothesis
+generation or validation) and ``StatsAnalysisAgent`` for confirmatory
+effect/CI/e-value/FDR verdicts. The eval-agent loops still use the same
+implementation internally, but callers do not need to import from
+``evalvitals.eval_agent.stages``.
 """
 
 from evalvitals.analysis.adjudicate import adjudicate_report, adjudicate_signals
 from evalvitals.analysis.explorer import (
     CandidateSignal,
+    ExploratoryAnalysisAgent,
     ExploratoryAnalysisReport,
-    M2ExplorerAgent,
+    Takeaway,
     load_records_from_path,
 )
 from evalvitals.analysis.fused_pipeline import (
@@ -53,8 +57,9 @@ from evalvitals.reporting.model import Claim, DiagnosticReport, Evidence, Report
 __all__ = [
     "StatsAnalysisAgent",
     "StatsAnalysisReport",
-    "M2ExplorerAgent",
+    "ExploratoryAnalysisAgent",
     "ExploratoryAnalysisReport",
+    "Takeaway",
     "CandidateSignal",
     "adjudicate_report",
     "adjudicate_signals",
