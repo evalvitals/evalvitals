@@ -122,6 +122,27 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     assert "M1" in blob and "M2" in blob and "M3" in blob and "M5" in blob
 
 
+def test_standalone_m2_dashboard_does_not_show_hypothesis_tab(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "summary": "M2-only exploratory analysis.",
+        "observations": ["Candidate pattern surfaced for review."],
+        "candidate_signals": [{"name": "candidate_signal", "effect": 0.4}],
+        "recommended_confirmatory_tests": ["Formulate an explicit hypothesis later."],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Exploratory Analysis",
+        "3 Artifacts",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Suggested next steps" in blob
+    assert "Hypotheses & Artifacts" not in blob
+
+
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
     logs = tmp_path / "logs_m2_5"
     logs.mkdir(parents=True)

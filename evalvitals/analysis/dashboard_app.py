@@ -65,17 +65,17 @@ def main() -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    setting, analysis, hypotheses = st.tabs([
+    setting, analysis, artifacts = st.tabs([
         "1 Problem Setting",
-        "2 Analysis",
-        "3 Hypotheses & Artifacts",
+        "2 Exploratory Analysis",
+        "3 Artifacts",
     ])
     with setting:
         _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
     with analysis:
         _render_standalone_analysis(report, turn_dir, root)
-    with hypotheses:
-        _render_standalone_hypotheses(report, turn_dir)
+    with artifacts:
+        _render_standalone_artifacts(report, turn_dir)
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -640,22 +640,26 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
     _render_tables(report, turn_dir)
 
 
-def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
+def _render_standalone_artifacts(report: dict[str, Any], turn_dir: Path) -> None:
     storyboard = _storyboard_panels(report, story=None)
-    st.markdown("### Hypotheses & Artifacts")
-    _render_stage_map(active={"M3", "M4", "M5"})
-    _render_storyboard_panel(storyboard, "hypotheses_artifacts")
+    st.markdown("### Artifacts")
+    _render_stage_map(active={"M2"})
+    _render_storyboard_panel(storyboard, "artifacts")
+    st.caption(
+        "M2 is exploratory data analysis only. Candidate signals and charts are "
+        "inputs for later hypothesis formation, not M3 hypotheses or M5 tests."
+    )
     claims = [c for c in report.get("claims") or [] if isinstance(c, dict)]
     tests = report.get("recommended_confirmatory_tests") or []
     if claims:
-        st.markdown("#### Claims to carry forward")
+        st.markdown("#### Exploratory claims to carry forward")
         st.dataframe(pd.DataFrame(claims), width="stretch", hide_index=True)
     if tests:
-        st.markdown("#### Recommended confirmatory tests")
+        st.markdown("#### Suggested next steps")
         for item in tests:
             st.markdown(f"- {item}")
     if not claims and not tests:
-        st.info("No explicit hypotheses or confirmatory tests were recorded.")
+        st.info("No carry-forward claims or suggested next steps were recorded.")
     with st.expander("Inspect generated artifacts", expanded=True):
         _render_artifacts(report, turn_dir)
 
