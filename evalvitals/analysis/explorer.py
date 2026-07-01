@@ -1,9 +1,20 @@
-"""Local exploratory analysis agent for standalone M2 use.
+"""General-purpose exploratory data analysis agent (LAMBDA-style).
 
-This is the backend-only, LAMBDA-style path: a coding agent writes Python,
-EvalVitals runs it locally in a sandbox, and the result is parsed into a
-structured exploratory report.  Findings from this module are candidates; use
-``StatsAnalysisAgent`` for confirmatory effect/CI/e-value/FDR verdicts.
+A coding agent writes Python over arbitrary tabular records — not just M1
+pass/fail diagnosis logs — EvalVitals runs it locally in a sandbox, and the
+result is parsed into a structured exploratory report. The prompt adapts its
+framing to whatever the data's outcome column actually is (binary,
+multi-class, continuous, or none — see :func:`_framing_block`), so a dataset
+with no FAIL/PASS label gets unsupervised EDA instead of an invented split.
+
+M1 integration is one caller among others, not a special case: the diagnosis
+loop's per-case records already carry a ``label`` column, which the name
+heuristic in :func:`evalvitals.analysis.profile.profile_records` recognizes
+as the outcome automatically, so it still gets the same binary FAIL/PASS
+framing it always did (callers with an arbitrarily-named target can pass
+``outcome_col=`` explicitly instead of relying on the heuristic). Findings
+from this module are candidates only; use ``StatsAnalysisAgent`` for
+confirmatory effect/CI/e-value/FDR verdicts.
 """
 
 from __future__ import annotations
@@ -15,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.analysis.profile import describe_outcome, profile_records
 from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult
 
 if TYPE_CHECKING:
@@ -27,37 +39,45 @@ _INPUT_FILENAME = "records.json"
 _RESULT_MARKER = "EXPLORATORY_RESULT_JSON="
 
 _GENERATE_PROMPT = """\
-You are an exploratory data-analysis agent for model failure analysis.
+You are an exploratory data-analysis agent (Lambda-style): given ANY tabular
+dataset — with a binary outcome, a multi-class outcome, a continuous outcome,
+or no outcome at all — you write Python that discovers and charts the
+structure that actually matters, adapting the story to what the data is.
 
 Question:
 {question}
 
 A JSON file named "{input_filename}" is in the current working directory.
-It contains a list of row dictionaries. Data profile:
+It contains a list of row dictionaries. Data profile (the host already
+inferred column roles/dtypes and classified the outcome below — trust this
+over re-guessing from raw values):
 {data_profile}
 
 Write a self-contained Python script that performs a THOROUGH, Lambda-style
-exploratory failure analysis and PRODUCES A RICH SET OF CHARTS BY DEFAULT.
+exploratory analysis and PRODUCES A RICH SET OF CHARTS BY DEFAULT.
 
 Setup:
 - reads "{input_filename}" from the current working directory
 - may use only local Python packages (pandas / numpy / matplotlib are fine); no
   network and no repo mutation
-- identify the outcome column (label / is_correct / is_fail / pass-fail) and call
-  the two groups FAIL and PASS. Identify the numeric signal columns and any
-  categorical group columns (model, source_dir, probe_type, ...).
+- the profile's "columns" block gives each column's role (id / outcome / group
+  / time / predictor) and dtype; its "outcome" block ({{"present","column","kind"}})
+  tells you whether there is one and what kind it is. Do not invent an outcome
+  or a FAIL/PASS split when "outcome.present" is false.
+
+{framing}
 
 VISUAL ANALYSIS — before writing plotting code, make an explicit intermediate
 visualization plan. The plan is part of the machine-readable output and should
 show that YOU selected plot types from the data semantics, not from a fixed
-template. Aim for 6-12 charts/plots that together tell the FAIL-vs-PASS story.
+template. Aim for 6-12 charts/plots that together tell the dataset's story.
 
 First build a "visual_plan" list. Each item should be a dict:
   {{
     "name": "<stable artifact/chart name>",
     "display_name": "<short human title, no raw generated/probe id>",
     "question": "<what this visual answers>",
-    "data_shape": "<numeric-vs-binary | categorical-vs-binary | numeric-vs-numeric | many-numeric | paired | ...>",
+    "data_shape": "<numeric-vs-binary | numeric-vs-categorical | numeric-vs-numeric | many-numeric | paired | unsupervised | ...>",
     "plot_kind": "<chosen plot type, e.g. bar, line, scatter, box, violin, heatmap, paired_slope>",
     "fallback_kind": "<bar|line|scatter when a deterministic host chart is useful>",
     "required_columns": ["..."],
@@ -65,48 +85,47 @@ First build a "visual_plan" list. Each item should be a dict:
   }}
 
 Use these decision principles:
-  - categorical vs binary outcome: fail-rate/count bar with n annotated in the table.
-  - numeric vs binary outcome: prefer distribution views (box/violin/strip) when
-    writing rich PNG plots; include a deterministic summary chart only when useful.
-  - binned numeric risk curves: line over ordered bins/percentiles.
-  - numeric vs numeric: scatter, optionally colored/stratified by outcome.
-  - many numeric signals: ranked effect/separation bar plus correlation heatmap.
+  - categorical/binary outcome: rate/count bar with n annotated in the table.
+  - numeric predictor vs categorical/binary outcome: prefer distribution views
+    (box/violin/strip) when writing rich PNG plots; include a deterministic
+    summary chart only when useful.
+  - binned numeric trend (event rate, or mean of a continuous outcome): line
+    over ordered bins/percentiles.
+  - numeric vs numeric: scatter, optionally colored/stratified by outcome or group.
+  - many numeric signals: ranked effect/association bar plus correlation heatmap.
   - paired/intervention data: paired slope or discordant-count visual.
+  - no outcome column: prioritize distributions, missingness, correlation
+    structure, and group contrasts over any label-vs-label story.
   - skip a planned visual when required columns are absent or sample size makes it
     misleading; say so in caveats.
-
-As a minimum, consider this standard battery when the columns exist:
-  1. Class balance: count of FAIL vs PASS overall (and per model/group if present).
-  2. Per numeric signal — how it separates FAIL vs PASS: distribution view or
-     group summary, AND a binned fail-rate curve (bin -> fail_rate).
-  3. Top discriminators: a ranked bar of each signal's FAIL-vs-PASS separation
-     (e.g. standardized mean difference / |meanFAIL - meanPASS| / s), largest first.
-  4. Fail rate by each categorical group column (bar).
-  5. Signal correlations: a correlation table and, when helpful, a heatmap PNG.
-  6. 1-2 scatter plots of the most discriminative signal pairs, coloured by outcome.
 
 For EVERY chart you report in "charts":
 - write its plotted data as a CSV under "tables/<name>.csv"
 - add a spec {{"name","display_name","kind","data","x","y","title"}} with data="tables/<name>.csv"
   and kind in {{"bar","line","scatter"}}. The HOST renders these deterministically,
-  so PRE-AGGREGATE distributions into the CSV (histogram = bin->count; fail rate =
-  bin->fail_rate; group comparison = group->value) — never rely on a raw dump.
+  so PRE-AGGREGATE distributions into the CSV (histogram = bin->count; outcome
+  rate or mean-outcome curve = bin->value; group comparison = group->value) —
+  never rely on a raw dump.
 ADDITIONALLY you MAY draw richer figures (box / violin / heatmap / scatter-matrix)
 directly as PNG under "figures/" and list them in "plots"; a figure-styling skill
 (when available) will make these publication-quality.
 
 Report/dashboard contract:
 - Think in three reader-facing panels, even though you only emit JSON artifacts:
-  (1) Problem Setting = M1/run context and FAIL/PASS setup; (2) Analysis = M2
-  methods, evidence/charts, and takeaways; (3) Hypotheses & Artifacts = M3-M5
-  follow-up questions and decision evidence.
+  (1) Problem Setting = dataset/run context and what the outcome (if any) means;
+  (2) Analysis = methods, evidence/charts, and takeaways; (3) Hypotheses &
+  Artifacts = follow-up questions and decision evidence.
 - Emit this structure as "dashboard_storyboard": a list of panel dicts
   {{"id","title","stages","summary","items","artifact_refs"}}. The Streamlit
   dashboard will render this artifact; do not rely on hard-coded UI copy.
 - For each important analysis method, make the relationship explicit in
   chart_readings or claims: method -> evidence/chart -> takeaway.
-- Use M-stage language consistently: M1=measurement/features, M2=confirmatory
-  statistics, M3=hypotheses, M4=mechanism test, M5=repair/surgery test.
+- "stages" is free text for the dashboard's tag chips. If this data or question
+  is from an EvalVitals M1-M5 diagnosis run (mentions probes/analyzers/M1-M5, or
+  the outcome is a diagnostic pass/fail label), use M1=measurement/features,
+  M2=confirmatory statistics, M3=hypotheses, M4=mechanism test, M5=repair/surgery
+  test. Otherwise use plain labels like "context"/"analysis"/"follow-up" — do
+  not force M-stage language onto data that isn't from that pipeline.
 
 Discovery outputs:
 - does NOT claim causal/statistical confirmation; this is exploratory only
@@ -140,7 +159,11 @@ Discovery outputs:
   verdict from "recipe"/"sufficient" with its validated, multiplicity-aware core; a
   self-declared verdict is ignored. Omit both for descriptive-only signals.
 - prints the final result as the LAST stdout line exactly like (note "charts" is a
-  RICH list here, one entry per CSV you wrote):
+  RICH list here, one entry per CSV you wrote). The example below illustrates the
+  JSON SHAPE using a binary-outcome dataset; KEEP THE SAME KEYS but replace the
+  FAIL/PASS/fail_rate wording with language that matches the ACTUAL outcome kind
+  from the profile above (categorical classes, a continuous outcome's mean/curve,
+  or plain unsupervised structure when there is no outcome):
   {marker}{{
     "observations": ["..."],
     "visual_plan": [
@@ -385,11 +408,19 @@ class M2ExplorerAgent:
         self,
         records: Any,
         *,
-        question: str = "Explore patterns that distinguish failures from passes.",
+        question: str = "Explore this dataset and surface the patterns that matter.",
+        outcome_col: str | None = None,
     ) -> ExploratoryAnalysisReport:
-        """Run local exploratory analysis over plain records."""
+        """Run local exploratory analysis over plain records.
+
+        ``outcome_col`` optionally names the target/label column explicitly
+        (e.g. M1 always passes ``"label"``). When omitted, the outcome (if
+        any) is auto-detected by name heuristics; arbitrary datasets with no
+        recognizable outcome column fall back to unsupervised EDA instead of
+        having a FAIL/PASS split forced onto them.
+        """
         rows = _records_to_rows(records)
-        profile = _profile_rows(rows)
+        profile = _profile_rows(rows, outcome_col=outcome_col)
         self._write_input(rows)
 
         if not self.available:
@@ -456,10 +487,11 @@ class M2ExplorerAgent:
         self,
         path: str | Path,
         *,
-        question: str = "Explore patterns that distinguish failures from passes.",
+        question: str = "Explore this dataset and surface the patterns that matter.",
         max_rows: int = 2000,
         max_files: int = 200,
         include_tool_calls: bool = False,
+        outcome_col: str | None = None,
     ) -> ExploratoryAnalysisReport:
         """Load JSON/JSONL records from *path* and run exploratory analysis.
 
@@ -473,7 +505,7 @@ class M2ExplorerAgent:
             max_files=max_files,
             include_tool_calls=include_tool_calls,
         )
-        report = self.explore_records(rows, question=question)
+        report = self.explore_records(rows, question=question, outcome_col=outcome_col)
         report.data_profile.setdefault("source_path", str(Path(path)))
         report.data_profile.setdefault("loaded_rows", len(rows))
         return report
@@ -487,6 +519,7 @@ class M2ExplorerAgent:
             question=question,
             input_filename=_INPUT_FILENAME,
             data_profile=json.dumps(profile, indent=2, default=str),
+            framing=_framing_block(profile.get("outcome") or {}),
             marker=_RESULT_MARKER,
             skills_hint=_skills_hint(self._cli_config),
             fences_hint=_fences_hint(self._cli_config),
@@ -666,35 +699,118 @@ def _shorten(value: Any, max_text: int) -> Any:
     return value[:max_text] + f"... [truncated {len(value) - max_text} chars]"
 
 
-def _profile_rows(rows: list[dict[str, Any]], *, sample_size: int = 5) -> dict[str, Any]:
-    columns: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        for key, value in row.items():
-            info = columns.setdefault(str(key), {"non_null": 0, "types": {}, "numeric": 0})
-            if value is None:
-                continue
-            info["non_null"] += 1
-            typ = type(value).__name__
-            info["types"][typ] = info["types"].get(typ, 0) + 1
-            if isinstance(value, (int, float, bool)):
-                info["numeric"] += 1
+def _profile_rows(
+    rows: list[dict[str, Any]],
+    *,
+    outcome_col: str | None = None,
+    sample_size: int = 5,
+) -> dict[str, Any]:
+    """Profile rows for the explorer prompt, including outcome-kind detection.
 
+    Delegates role/dtype inference to :func:`profile_records` (the shared,
+    domain-agnostic profiler) rather than re-deriving it from raw values, so
+    the prompt can adapt to binary / categorical / continuous / no-outcome
+    data instead of always assuming a FAIL/PASS split.
+    """
+    profile = profile_records(rows, outcome_col=outcome_col)
+    outcome = describe_outcome(profile)
     numeric_columns = [
-        name for name, info in columns.items()
-        if info["non_null"] > 0 and info["numeric"] == info["non_null"]
+        c.name for c in profile.columns.values()
+        if c.dtype == "numeric" and c.role == "predictor"
     ]
-    label_like = [
-        name for name in columns
-        if name.lower() in {"label", "outcome", "status", "success", "pass", "fail"}
-        or "label" in name.lower()
+    categorical_columns = [
+        c.name for c in profile.columns.values()
+        if c.dtype in ("categorical", "boolean") and c.role == "predictor"
     ]
+    label_like = [outcome["column"]] if outcome["present"] else []
     return {
-        "n_rows": len(rows),
-        "columns": columns,
+        "n_rows": profile.n_rows,
+        "grain": profile.grain,
+        "columns": {name: c.to_dict() for name, c in profile.columns.items()},
         "numeric_columns": numeric_columns,
+        "categorical_columns": categorical_columns,
         "label_like_columns": label_like,
+        "id_columns": profile.id_columns,
+        "group_columns": profile.group_columns,
+        "time_columns": profile.time_columns,
+        "outcome": outcome,
+        "warnings": profile.warnings,
         "sample_rows": rows[:sample_size],
     }
+
+
+def _framing_block(outcome: dict[str, Any]) -> str:
+    """Build the prompt's outcome-specific framing + standard chart battery.
+
+    This is what stops the explorer from forcing a FAIL/PASS story onto data
+    that has a multi-class, continuous, or absent outcome. ``outcome`` is the
+    ``describe_outcome()`` dict already embedded in the data profile.
+    """
+    kind = outcome.get("kind", "none")
+    col = outcome.get("column")
+    unique = outcome.get("unique", 0)
+
+    if kind == "binary":
+        return f"""\
+OUTCOME: "{col}" is a BINARY outcome (host detected {unique} distinct values).
+Call the two groups FAIL and PASS (map the two outcome values to whichever
+reads as the negative/positive case) and tell the FAIL-vs-PASS story.
+
+As a minimum, consider this standard battery when the columns exist:
+  1. Class balance: count of FAIL vs PASS overall (and per group column if present).
+  2. Per numeric signal — how it separates FAIL vs PASS: distribution view or
+     group summary, AND a binned fail-rate curve (bin -> fail_rate).
+  3. Top discriminators: a ranked bar of each signal's FAIL-vs-PASS separation
+     (e.g. standardized mean difference / |meanFAIL - meanPASS| / s), largest first.
+  4. Fail rate by each categorical group column (bar).
+  5. Signal correlations: a correlation table and, when helpful, a heatmap PNG.
+  6. 1-2 scatter plots of the most discriminative signal pairs, coloured by outcome."""
+
+    if kind == "categorical":
+        return f"""\
+OUTCOME: "{col}" is a CATEGORICAL outcome with {unique} distinct classes. Tell
+the per-class story — do NOT collapse it into a binary FAIL/PASS split.
+
+As a minimum, consider this standard battery when the columns exist:
+  1. Class balance: count per class overall (and per group column if present).
+  2. Per numeric signal — how its distribution differs across classes (box/violin
+     per class), AND a ranked bar of each signal's cross-class separation (e.g.
+     between-class variance ratio or ANOVA-style F statistic), largest first.
+  3. Class composition by each categorical group column (grouped/stacked bar).
+  4. Signal correlations: a correlation table and, when helpful, a heatmap PNG.
+  5. 1-2 scatter plots of the most discriminative signal pairs, coloured by class."""
+
+    if kind == "continuous":
+        return f"""\
+OUTCOME: "{col}" is a CONTINUOUS outcome ({unique} distinct values seen). This
+is a correlation/regression-style story — there is no FAIL/PASS split to
+invent; do not binarize the outcome unless the question explicitly asks for it.
+
+As a minimum, consider this standard battery when the columns exist:
+  1. Outcome distribution (histogram).
+  2. Per numeric signal vs outcome: scatter with a trend line, AND a binned
+     mean-outcome curve (bin -> mean {col}).
+  3. Top associates: a ranked bar of each signal's correlation magnitude with
+     the outcome (Pearson and/or Spearman), largest first.
+  4. Outcome distribution by each categorical group column (box/violin per group).
+  5. Signal correlations among predictors: a correlation table and heatmap PNG.
+  6. 1-2 scatter plots of the most associated signal pairs, coloured/sized by outcome."""
+
+    return """\
+OUTCOME: no recognizable outcome/target column was found. This is UNSUPERVISED
+exploration — describe the dataset's structure; do NOT invent a FAIL/PASS or
+any other label that is not actually in the data.
+
+As a minimum, consider this standard battery when the columns exist:
+  1. Missingness overview: non-null rate per column (bar).
+  2. Per numeric column: distribution (histogram/box).
+  3. Per categorical column: value counts (bar); skip columns with very high
+     cardinality (say >20 distinct values) as a bar chart and note it in caveats.
+  4. Signal correlations: a correlation table and, when helpful, a heatmap PNG
+     among the numeric columns.
+  5. 1-2 scatter plots of the most correlated numeric pairs.
+  6. If a group or time column exists, contrast numeric distributions across
+     its groups/periods; otherwise skip this item."""
 
 
 def _report_from_sandbox(

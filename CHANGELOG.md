@@ -6,6 +6,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — M2 explorer adapts to arbitrary outcome shapes, not just FAIL/PASS
+
+- **Outcome-adaptive explorer prompt** (`analysis/explorer.py`, `analysis/profile.py`):
+  `M2ExplorerAgent`'s generated-code prompt used to hardcode a binary FAIL/PASS
+  framing (class balance, fail-rate curves, "call the two groups FAIL and PASS")
+  regardless of what the data actually was. The host now profiles the outcome
+  column via the new `describe_outcome()` (`profile.py`) and classifies it as
+  `binary` / `categorical` / `continuous` / `none`, and `_framing_block()` swaps
+  in the matching framing + standard chart battery — including a genuinely
+  unsupervised-EDA battery (missingness, distributions, correlation structure)
+  when there is no recognizable outcome column at all. `profile_records()` gained
+  an `outcome_col` override so callers with an arbitrarily-named target (e.g.
+  `revenue`, `yield_pct`) can point at it explicitly instead of relying on the
+  English name-heuristic list. `explore_records` / `explore_path` / `run_explore`
+  / the `evalvitals explore` and `evalvitals-explore` CLIs all take a new
+  `outcome_col` / `--outcome-col`. M1's diagnosis loop is unaffected — its
+  records already carry a `label` column the heuristic finds automatically, so
+  it still gets the same binary FAIL/PASS framing as before.
+
 ### Added/Changed — signal hygiene, descriptive analysis, tensor-level attention
 
 - **Label-leak isolation (the deferred "leak-1" check)** (`eval_agent/stages/stats_tools.py`):

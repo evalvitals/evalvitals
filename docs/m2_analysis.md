@@ -57,6 +57,34 @@ Does tool usage correlate with failures?
 Find candidate signals I should confirm with StatsAnalysisAgent.
 ```
 
+### Arbitrary data, not just pass/fail logs
+
+`explore` is a general-purpose EDA agent, not a pass/fail-only tool. The host
+profiles the data first and classifies the outcome column (if any) as
+`binary`, `categorical`, `continuous`, or `none`, and the generated-code
+prompt adapts its framing and standard chart battery accordingly:
+
+- **binary** outcome (e.g. an M1 `label` column, or any 2-valued column) —
+  the familiar FAIL-vs-PASS story: class balance, fail-rate curves, top
+  discriminators.
+- **categorical** outcome (3+ classes) — per-class distributions and
+  cross-class separation, without collapsing classes into a binary split.
+- **continuous** outcome — a correlation/regression-style story: scatter +
+  trend lines, binned mean-outcome curves, ranked correlation magnitude.
+- **none** — no recognizable outcome column at all. The agent runs
+  unsupervised EDA (distributions, missingness, correlation structure, group
+  contrasts) instead of inventing a label that isn't in the data.
+
+Outcome detection is name-heuristic by default (`label`, `outcome`, `target`,
+`is_correct`, ...). Pass `--outcome-col <name>` (CLI) or
+`outcome_col="<name>"` (`M2ExplorerAgent.explore_records` /
+`explore_path`) to point it at an arbitrarily-named target column, e.g. a
+continuous metric like `revenue` or `yield_pct` that no heuristic would catch.
+
+M1's diagnosis loop is one caller of this agent, not a special case: it works
+because M1 records already carry a `label` column that the name heuristic
+finds automatically.
+
 The run asks the local coding agent to write one analysis script, executes it in
 EvalVitals' sandbox, host-adjudicates any host-checkable candidate statistics,
 renders the chart specs to PNG, and writes the artifacts. It is a single shot —

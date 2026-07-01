@@ -113,8 +113,17 @@ def _infer_dtype(values: list[Any]) -> str:
     return "mixed"
 
 
-def profile_records(records: Any) -> DatasetProfile:
-    """Profile a list/DataFrame-like object of row records."""
+def profile_records(records: Any, *, outcome_col: str | None = None) -> DatasetProfile:
+    """Profile a list/DataFrame-like object of row records.
+
+    ``outcome_col``, when given and present, overrides name-heuristic role
+    inference: that column is forced to role ``"outcome"`` (and any other
+    column the heuristic would have called ``"outcome"`` is demoted back to
+    ``"predictor"`` so there is at most one outcome column). This lets a
+    caller who knows their target column name (e.g. a continuous score with
+    an arbitrary name) get correct framing without relying on
+    :func:`_infer_role`'s English keyword list.
+    """
     rows = []
     if records is not None and hasattr(records, "to_dict"):
         try:
@@ -133,7 +142,12 @@ def profile_records(records: Any) -> DatasetProfile:
         vals = [row.get(name) for row in rows]
         non_null_vals = [v for v in vals if v is not None]
         dtype = _infer_dtype(vals)
-        role = _infer_role(name)
+        if outcome_col is not None and name in names:
+            role = "outcome" if name == outcome_col else _infer_role(name)
+            if role == "outcome" and name != outcome_col:
+                role = "predictor"
+        else:
+            role = _infer_role(name)
         unique_values = {str(v) for v in non_null_vals}
         numeric_vals = [
             float(v) for v in non_null_vals
@@ -179,6 +193,36 @@ def profile_records(records: Any) -> DatasetProfile:
         grain=grain,
         warnings=warnings,
     )
+
+
+def describe_outcome(profile: DatasetProfile, *, continuous_unique_threshold: int = 8) -> dict[str, Any]:
+    """Classify the dataset's outcome (if any) so callers can pick a framing.
+
+    This is the piece that lets downstream prompts/plans stop assuming every
+    dataset has a binary FAIL/PASS label. ``kind`` is one of:
+
+    - ``"binary"``      — a two-valued outcome (booleans, pass/fail strings, 0/1).
+    - ``"categorical"``  — 3+ discrete outcome values.
+    - ``"continuous"``   — a numeric outcome with many distinct values.
+    - ``"none"``         — no recognizable outcome column; treat as unsupervised EDA.
+
+    Returns ``{"present", "column", "kind", "unique"}``. Only the first
+    outcome column is described; ``profile_records(..., outcome_col=...)``
+    is how a caller pins down which column that is.
+    """
+    if not profile.outcome_columns:
+        return {"present": False, "column": None, "kind": "none", "unique": 0}
+    name = profile.outcome_columns[0]
+    col = profile.columns.get(name)
+    if col is None:
+        return {"present": False, "column": None, "kind": "none", "unique": 0}
+    if col.dtype == "boolean" or col.is_binary or col.unique <= 2:
+        kind = "binary"
+    elif col.dtype == "numeric" and col.unique > continuous_unique_threshold:
+        kind = "continuous"
+    else:
+        kind = "categorical"
+    return {"present": True, "column": name, "kind": kind, "unique": col.unique}
 
 
 def profile_stats_input(inp: Any) -> DatasetProfile:

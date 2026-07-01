@@ -31,7 +31,7 @@ from evalvitals.viz.renderer import render_chart_specs
 def run_explore(
     path: str | Path,
     *,
-    question: str = "Explore patterns that distinguish failures from passes.",
+    question: str = "Explore this dataset and surface the patterns that matter.",
     out: str | Path = "evalvitals_explore_output",
     coder_provider: str = "antigravity",
     coder_model: str = "",
@@ -46,6 +46,7 @@ def run_explore(
     skills: "list[str] | tuple[str, ...]" = (),
     allow_skills: bool = False,
     use_bundled_skills: bool = True,
+    outcome_col: str | None = None,
 ) -> int:
     """Run one exploratory analysis and persist its artifacts.
 
@@ -56,6 +57,10 @@ def run_explore(
     skill). By default (*use_bundled_skills*) the package's bundled skills are
     applied on the claude/agy backends; *skills* adds more dirs and *allow_skills*
     also enables globally-installed (`~/.claude/skills`) skills.
+
+    *outcome_col* optionally names the target/label column explicitly (M1
+    passes ``"label"``); omit it to let the agent auto-detect an outcome by
+    name heuristics, or fall back to unsupervised EDA when there is none.
     """
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,6 +90,7 @@ def run_explore(
         max_rows=max_rows,
         max_files=max_files,
         include_tool_calls=include_tool_calls,
+        outcome_col=outcome_col,
     )
 
     # Host adjudication: any candidate that attached host-checkable `sufficient`

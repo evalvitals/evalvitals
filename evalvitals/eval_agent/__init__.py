@@ -73,6 +73,7 @@ from evalvitals.analysis.planner import AnalysisPlanItem, plan_stats_input, rank
 from evalvitals.analysis.profile import (
     ColumnProfile,
     DatasetProfile,
+    describe_outcome,
     profile_records,
     profile_stats_input,
 )
@@ -245,6 +246,7 @@ __all__ = [
     "run_stats_tool",
     "ColumnProfile",
     "DatasetProfile",
+    "describe_outcome",
     "profile_records",
     "profile_stats_input",
     "AnalysisPlanItem",
