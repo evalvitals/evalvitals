@@ -138,10 +138,12 @@ def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, A
             "`exploratory_report.json`."
         )
 
+    has_downstream = bool(story.get("surgeries") or story.get("fixes"))
+    hypothesis_tab = "3 Hypotheses & Artifacts" if has_downstream else "3 Proposed Hypotheses"
     setting, analysis, hypotheses = st.tabs([
         "1 Problem Setting",
         "2 Analysis",
-        "3 Hypotheses & Artifacts",
+        hypothesis_tab,
     ])
     with setting:
         _render_problem_setting(root, explore_report or {}, story=story, artifact_dir=explore_dir)
@@ -181,15 +183,35 @@ def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for d in story.get("diagnoses") or []:
         for h in d.get("hypotheses") or []:
-            stmt = str(h.get("statement", "")).strip()
+            stmt = _hypothesis_statement(h)
+            if not stmt:
+                continue
             out.append({
                 "statement": stmt,
-                "failure_mode": h.get("failure_mode", ""),
+                "failure_mode": _hypothesis_failure_mode(h),
                 "cycle": d.get("cycle"),
                 "referenced_charts": d.get("referenced_charts") or [],
                 "tests": tests_by_stmt.get(stmt, []),
             })
     return out
+
+
+def _hypothesis_statement(hypothesis: dict[str, Any]) -> str:
+    return str(
+        hypothesis.get("statement")
+        or hypothesis.get("hypothesis")
+        or hypothesis.get("predicate")
+        or ""
+    ).strip()
+
+
+def _hypothesis_failure_mode(hypothesis: dict[str, Any]) -> str:
+    return str(
+        hypothesis.get("failure_mode")
+        or hypothesis.get("predicted_failure_mode")
+        or hypothesis.get("mode")
+        or ""
+    ).strip()
 
 
 def _render_problem_setting(
@@ -577,14 +599,21 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
     """Panel 3: hypotheses, downstream tests, and artifacts needed for decisions."""
     hyps = _hypotheses_with_outcomes(story)
     storyboard = _storyboard_panels(explore_report or {}, story=story)
-    st.markdown("### Hypotheses & Decision")
-    _render_stage_map(active={"M3", "M4", "M5"})
+    has_downstream = bool(story.get("surgeries") or story.get("fixes"))
+    st.markdown("### Hypotheses & Decision" if has_downstream else "### Proposed Hypotheses")
+    _render_stage_map(active={"M3", "M4", "M5"} if has_downstream else {"M3"})
     _render_storyboard_panel(storyboard, "hypotheses_artifacts")
     if hyps:
-        st.caption(
-            "These are M3 hypotheses formed from the analysis panel. Treat them as "
-            "decision candidates until M5/M4 tests or fix outcomes support them."
-        )
+        if has_downstream:
+            st.caption(
+                "These are M3 hypotheses formed from the analysis panel. Treat them as "
+                "decision candidates until M5/M4 tests or fix outcomes support them."
+            )
+        else:
+            st.caption(
+                "These are M3 hypotheses proposed from the M2 analysis. They have not "
+                "been confirmed by M5 and have no fix verdict yet."
+            )
         for h in hyps:
             _render_hypothesis_card(h)
     else:
@@ -605,7 +634,8 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
                 for f in fixes:
                     st.json(f)
 
-    with st.expander("Inspect M1-M4 artifacts and flow", expanded=True):
+    label = "Inspect M1-M3 artifacts and flow" if not has_downstream else "Inspect M1-M4 artifacts and flow"
+    with st.expander(label, expanded=True):
         _render_loop_flow(story, explore_report, explore_dir)
     with st.expander("Inspect raw tables", expanded=False):
         _render_explore_tables(explore_report, explore_dir, full=True)
@@ -849,10 +879,16 @@ def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None
     # ── ③ Hypotheses formed ───────────────────────────────────────────────
     st.markdown("### ③ Hypotheses formed")
     if hyps:
-        st.caption(
-            "From the findings above, M3 proposed these falsifiable root-cause "
-            "hypotheses. Each was tested downstream (M5/M4) before any fix."
-        )
+        if story.get("surgeries") or story.get("fixes"):
+            st.caption(
+                "From the findings above, M3 proposed these falsifiable root-cause "
+                "hypotheses. Each was tested downstream (M5/M4) before any fix."
+            )
+        else:
+            st.caption(
+                "From the M2 findings above, M3 proposed these falsifiable root-cause "
+                "hypotheses. They are proposed only; M5/M4 has not run yet."
+            )
         for h in hyps:
             _render_hypothesis_card(h)
     else:

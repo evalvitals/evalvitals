@@ -158,8 +158,29 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
         "explore_report": explore_report,
         "explore_dir": explore_dir,
     }
+    if not story["diagnoses"]:
+        proposed = _read_proposed_hypotheses(root)
+        if proposed:
+            story["diagnoses"] = [{
+                "event": "diagnosis",
+                "cycle": 0,
+                "n_hypotheses": len(proposed),
+                "hypotheses": proposed,
+                "source": "analysis/proposed_hypotheses.json",
+            }]
     story["diagnostic_report"] = compile_diagnostic_report(story, explore_report).to_dict()
     return story
+
+
+def _read_proposed_hypotheses(root: Path) -> list[dict[str, Any]]:
+    """Fallback for analysis-phase dashboards when the M3 log event is absent."""
+    for path in (root / "analysis" / "proposed_hypotheses.json", root / "proposed_hypotheses.json"):
+        raw = _read_json(path)
+        if isinstance(raw, list):
+            return [h for h in raw if isinstance(h, dict)]
+        if isinstance(raw, dict) and isinstance(raw.get("hypotheses"), list):
+            return [h for h in raw["hypotheses"] if isinstance(h, dict)]
+    return []
 
 
 def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | None, str | None]:

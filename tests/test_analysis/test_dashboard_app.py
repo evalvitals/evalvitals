@@ -273,7 +273,14 @@ def test_analysis_phase_dashboard_shows_no_supported_verdicts(tmp_path):
     _build_analysis_phase_run(tmp_path)
     at = _run_app(tmp_path)
     assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Proposed Hypotheses",
+    ]
     blob = " ".join(str(m.value) for m in at.markdown)
+    assert "language-prior hallucination" in blob
+    assert "Proposed Hypotheses" in blob
     # the descriptive evidence pills carry "Descriptive", never a verdict
     assert "Descriptive</span>" in blob
     assert ">Supported</span>" not in blob
@@ -282,6 +289,39 @@ def test_analysis_phase_dashboard_shows_no_supported_verdicts(tmp_path):
     assert "tested signals survived" not in blob
     # an explicit analysis-phase banner orients the reader
     assert any("Analysis phase" in str(i.value) for i in at.info)
+
+
+def test_analysis_phase_dashboard_recovers_proposed_hypotheses_file(tmp_path):
+    _build_analysis_phase_run(tmp_path)
+    logs = tmp_path / "logs_analysis"
+    (logs / "run_log.jsonl").write_text(
+        "\n".join([
+            json.dumps({"event": "analysis", "cycle": 0, "descriptive_only": True,
+                        "conclusion": "Candidate signals described; verdict deferred."}),
+            json.dumps({"event": "loop_end", "stopped_by": "analysis_complete"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "analysis"
+    analysis.mkdir(exist_ok=True)
+    (analysis / "proposed_hypotheses.json").write_text(json.dumps([
+        {
+            "hypothesis": "fallback hypothesis from proposed_hypotheses.json",
+            "predicted_failure_mode": "fallback_mode",
+        }
+    ]), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Proposed Hypotheses",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "fallback hypothesis from proposed_hypotheses.json" in blob
+    assert "fallback_mode" in blob
 
 
 def test_resolve_scatter_axes_handles_real_named_and_legacy_columns():
