@@ -2,6 +2,7 @@
 
 from evalvitals.eval_agent.stages.stats_tools import (
     STATS_TOOL_CATALOG,
+    EvidenceResult,
     StatsInput,
     StatsToolResult,
     build_stats_input,
@@ -14,6 +15,7 @@ from evalvitals.eval_agent.stages.stats_tools import (
 __all__ = [
     "StatsInput",
     "StatsToolResult",
+    "EvidenceResult",
     "STATS_TOOL_CATALOG",
     "build_stats_input",
     "build_stats_input_from_records",

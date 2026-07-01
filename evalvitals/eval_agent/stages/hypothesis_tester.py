@@ -296,6 +296,8 @@ class HypothesisTester:
         stats_results = list(getattr(stats_report, "stats_results", None) or [])
         if stats_results:
             core = self._verdict_from_stats_results(hypothesis, stats_report, stats_results)
+            if core.get("evidence_grade") == "none":
+                core = self._verdict_fallback(hypothesis, stats_report, data, family_size)
         else:
             core = self._verdict_fallback(hypothesis, stats_report, data, family_size)
 

@@ -17,6 +17,7 @@ from evalvitals.core.result import Result
 from evalvitals.eval_agent import StatsAnalysisAgent, build_stats_input, fdr_correct
 from evalvitals.eval_agent.stages.stats_tools import (
     StatsInput,
+    StatsToolResult,
     default_plan,
     run_stats_tool,
 )
@@ -251,11 +252,45 @@ def test_llm_narrowing_never_drops_paired_tools():
     assert "mcnemar_evalue" in tools
 
 
-def test_fdr_correct_no_evalues():
+def test_fdr_correct_signal_pvalues_use_bh():
     inp = build_stats_input({"attention": _attention_result()}, _labeled_cases())
     r = run_stats_tool("signal_label_assoc", inp, {"signal": "attention.low_img_attn"})
-    out = fdr_correct([r])  # unpaired test → no e-value
-    assert out["n_tested"] == 0 and out["rejected_tools"] == []
+    out = fdr_correct([r])  # unpaired signal test enters the BH p-value family
+    assert out["method"] == "BH"
+    assert out["n_tested"] == 1
+    assert out["rejected_tools"] == ["signal_label_assoc"]
+    assert out["rejected_result_keys"] == ["signal_label_assoc:attention.low_img_attn"]
+    assert r.fdr_corrected is True and r.correction_method == "BH"
+
+
+def test_bh_preserves_raw_pvalue_reject_for_loop_evidence():
+    strong = StatsToolResult(
+        tool="signal_label_assoc",
+        ok=True,
+        effect=1.0,
+        reject=True,
+        p_value=0.01,
+        analysis_key="signal_label_assoc:strong",
+        correction_family="bh",
+        raw_reject=True,
+    )
+    weak = StatsToolResult(
+        tool="signal_label_assoc",
+        ok=True,
+        effect=0.5,
+        reject=True,
+        p_value=0.9,
+        analysis_key="signal_label_assoc:weak",
+        correction_family="bh",
+        raw_reject=True,
+    )
+
+    out = fdr_correct([strong, weak], alpha=0.05)
+
+    assert out["rejected_result_keys"] == ["signal_label_assoc:strong"]
+    assert strong.reject is True and strong.fdr_corrected is True
+    assert weak.reject is True
+    assert weak.fdr_corrected is False and weak.correction_method == "BH"
 
 
 # ── agent orchestration + backward compat ───────────────────────────────────

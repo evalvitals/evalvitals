@@ -895,7 +895,9 @@ class VLDiagnoseLoop:
                 from evalvitals.eval_agent.stages.stats_tools import build_stats_input
 
                 n_signals = len(build_stats_input(probe_results, data).per_case)
-                agent._max_signal_tools = max(int(agent._max_signal_tools), n_signals)
+                current = getattr(agent, "_max_signal_tools", None)
+                if current is not None:
+                    agent._max_signal_tools = max(int(current), n_signals)
             except Exception as exc:  # never let the cap-bump break the loop
                 logger.debug("bridge: could not raise stats signal cap: %s", exc)
         logger.info(

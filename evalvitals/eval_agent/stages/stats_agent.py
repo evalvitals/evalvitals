@@ -296,7 +296,7 @@ class StatsAnalysisAgent:
         stats_tool_agent: Any | None = None,
         enable_stats_tools: bool = True,
         figure_dir: "str | None" = None,
-        max_signal_tools: int = 4,
+        max_signal_tools: int | None = None,
         allow_codegen: bool = False,
         codegen_config: "CliAgentConfig | None" = None,
         tool_generator: "StatsToolGenerator | None" = None,

@@ -27,9 +27,17 @@ from evalvitals.analysis.operationalize import (
     per_case_to_records,
     safe_ident,
 )
+from evalvitals.analysis.planner import AnalysisPlanItem, plan_stats_input, ranked_signal_names
+from evalvitals.analysis.profile import (
+    ColumnProfile,
+    DatasetProfile,
+    profile_records,
+    profile_stats_input,
+)
 from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.analysis.stats_tools import (
     STATS_TOOL_CATALOG,
+    EvidenceResult,
     StatsInput,
     StatsToolResult,
     build_stats_input,
@@ -57,6 +65,13 @@ __all__ = [
     "bridge_recipes_to_result",
     "safe_ident",
     "RecipeError",
+    "ColumnProfile",
+    "DatasetProfile",
+    "profile_records",
+    "profile_stats_input",
+    "AnalysisPlanItem",
+    "ranked_signal_names",
+    "plan_stats_input",
     "run_fused_analysis",
     "FusedReport",
     "FusedSignal",
@@ -68,6 +83,7 @@ __all__ = [
     "load_records_from_path",
     "StatsInput",
     "StatsToolResult",
+    "EvidenceResult",
     "STATS_TOOL_CATALOG",
     "build_stats_input",
     "build_stats_input_from_records",

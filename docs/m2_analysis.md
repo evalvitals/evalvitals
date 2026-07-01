@@ -157,6 +157,32 @@ single-rate e-values. It applies e-BH FDR correction and returns a
 Standalone explore mode does not require a standardized `StatsInput`. It accepts
 messy logs and uses a local coding agent to inspect their shape.
 
+## Generalized M2 Core
+
+M2 now has a reusable analysis core beneath the M1-M5 loop:
+
+```text
+records / StatsInput
+  -> DatasetProfile        # column types, roles, missingness, grain
+  -> AnalysisPlan          # ranked estimands, not first-N column order
+  -> EvidenceResult        # effect, CI, p/e-value, correction family
+  -> MultiplicityController# BH for p-values, e-BH for e-values
+```
+
+The diagnosis loop is one consumer of this core. Loop data is still adapted into
+`StatsInput`, but standalone callers can profile records directly with
+`profile_records()` and can inspect the generated plan with `plan_stats_input()`.
+Per-case signal tests now produce exact permutation p-values and enter a BH
+family, while paired/e-value tests continue to use e-BH. Reports preserve the
+legacy `rejected_tools` field for M1-M5 and add precise `rejected_result_keys`
+plus per-family metadata for generalized analysis audits.
+
+For p-value signal families, the raw effect/CI verdict remains available to the
+M1-M5 loop while `fdr_corrected` marks whether the claim survived BH. Fused and
+standalone analysis should use the FDR metadata for controlled claims; M5 can
+fall back to raw per-case comparison when generalized M2 only produced
+descriptive/global results for a hypothesis.
+
 The full diagnosis loop and confirmatory `StatsAnalysisAgent` do benefit from
 standardized records because M2, M5, logging, and downstream tools need stable
 contracts:

@@ -27,6 +27,7 @@ corrected reject decision, inherited from :func:`evalvitals.stats.compare`.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
@@ -38,9 +39,9 @@ from evalvitals.stats import (
     compare,
     compare_multiple,
     e_value_test,
-    ebh,
     kendall_tau,
 )
+from evalvitals.stats.multiplicity import correct_results
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
@@ -154,6 +155,13 @@ class StatsToolResult:
     details: dict[str, Any] = field(default_factory=dict)
     figure_path: str | None = None
     error: str | None = None
+    # Generic-M2 metadata. Existing callers can ignore these fields; they let
+    # planners/controllers identify one result inside a larger tested family.
+    analysis_key: str | None = None
+    correction_family: str | None = "auto"  # "e_bh" | "bh" | "auto" | None
+    correction_method: str | None = None
+    fdr_corrected: bool = False
+    raw_reject: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -170,7 +178,15 @@ class StatsToolResult:
             "details": self.details,
             "figure_path": self.figure_path,
             "error": self.error,
+            "analysis_key": self.analysis_key,
+            "correction_family": self.correction_family,
+            "correction_method": self.correction_method,
+            "fdr_corrected": self.fdr_corrected,
+            "raw_reject": self.raw_reject,
         }
+
+
+EvidenceResult = StatsToolResult
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +558,35 @@ def _mean(xs: list[int]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
 
 
+def _two_group_permutation_p(control_fail: list[int], signal_fail: list[int]) -> float:
+    """Exact two-sided permutation p-value for a binary outcome split.
+
+    Conditions on the group sizes and total number of failures. This gives the
+    marginal signal test a p-value family so generalized M2 can control BH across
+    many candidate signals.
+    """
+    n_control = len(control_fail)
+    n_signal = len(signal_fail)
+    n = n_control + n_signal
+    if not n_control or not n_signal:
+        return 1.0
+    total_fail = sum(control_fail) + sum(signal_fail)
+    obs = abs(_mean(signal_fail) - _mean(control_fail))
+    denom = math.comb(n, n_signal)
+    if denom == 0:
+        return 1.0
+    lo = max(0, n_signal - (n - total_fail))
+    hi = min(n_signal, total_fail)
+    prob = 0.0
+    eps = 1e-12
+    for k in range(lo, hi + 1):
+        signal_rate = k / n_signal
+        control_rate = (total_fail - k) / n_control
+        if abs(signal_rate - control_rate) + eps >= obs:
+            prob += math.comb(total_fail, k) * math.comb(n - total_fail, n_signal - k) / denom
+    return min(1.0, max(0.0, prob))
+
+
 def _tool_signal_label_assoc(inp: StatsInput, config: dict) -> StatsToolResult:
     """Unpaired fail-rate difference between cases with/without a per-case signal."""
     key = config.get("signal") or next(iter(inp.per_case), None)
@@ -569,14 +614,20 @@ def _tool_signal_label_assoc(inp: StatsInput, config: dict) -> StatsToolResult:
         min_effect=config.get("min_effect", 0.0),
         n_boot=config.get("n_boot", 2000),
     )
+    p_value = _two_group_permutation_p(control_fail, signal_fail)
     return StatsToolResult(
         tool="signal_label_assoc", config=cfg, ok=True,
-        effect=sr.effect, ci=sr.ci, reject=sr.reject, underpowered=sr.underpowered,
+        effect=sr.effect, ci=sr.ci, reject=sr.reject, p_value=p_value,
+        underpowered=sr.underpowered,
         summary=f"signal '{key}' vs FAIL: {sr.summary()}",
+        analysis_key=f"signal_label_assoc:{key}",
+        correction_family="bh",
+        raw_reject=sr.reject,
         details={
             "n_signal": len(signal_fail), "n_control": len(control_fail),
             "fail_rate_signal": round(_mean(signal_fail), 4),
             "fail_rate_control": round(_mean(control_fail), 4),
+            "permutation_p": round(p_value, 6),
             **sr.details,
         },
     )
@@ -614,6 +665,9 @@ def _tool_bootstrap_diff(inp: StatsInput, config: dict) -> StatsToolResult:
         tool="bootstrap_diff", config={**config, "strategies": names}, ok=True,
         effect=sr.effect, ci=sr.ci, reject=sr.reject, underpowered=sr.underpowered,
         summary=f"{names[1]} vs {names[0]}: {sr.summary()}",
+        analysis_key=f"bootstrap_diff:{names[0]}:{names[1]}",
+        correction_family=None,
+        raw_reject=sr.reject,
         details={"n": len(common), "strategies": names, **sr.details},
     )
 
@@ -643,6 +697,9 @@ def _tool_mcnemar_evalue(inp: StatsInput, config: dict) -> StatsToolResult:
         effect=sr.effect, ci=sr.ci, reject=sr.reject, e_value=sr.e_value,
         p_value=sr.details.get("p_value"), underpowered=sr.underpowered,
         summary=f"{names[1]} vs {names[0]} (paired): {sr.summary()}",
+        analysis_key=f"mcnemar_evalue:{names[0]}:{names[1]}",
+        correction_family="e_bh",
+        raw_reject=sr.reject,
         details={"n": len(common), "strategies": names, **sr.details},
     )
 
@@ -667,6 +724,9 @@ def _tool_friedman_nemenyi(inp: StatsInput, config: dict) -> StatsToolResult:
         tool="friedman_nemenyi", config=config, ok=True,
         reject=mc.reject_global, p_value=mc.p_value,
         summary=mc.summary(),
+        analysis_key="friedman_nemenyi:global",
+        correction_family="bh",
+        raw_reject=mc.reject_global,
         details={
             "avg_ranks": mc.avg_ranks,
             "critical_difference": mc.critical_difference,
@@ -707,6 +767,9 @@ def _tool_single_rate_evalue(inp: StatsInput, config: dict) -> StatsToolResult:
         # would otherwise pollute any |effect|-based ranking downstream.
         effect=round(rate - p0, 4) if p0_justified else None,
         e_value=res["e_value"], reject=res["reject"] if p0_justified else False,
+        analysis_key="single_rate_evalue:fail_rate",
+        correction_family="e_bh" if p0_justified else None,
+        raw_reject=res["reject"] if p0_justified else False,
         summary=(
             f"FAIL rate {rate:.1%} ({fails}/{n}) vs p0={p0:.2f}: "
             f"e={res['e_value']:.2f} -> "
@@ -743,6 +806,8 @@ def _tool_rank_corr(inp: StatsInput, config: dict) -> StatsToolResult:
     return StatsToolResult(
         tool="rank_corr", config=cfg, ok=True, effect=round(tau, 4),
         summary=f"Kendall τ between '{key}' and FAIL = {tau:+.3f} (n={len(xs)})",
+        analysis_key=f"rank_corr:{key}",
+        correction_family=None,
         details={"n": len(xs), "tau": round(tau, 4), "signal": key},
     )
 
@@ -910,6 +975,9 @@ def _tool_attention_decoding(inp: StatsInput, config: dict) -> StatsToolResult:
         config={**cfg, "grid": g, "n_perm": n_perm, "method": "energy_distance"},
         ok=True, effect=round(float(energy), 4), reject=reject, p_value=round(float(p), 4),
         underpowered=bool(not reject and p > 0.2 and n < 60),
+        analysis_key=f"attention_decoding:{key}",
+        correction_family="bh",
+        raw_reject=reject,
         summary=(f"FAIL/PASS attention maps differ: energy-distance={energy:.3f}, "
                  f"permutation p={p:.3f} → {'reject H0 (maps differ)' if reject else 'inconclusive'} "
                  f"(companion CV-AUC={cv_auc:.3f}, n={n})"),
@@ -981,53 +1049,19 @@ def run_stats_tool(name: str, inp: StatsInput, config: dict | None = None) -> St
 # Deterministic planner (fallback when no judge / LLM selection fails)
 # ---------------------------------------------------------------------------
 
-def default_plan(inp: StatsInput, max_signals: int = 4) -> list[tuple[str, dict, str]]:
-    """Deterministic ``[(tool, config, rationale)]`` plan from the data shape."""
-    d = describe_data(inp)
-    plan: list[tuple[str, dict, str]] = []
+def default_plan(
+    inp: StatsInput,
+    max_signals: int | None = None,
+) -> list[tuple[str, dict, str]]:
+    """Deterministic ``[(tool, config, rationale)]`` plan from the data shape.
 
-    if d["n_pass"] > 0 and d["n_fail"] > 0 and inp.per_case:
-        for key in list(inp.per_case)[:max_signals]:
-            plan.append((
-                "signal_label_assoc", {"signal": key},
-                f"test whether per-case signal '{key}' predicts FAIL",
-            ))
-        for key in d["continuous_signals"][:max_signals]:
-            plan.append((
-                "rank_corr", {"signal": key},
-                f"monotonic association between continuous '{key}' and FAIL",
-            ))
+    The implementation delegates to the generic M2 planner so per-case signals
+    are ranked by testability instead of original column order. ``max_signals``
+    remains for backward compatibility; ``None`` means test every ranked signal.
+    """
+    from evalvitals.analysis.planner import plan_stats_input
 
-    # Tensor-level omnibus over any per-case map vectors (e.g. attention maps).
-    if d["n_pass"] > 0 and d["n_fail"] > 0 and inp.per_case_vectors:
-        for key in list(inp.per_case_vectors)[:max_signals]:
-            plan.append((
-                "attention_decoding", {"signal": key},
-                f"omnibus: do FAIL/PASS per-case maps '{key}' differ (CV decoding + permutation)?",
-            ))
-
-    if d["n_labeled"] > 0:
-        plan.append((
-            "single_rate_evalue", {},
-            "is the overall FAIL rate worse than chance (p0=0.5)?",
-        ))
-
-    n_groups = d["n_strategy_groups"]
-    if n_groups >= 3:
-        plan.append(("friedman_nemenyi", {}, "rank 3+ strategies"))
-        # Pairwise paired tests against the first (baseline) strategy — the
-        # informative contrasts for intervention experiments (prompt variants).
-        names = list(inp.groups or {})
-        base = names[0]
-        for variant in names[1:4]:
-            plan.append((
-                "mcnemar_evalue", {"strategies": [base, variant]},
-                f"paired contrast: does '{variant}' repair '{base}' failures?",
-            ))
-    elif n_groups == 2:
-        plan.append(("mcnemar_evalue", {}, "paired two-strategy comparison"))
-
-    return plan
+    return [item.as_legacy_tuple() for item in plan_stats_input(inp, max_signals=max_signals)]
 
 
 # ---------------------------------------------------------------------------
@@ -1035,18 +1069,13 @@ def default_plan(inp: StatsInput, max_signals: int = 4) -> list[tuple[str, dict,
 # ---------------------------------------------------------------------------
 
 def fdr_correct(results: list[StatsToolResult], alpha: float = 0.05) -> dict[str, Any]:
-    """Apply e-BH across every tool that produced an e-value (FDR under dependence)."""
-    indexed = [(i, r) for i, r in enumerate(results) if r.e_value is not None]
-    if not indexed:
-        return {"method": "e-BH", "alpha": alpha, "n_tested": 0,
-                "rejected_tools": [], "note": "no e-values to correct"}
-    evalues = [r.e_value for _, r in indexed]
-    keep = ebh(evalues, alpha)  # indices into `evalues`
-    rejected = [results[indexed[j][0]].tool for j in keep]
-    return {
-        "method": "e-BH", "alpha": alpha, "n_tested": len(evalues),
-        "rejected_tools": rejected,
-    }
+    """Apply multiplicity correction across all supported result families.
+
+    e-values use e-BH; p-values use BH. The returned ``rejected_tools`` field is
+    preserved for existing M1-M5 consumers, while ``rejected_result_keys`` and
+    ``families`` expose the precise generalized-M2 family membership.
+    """
+    return correct_results(results, alpha=alpha)
 
 
 def plot_effects(results: list[StatsToolResult], out_path: str) -> str | None:
