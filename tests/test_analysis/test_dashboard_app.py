@@ -196,6 +196,65 @@ def test_standalone_dashboard_falls_back_gracefully_with_no_takeaways(tmp_path):
     assert "no structured takeaways" in blob.lower()
 
 
+def test_standalone_dashboard_shows_data_structure_panel(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "data_profile": {
+            "n_rows": 30,
+            "loaded_rows": 30,
+            "grain": "case",
+            "outcome": {"present": True, "column": "yield_pct", "kind": "continuous", "unique": 29},
+            "columns": {
+                "yield_pct": {
+                    "role": "outcome", "dtype": "numeric", "unique": 29, "missing": 0,
+                    "numeric_min": 63.8, "numeric_max": 95.9,
+                },
+                "temperature": {
+                    "role": "predictor", "dtype": "numeric", "unique": 28, "missing": 0,
+                    "numeric_min": 151.4, "numeric_max": 248.7,
+                },
+                "catalyst": {"role": "predictor", "dtype": "categorical", "unique": 3, "missing": 0},
+            },
+            "warnings": ["column 'batch_id' is constant and unlikely to be testable"],
+            "folder_scan": {
+                "root": "/data/runs/chestagentbench",
+                "is_file": False,
+                "n_files_total": 4,
+                "n_dirs": 2,
+                "extensions": {".json": 3, ".txt": 1},
+                "json_files_found": 4,
+                "json_files_used": 3,
+                "entries": ["agent-a/", "agent-a/results.json", "notes.txt"],
+                "truncated": False,
+            },
+        },
+        "charts": [],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # schema is stated up front: row/column counts, grain, and outcome kind
+    assert "Data structure" in blob
+    assert "case-level" in blob
+    assert "Continuous outcome: Yield pct (29 distinct values)" in blob
+    # what was literally found on disk is shown too, before the parsed schema
+    assert "Folder contents" in blob
+    assert "/data/runs/chestagentbench" in blob
+    assert "4 files across 2 subdirectories" in blob
+    assert "3 of 4 JSON file(s) sampled" in blob
+    codes = " ".join(str(c.value) for c in at.code)
+    assert "agent-a/results.json" in codes
+    # the full column/role/type breakdown is a real table, not a truncated dict repr
+    assert len(at.dataframe) >= 1
+    schema_df = at.dataframe[0].value
+    assert "temperature" in schema_df["Field"].str.lower().tolist()
+    assert "outcome" in schema_df["Role"].tolist()
+    # profiling notes (e.g. constant columns) surface too
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "constant" in captions.lower()
+
+
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
     logs = tmp_path / "logs_m2_5"
     logs.mkdir(parents=True)

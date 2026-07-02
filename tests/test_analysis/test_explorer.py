@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from evalvitals.analysis import ExploratoryAnalysisAgent, load_records_from_path
+from evalvitals.analysis import ExploratoryAnalysisAgent, load_records_from_path, scan_folder
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 _GOOD_CODE = """
@@ -198,6 +198,60 @@ def test_load_records_from_path_samples_across_files(tmp_path):
 
     assert len(loaded) == 4
     assert {r["_source_dir"] for r in loaded} == {"agent-a", "agent-b"}
+
+
+def test_scan_folder_reports_filesystem_structure_not_just_row_schema(tmp_path):
+    for agent in ("agent-a", "agent-b"):
+        run_dir = tmp_path / agent
+        run_dir.mkdir()
+        (run_dir / f"{agent}_results.json").write_text(
+            json.dumps([{"question_id": f"{agent}-0", "is_correct": True}]),
+            encoding="utf-8",
+        )
+    (tmp_path / "agent-a" / "tool_calls_1.json").write_text(
+        json.dumps([{"name": "tool"}]), encoding="utf-8"
+    )
+    (tmp_path / "agent-a" / "notes.txt").write_text("scratch", encoding="utf-8")
+
+    scan = scan_folder(tmp_path)
+
+    assert scan["is_file"] is False
+    assert scan["n_dirs"] == 2
+    assert scan["n_files_total"] == 4  # 2 results + tool_calls + notes.txt
+    assert scan["extensions"][".json"] == 3
+    assert scan["extensions"][".txt"] == 1
+    # tool_calls_1.json is discovered but excluded from the default sample
+    assert scan["json_files_found"] == 3
+    assert scan["json_files_used"] == 2
+    assert any("notes.txt" in e for e in scan["entries"])
+
+
+def test_scan_folder_handles_a_single_file(tmp_path):
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps([{"a": 1}]), encoding="utf-8")
+
+    scan = scan_folder(path)
+
+    assert scan["is_file"] is True
+    assert scan["n_files_total"] == 1
+    assert scan["json_files_found"] == 1
+    assert scan["json_files_used"] == 1
+
+
+def test_explore_path_attaches_folder_scan_to_report(tmp_path):
+    run_dir = tmp_path / "agent-a"
+    run_dir.mkdir()
+    (run_dir / "agent-a_results.json").write_text(
+        json.dumps([{"question_id": "q0", "is_correct": True}]),
+        encoding="utf-8",
+    )
+    agent = ExploratoryAnalysisAgent()
+    report = agent.explore_path(tmp_path)
+
+    scan = report.data_profile.get("folder_scan")
+    assert scan is not None
+    assert scan["n_files_total"] == 1
+    assert scan["root"] == str(tmp_path)
 
 
 def test_explorer_explore_path(tmp_path):

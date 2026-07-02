@@ -554,6 +554,10 @@ class ExploratoryAnalysisAgent:
         report = self.explore_records(rows, question=question, outcome_col=outcome_col)
         report.data_profile.setdefault("source_path", str(Path(path)))
         report.data_profile.setdefault("loaded_rows", len(rows))
+        report.data_profile.setdefault(
+            "folder_scan",
+            scan_folder(path, max_files=max_files, include_tool_calls=include_tool_calls),
+        )
         return report
 
     def _write_input(self, rows: list[dict[str, Any]]) -> None:
@@ -639,6 +643,81 @@ def _records_to_rows(records: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def _discover_json_files(
+    root: Path, *, max_files: int, include_tool_calls: bool
+) -> tuple[list[Path], int]:
+    """Find the JSON/JSONL files ``load_records_from_path`` would read.
+
+    Returns ``(files_used, n_matching_before_filter_and_cap)`` — the second
+    value counts every ``*.json`` file on disk (including ``tool_calls_*``),
+    so :func:`scan_folder` can show how many were excluded/capped, not just
+    how many survived."""
+    if root.is_file():
+        return [root], 1
+    all_json = sorted(root.rglob("*.json"))
+    files = all_json
+    if not include_tool_calls:
+        files = [p for p in files if not p.name.startswith("tool_calls_")]
+    return files[:max_files], len(all_json)
+
+
+def scan_folder(
+    path: str | Path,
+    *,
+    max_files: int = 200,
+    include_tool_calls: bool = False,
+    max_listing: int = 60,
+) -> dict[str, Any]:
+    """Filesystem-level summary of what a folder actually contains.
+
+    This is deliberately independent of :class:`~evalvitals.analysis.profile.
+    DatasetProfile` (which describes parsed row/column structure): it answers
+    "what did the agent see on disk" — file/dir counts, extension mix, and how
+    many of the discovered JSON files were actually sampled — since that
+    differs from folder to folder and is useful to see before any row-level
+    parsing happens.
+    """
+    root = Path(path)
+    if root.is_file():
+        return {
+            "root": str(root),
+            "is_file": True,
+            "n_files_total": 1,
+            "n_dirs": 0,
+            "extensions": {root.suffix.lower() or "(no extension)": 1},
+            "json_files_found": 1,
+            "json_files_used": 1,
+            "entries": [root.name],
+            "truncated": False,
+        }
+
+    all_paths = sorted(root.rglob("*"))
+    files = [p for p in all_paths if p.is_file()]
+    dirs = [p for p in all_paths if p.is_dir()]
+    ext_counts: dict[str, int] = {}
+    for p in files:
+        ext = p.suffix.lower() or "(no extension)"
+        ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+    used_files, n_json_found = _discover_json_files(
+        root, max_files=max_files, include_tool_calls=include_tool_calls
+    )
+    entries = [
+        str(p.relative_to(root)) + ("/" if p.is_dir() else "") for p in all_paths[:max_listing]
+    ]
+    return {
+        "root": str(root),
+        "is_file": False,
+        "n_files_total": len(files),
+        "n_dirs": len(dirs),
+        "extensions": dict(sorted(ext_counts.items(), key=lambda kv: -kv[1])),
+        "json_files_found": n_json_found,
+        "json_files_used": len(used_files),
+        "entries": entries,
+        "truncated": len(all_paths) > max_listing,
+    }
+
+
 def load_records_from_path(
     path: str | Path,
     *,
@@ -648,10 +727,7 @@ def load_records_from_path(
 ) -> list[dict[str, Any]]:
     """Load a bounded sample of JSON/JSONL records from a file or directory."""
     root = Path(path)
-    files = [root] if root.is_file() else sorted(root.rglob("*.json"))
-    if not include_tool_calls:
-        files = [p for p in files if not p.name.startswith("tool_calls_")]
-    files = files[:max_files]
+    files, _ = _discover_json_files(root, max_files=max_files, include_tool_calls=include_tool_calls)
     per_file_limit = max(1, max_rows // max(1, len(files)))
     rows: list[dict[str, Any]] = []
     for file_path in files:

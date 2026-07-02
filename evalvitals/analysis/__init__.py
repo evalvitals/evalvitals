@@ -15,6 +15,7 @@ from evalvitals.analysis.explorer import (
     ExploratoryAnalysisReport,
     Takeaway,
     load_records_from_path,
+    scan_folder,
 )
 from evalvitals.analysis.fused_pipeline import (
     FusedReport,
@@ -88,6 +89,7 @@ __all__ = [
     "ReportStep",
     "compile_diagnostic_report",
     "load_records_from_path",
+    "scan_folder",
     "StatsInput",
     "StatsToolResult",
     "EvidenceResult",

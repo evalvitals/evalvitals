@@ -339,11 +339,9 @@ def _render_problem_setting(
                 st.dataframe(preview, width="stretch", hide_index=True, height=260)
         elif isinstance(columns, dict) and columns:
             st.caption("Explorer data profile from the sampled input records.")
-            rows = [
-                {"field": k, "display": display_name(k), "profile": str(v)[:180]}
-                for k, v in list(columns.items())[:12]
-            ]
-            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=260)
+            schema = _column_schema_dataframe(columns)
+            if not schema.empty:
+                st.dataframe(schema, width="stretch", hide_index=True, height=260)
         else:
             st.info("No structured data profile was saved with this report.")
 
@@ -651,6 +649,138 @@ def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> Non
             _render_charts_and_plots(explore_report, explore_dir)
 
 
+def _column_schema_dataframe(columns: dict[str, Any], *, limit: int | None = None) -> pd.DataFrame:
+    """Turn a ``DatasetProfile.columns`` dict into a readable schema table.
+
+    Shared by the Problem Setting and Exploratory Analysis tabs so a reader
+    sees the same column/role/type breakdown regardless of which tab they
+    land on first — this is the one place that has to adapt per folder, since
+    every run's schema is different."""
+    rows = []
+    items = list(columns.items())
+    if limit is not None:
+        items = items[:limit]
+    for name, col in items:
+        if not isinstance(col, dict):
+            continue
+        lo, hi = col.get("numeric_min"), col.get("numeric_max")
+        value_range = f"{lo:g} – {hi:g}" if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) else "—"
+        rows.append({
+            "Role": str(col.get("role", "predictor")),
+            "Field": display_name(str(name)),
+            "Type": str(col.get("dtype", "")),
+            "Unique": col.get("unique", 0),
+            "Missing": col.get("missing", 0),
+            "Range": value_range,
+        })
+    if not rows:
+        return pd.DataFrame()
+    role_order = {"outcome": 0, "id": 1, "group": 2, "time": 3, "predictor": 4}
+    return (
+        pd.DataFrame(rows)
+        .assign(_order=lambda d: d["Role"].map(role_order).fillna(9))
+        .sort_values(["_order", "Field"])
+        .drop(columns="_order")
+        .reset_index(drop=True)
+    )
+
+
+def _render_folder_scan(scan: dict[str, Any]) -> None:
+    """What the agent literally found on disk before any row-level parsing:
+    file/dir counts, extension mix, how many JSON files were sampled, and the
+    raw relative-path listing. This differs folder to folder and isn't
+    captured by the parsed row/column schema below it."""
+    root = str(scan.get("root") or "")
+    n_files = scan.get("n_files_total", 0)
+    n_dirs = scan.get("n_dirs", 0)
+    json_found = scan.get("json_files_found", 0)
+    json_used = scan.get("json_files_used", 0)
+    extensions = scan.get("extensions") or {}
+    entries = [str(e) for e in scan.get("entries") or []]
+    truncated = bool(scan.get("truncated"))
+
+    ext_pills = "".join(
+        f'<span class="ev-pill">{_html_escape(str(ext))} · {_html_escape(_format_int(count))}</span>'
+        for ext, count in list(extensions.items())[:10]
+    )
+    sampling_note = (
+        f"{json_used} of {json_found} JSON file(s) sampled"
+        if json_found != json_used
+        else f"{json_used} JSON file(s)"
+    )
+    summary_line = (
+        f"{_format_int(n_files)} files across {_format_int(n_dirs)} "
+        f"subdirector{'y' if n_dirs == 1 else 'ies'} · {sampling_note}"
+    )
+    st.markdown(
+        f"""
+        <div class="ev-structure-card">
+          <div class="ev-brief-label">Folder contents · {_html_escape(root)}</div>
+          <div class="ev-structure-outcome">{_html_escape(summary_line)}</div>
+          <div style="margin-top:0.55rem; display:flex; flex-wrap:wrap; gap:0.35rem;">{ext_pills}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if entries:
+        label = "Folder listing" + (f" (first {len(entries)} entries)" if truncated else "")
+        with st.expander(label, expanded=True):
+            st.code("\n".join(entries), language=None)
+
+
+def _render_data_structure_panel(report: dict[str, Any]) -> None:
+    """Orient on schema before findings: every folder's data looks different,
+    so the analysis tab states what was found on disk, then row count, outcome
+    kind, and the full column/role/type breakdown — up front, instead of
+    assuming a fixed shape."""
+    profile = report.get("data_profile") or {}
+    columns = profile.get("columns") or {}
+    scan = profile.get("folder_scan") or {}
+    if scan:
+        _render_folder_scan(scan)
+
+    if not isinstance(columns, dict) or not columns:
+        return
+
+    outcome = profile.get("outcome") or {}
+    grain = str(profile.get("grain") or "unknown")
+    n_rows = profile.get("loaded_rows", profile.get("n_rows"))
+    kind = str(outcome.get("kind", "none"))
+    if kind == "none" or not outcome.get("present"):
+        outcome_text = "No outcome column detected — this is unsupervised exploration."
+    else:
+        kind_label = {"binary": "Binary", "categorical": "Categorical", "continuous": "Continuous"}.get(
+            kind, kind.title()
+        )
+        unique = outcome.get("unique", 0)
+        outcome_text = (
+            f"{kind_label} outcome: {display_name(str(outcome.get('column')))} "
+            f"({unique} distinct value{'s' if unique != 1 else ''})"
+        )
+
+    st.markdown(
+        f"""
+        <div class="ev-structure-card">
+          <div class="ev-brief-label">
+            Data structure · {_html_escape(grain)}-level · {_html_escape(_format_int(n_rows))} rows profiled
+            · {_html_escape(_format_int(len(columns)))} columns
+          </div>
+          <div class="ev-structure-outcome">{_html_escape(outcome_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    schema = _column_schema_dataframe(columns)
+    if not schema.empty:
+        st.dataframe(
+            schema, width="stretch", hide_index=True, height=min(360, 46 + 35 * len(schema))
+        )
+
+    warnings = [str(w) for w in profile.get("warnings") or []]
+    if warnings:
+        st.caption("Profiling notes: " + "; ".join(warnings[:5]))
+
+
 def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
     """The primary exploratory-analysis view: pure descriptive EDA, no hypotheses.
 
@@ -665,6 +795,7 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
         "</div>",
         unsafe_allow_html=True,
     )
+    _render_data_structure_panel(report)
     storyboard = _storyboard_panels(report, story=None)
     _render_storyboard_panel(storyboard, "problem_setting")
 
@@ -2564,6 +2695,21 @@ def _inject_css() -> None:
           color: #344054;
           font-size: 0.92rem;
           line-height: 1.45;
+        }
+        .ev-structure-card {
+          background: #ffffff;
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-accent);
+          border-radius: var(--ev-radius);
+          margin: 0.35rem 0 0.65rem;
+          padding: 0.85rem 1rem;
+          box-shadow: var(--ev-shadow);
+        }
+        .ev-structure-outcome {
+          color: var(--ev-text);
+          font-size: 0.98rem;
+          font-weight: 730;
+          margin-top: 0.35rem;
         }
         .ev-evidence-summary {
           background: #f6fef9;
