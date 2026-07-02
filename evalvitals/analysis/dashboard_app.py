@@ -267,7 +267,14 @@ def _render_problem_setting(
             n_fail = cb.get("FAIL", n_fail)
             n_pass = cb.get("PASS", n_pass)
 
-    st.markdown("### Problem Setting")
+    st.markdown(
+        '<div class="ev-section-head">'
+        '<div class="ev-section-title">Problem Setting</div>'
+        '<div class="ev-section-sub">What data was loaded and how it will be evaluated, '
+        "before any analysis runs.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     if story:
         _render_stage_map(active={"M1"})
     _render_storyboard_panel(storyboard, "problem_setting")
@@ -650,7 +657,14 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
     Each takeaway is rendered as title -> its supporting chart(s)/table(s) ->
     the analysis paragraph, so a reader never has to hunt for the evidence
     behind a claim in a separate section."""
-    st.markdown("### Exploratory Analysis")
+    st.markdown(
+        '<div class="ev-section-head">'
+        '<div class="ev-section-title">Exploratory Analysis</div>'
+        '<div class="ev-section-sub">Descriptive findings only — each takeaway is shown '
+        "with the chart or table that supports it, followed by the analysis.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     storyboard = _storyboard_panels(report, story=None)
     _render_storyboard_panel(storyboard, "problem_setting")
 
@@ -683,43 +697,57 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
     referenced_tables: set[str] = set()
 
     for i, takeaway in enumerate(takeaways, start=1):
-        st.markdown(
-            f'<div class="ev-card-title">Takeaway {i}: {_html_escape(str(takeaway.get("title", "")))}</div>',
-            unsafe_allow_html=True,
-        )
-        chart_names = [str(x) for x in takeaway.get("chart_names") or []]
-        table_names = [str(x) for x in takeaway.get("table_names") or []]
-        found_charts = []
-        for name in chart_names:
-            referenced_charts.add(name)
-            if name in charts_by_name:
-                found_charts.append(("chart", charts_by_name[name]))
-            elif name in plots_by_stem:
-                found_charts.append(("plot", plots_by_stem[name]))
-        if found_charts:
-            cols = st.columns(min(2, len(found_charts)))
-            for idx, (kind, item) in enumerate(found_charts):
-                with cols[idx % len(cols)]:
-                    if kind == "chart":
-                        _render_chart_card(item, turn_dir, key_prefix=f"takeaway{i}")
-                    else:
-                        _render_plot_card(item, turn_dir)
-        for name in table_names:
-            referenced_tables.add(name)
-            source = tables.get(name)
-            if source is None:
-                continue
-            df = _table_to_dataframe(source, turn_dir)
-            if df is not None:
-                st.dataframe(df, width="stretch", height=220)
-        if chart_names or table_names:
-            if not found_charts and not any(n in tables for n in table_names):
-                st.caption("(referenced evidence not found among this report's artifacts)")
-        if takeaway.get("analysis"):
-            st.markdown(_html_escape(str(takeaway["analysis"])))
-        if takeaway.get("caveat"):
-            st.caption(f"Caveat: {takeaway['caveat']}")
-        st.markdown("---")
+        with st.container(border=True):
+            st.markdown(
+                '<div class="ev-takeaway-head">'
+                f'<div class="ev-takeaway-badge">{i}</div>'
+                f'<div class="ev-takeaway-title">{_html_escape(str(takeaway.get("title", "")))}</div>'
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            chart_names = [str(x) for x in takeaway.get("chart_names") or []]
+            table_names = [str(x) for x in takeaway.get("table_names") or []]
+            found_charts = []
+            for name in chart_names:
+                referenced_charts.add(name)
+                if name in charts_by_name:
+                    found_charts.append(("chart", charts_by_name[name]))
+                elif name in plots_by_stem:
+                    found_charts.append(("plot", plots_by_stem[name]))
+            if found_charts:
+                cols = st.columns(min(2, len(found_charts)))
+                for idx, (kind, item) in enumerate(found_charts):
+                    with cols[idx % len(cols)]:
+                        if kind == "chart":
+                            _render_chart_card(item, turn_dir, heading_level="caption", key_prefix=f"takeaway{i}")
+                        else:
+                            _render_plot_card(item, turn_dir)
+            for name in table_names:
+                referenced_tables.add(name)
+                source = tables.get(name)
+                if source is None:
+                    continue
+                df = _table_to_dataframe(source, turn_dir)
+                if df is not None:
+                    st.dataframe(df, width="stretch", height=220)
+            if chart_names or table_names:
+                if not found_charts and not any(n in tables for n in table_names):
+                    st.markdown(
+                        '<div class="ev-takeaway-evidence-empty">'
+                        "(referenced evidence not found among this report's artifacts)"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+            if takeaway.get("analysis"):
+                st.markdown(
+                    f'<div class="ev-takeaway-analysis">{_html_escape(str(takeaway["analysis"]))}</div>',
+                    unsafe_allow_html=True,
+                )
+            if takeaway.get("caveat"):
+                st.markdown(
+                    f'<div class="ev-takeaway-caveat">Caveat — {_html_escape(str(takeaway["caveat"]))}</div>',
+                    unsafe_allow_html=True,
+                )
 
     orphan_charts = [c for name, c in charts_by_name.items() if name not in referenced_charts]
     orphan_plots = [p for stem, p in plots_by_stem.items() if stem not in referenced_charts]
@@ -749,11 +777,14 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
 
 
 def _render_standalone_artifacts(report: dict[str, Any], turn_dir: Path) -> None:
-    st.markdown("### Artifacts")
-    st.caption(
-        "This is descriptive exploratory analysis only — no hypotheses were "
-        "generated or validated. The items below are optional inputs for a "
-        "separate, downstream confirmatory pipeline, not conclusions."
+    st.markdown(
+        '<div class="ev-section-head">'
+        '<div class="ev-section-title">Artifacts</div>'
+        '<div class="ev-section-sub">Descriptive exploratory analysis only — no hypotheses were '
+        "generated or validated. These are optional inputs for a separate, downstream "
+        "confirmatory pipeline, not conclusions.</div>"
+        "</div>",
+        unsafe_allow_html=True,
     )
     signals = _candidate_signals(report)
     tests = report.get("recommended_confirmatory_tests") or []
@@ -2269,15 +2300,24 @@ def _inject_css() -> None:
         """
         <style>
         :root {
-          --ev-bg: #f7f8fa;
+          --ev-bg: #f4f6f9;
           --ev-panel: #ffffff;
-          --ev-border: #dfe3ea;
-          --ev-text: #17202a;
+          --ev-border: #e2e6ed;
+          --ev-text: #16202b;
           --ev-muted: #667085;
           --ev-accent: #1f7a8c;
+          --ev-accent-dark: #145b68;
           --ev-accent-soft: #e7f5f7;
           --ev-ok: #0f8a5f;
           --ev-fail: #b42318;
+          --ev-warn: #93670c;
+          --ev-radius: 12px;
+          --ev-radius-sm: 8px;
+          --ev-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
+          --ev-shadow-md: 0 6px 16px rgba(16, 24, 40, 0.08);
+        }
+        html, body, .stApp {
+          font-family: -apple-system, "Segoe UI", "Inter", system-ui, sans-serif;
         }
         .stApp {
           background: var(--ev-bg);
@@ -2303,28 +2343,30 @@ def _inject_css() -> None:
         }
         .ev-header {
           align-items: flex-start;
-          background: var(--ev-panel);
+          background: linear-gradient(135deg, #ffffff 0%, var(--ev-accent-soft) 145%);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-left: 4px solid var(--ev-accent);
+          border-radius: var(--ev-radius);
           display: flex;
           justify-content: space-between;
           gap: 1rem;
-          padding: 0.75rem 1rem;
-          margin-bottom: 0.65rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          padding: 1rem 1.25rem;
+          margin-bottom: 0.85rem;
+          box-shadow: var(--ev-shadow);
         }
         .ev-header h1 {
           color: var(--ev-text);
-          font-size: 1.2rem;
-          line-height: 1.25;
-          margin: 0.08rem 0 0.25rem;
-          font-weight: 760;
-          letter-spacing: 0;
+          font-size: 1.32rem;
+          line-height: 1.3;
+          margin: 0.15rem 0 0.3rem;
+          font-weight: 780;
+          letter-spacing: -0.01em;
         }
         .ev-kicker {
-          color: var(--ev-accent);
-          font-size: 0.78rem;
-          font-weight: 760;
+          color: var(--ev-accent-dark);
+          font-size: 0.76rem;
+          font-weight: 780;
+          letter-spacing: 0.04em;
           text-transform: uppercase;
         }
         .ev-path {
@@ -2363,10 +2405,10 @@ def _inject_css() -> None:
         .ev-metric-card {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           min-height: 6.8rem;
           padding: 0.8rem 0.85rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-metric-label {
           color: var(--ev-muted);
@@ -2397,10 +2439,10 @@ def _inject_css() -> None:
         .ev-brief-card {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           min-height: 5rem;
           padding: 0.75rem 0.85rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-brief-label {
           color: var(--ev-accent);
@@ -2418,10 +2460,10 @@ def _inject_css() -> None:
           background: #ffffff;
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-accent);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           margin-bottom: 0.9rem;
           padding: 1rem 1.1rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-report-answer-text {
           color: var(--ev-text);
@@ -2437,7 +2479,7 @@ def _inject_css() -> None:
         .ev-stage-card {
           background: #ffffff;
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           min-height: 3.4rem;
           padding: 0.55rem 0.65rem;
           margin-bottom: 0.65rem;
@@ -2484,11 +2526,11 @@ def _inject_css() -> None:
         .ev-analysis-card {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           min-height: 9.2rem;
           padding: 0.95rem 1rem;
           margin-bottom: 0.8rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-analysis-method,
         .ev-analysis-evidence,
@@ -2507,10 +2549,10 @@ def _inject_css() -> None:
           background: #ffffff;
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-ok);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           margin: 0.35rem 0 0.85rem;
           padding: 0.9rem 1rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-storyboard-title {
           color: var(--ev-text);
@@ -2527,7 +2569,7 @@ def _inject_css() -> None:
           background: #f6fef9;
           border: 1px solid #abefc6;
           border-left: 4px solid var(--ev-ok);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           margin: 0.25rem 0 0.75rem;
           padding: 0.85rem 1rem;
         }
@@ -2535,10 +2577,10 @@ def _inject_css() -> None:
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-info);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           margin: 0.55rem 0;
           padding: 0.85rem 1rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-evidence-card.ev-evidence-audit {
           border-left-color: #98a2b3;
@@ -2577,7 +2619,7 @@ def _inject_css() -> None:
           background: #f8fafc;
           border: 1px solid var(--ev-border);
           border-left: 3px solid var(--ev-info);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           color: #344054;
           font-size: 0.92rem;
           line-height: 1.45;
@@ -2594,10 +2636,10 @@ def _inject_css() -> None:
         .ev-claim-card {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           margin: 0.7rem 0 0.35rem;
           padding: 0.9rem 1rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-claim-supported {
           border-left: 4px solid var(--ev-ok);
@@ -2626,7 +2668,7 @@ def _inject_css() -> None:
           align-items: flex-start;
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           display: flex;
           gap: 0.75rem;
           margin-bottom: 0.65rem;
@@ -2648,10 +2690,10 @@ def _inject_css() -> None:
         .ev-signal {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           margin-bottom: 0.75rem;
           padding: 0.95rem;
-          box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+          box-shadow: var(--ev-shadow);
         }
         .ev-signal-title {
           color: var(--ev-text);
@@ -2683,11 +2725,92 @@ def _inject_css() -> None:
           font-weight: 720;
           margin: 0.6rem 0 0.25rem;
         }
+        .ev-section-head {
+          border-bottom: 1px solid var(--ev-border);
+          margin: 0.1rem 0 1.1rem;
+          padding-bottom: 0.6rem;
+        }
+        .ev-section-title {
+          color: var(--ev-text);
+          font-size: 1.32rem;
+          font-weight: 780;
+          letter-spacing: -0.01em;
+          line-height: 1.3;
+        }
+        .ev-section-sub {
+          color: var(--ev-muted);
+          font-size: 0.86rem;
+          margin-top: 0.2rem;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.ev-takeaway-head) {
+          border: 1px solid var(--ev-border);
+          border-radius: var(--ev-radius);
+          box-shadow: var(--ev-shadow);
+          margin-bottom: 1.1rem;
+          padding: 1.15rem 1.3rem 1.3rem;
+          transition: box-shadow 120ms ease, border-color 120ms ease;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.ev-takeaway-head):hover {
+          border-color: #b9d4d9;
+          box-shadow: var(--ev-shadow-md);
+        }
+        .ev-takeaway-head {
+          align-items: center;
+          display: flex;
+          gap: 0.7rem;
+          margin-bottom: 0.15rem;
+        }
+        .ev-takeaway-badge {
+          align-items: center;
+          background: linear-gradient(135deg, var(--ev-accent), var(--ev-accent-dark));
+          border-radius: 999px;
+          box-shadow: 0 2px 6px rgba(31, 122, 140, 0.35);
+          color: #ffffff;
+          display: flex;
+          flex: 0 0 2rem;
+          font-size: 0.95rem;
+          font-weight: 800;
+          height: 2rem;
+          justify-content: center;
+          width: 2rem;
+        }
+        .ev-takeaway-title {
+          color: var(--ev-text);
+          font-size: 1.08rem;
+          font-weight: 760;
+          line-height: 1.35;
+        }
+        .ev-takeaway-evidence-empty {
+          color: var(--ev-muted);
+          font-size: 0.82rem;
+          font-style: italic;
+          margin: 0.5rem 0;
+        }
+        .ev-takeaway-analysis {
+          background: #f8fafc;
+          border-left: 3px solid var(--ev-accent);
+          border-radius: 0 var(--ev-radius-sm) var(--ev-radius-sm) 0;
+          color: #344054;
+          font-size: 0.94rem;
+          line-height: 1.6;
+          margin-top: 1rem;
+          padding: 0.75rem 0.95rem;
+        }
+        .ev-takeaway-caveat {
+          background: #fffaeb;
+          border: 1px solid #fedf89;
+          border-radius: var(--ev-radius-sm);
+          color: var(--ev-warn);
+          font-size: 0.82rem;
+          margin-top: 0.6rem;
+          padding: 0.45rem 0.75rem;
+        }
         div[data-testid="stMetric"] {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius);
           padding: 0.65rem 0.75rem;
+          box-shadow: var(--ev-shadow);
         }
         div[data-testid="stMetricValue"] {
           font-size: 1.45rem;
@@ -2696,15 +2819,23 @@ def _inject_css() -> None:
         div[data-testid="stMetricLabel"] {
           font-size: 0.78rem;
         }
+        div[data-testid="stTabs"] {
+          border-bottom: 1px solid var(--ev-border);
+          margin-bottom: 0.9rem;
+        }
         div[data-testid="stTabs"] button {
-          font-weight: 680;
+          font-size: 0.92rem;
+          font-weight: 700;
+        }
+        div[data-testid="stTabs"] button[aria-selected="true"] {
+          color: var(--ev-accent-dark);
         }
         div[data-testid="stDataFrame"],
         div[data-testid="stImage"],
         div[data-testid="stVegaLiteChart"] {
           background: var(--ev-panel);
           border: 1px solid var(--ev-border);
-          border-radius: 8px;
+          border-radius: var(--ev-radius-sm);
           padding: 0.4rem;
         }
         h3 {

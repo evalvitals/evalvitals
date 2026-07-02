@@ -169,13 +169,13 @@ def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_pat
 
     assert not at.exception
     blob = " ".join(str(m.value) for m in at.markdown)
-    # the takeaway headline, its analysis, and its caveat all render together
-    assert "Takeaway 1: Higher temperature batches yield more" in blob
+    # the takeaway's numbered badge, headline, analysis, and caveat all render together
+    assert 'ev-takeaway-badge">1<' in blob
+    assert "Higher temperature batches yield more" in blob
     assert "Mean yield rises from 70.1%" in blob
-    captions = " ".join(str(c.value) for c in at.caption)
-    assert "Caveat: Descriptive only" in captions
+    assert "Caveat" in blob and "Descriptive only" in blob
     # its supporting chart was found and rendered, not left orphaned
-    assert "referenced evidence not found" not in captions
+    assert "referenced evidence not found" not in blob
     assert "Mean yield by temperature bin" in blob  # the chart's own title rendered
     # no leftover M2/hypothesis-generation branding in the standalone view
     assert "Standalone M2" not in blob
@@ -214,11 +214,11 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     at = _run_app(tmp_path)
     assert not at.exception
     heads = [m.value for m in at.markdown if isinstance(m.value, str) and m.value.startswith("###")]
+    blob = " ".join(str(m.value) for m in at.markdown)
     # the three-panel narrative sections are present
-    assert any("Problem Setting" in h for h in heads)
+    assert "ev-section-title\">Problem Setting<" in blob
     assert any("Analysis" in h for h in heads)
     assert any("Hypotheses & Decision" in h for h in heads)
-    blob = " ".join(str(m.value) for m in at.markdown)
     assert "Measurement" in blob
     assert "Confirmatory analysis" in blob
     assert "Hypothesis generation" in blob
