@@ -24,8 +24,15 @@ def main(argv: list[str] | None = None) -> int:
     explore.add_argument(
         "-q",
         "--question",
-        default="Explore patterns that distinguish failures from passes.",
+        default="Explore this dataset and surface the patterns that matter.",
         help="Natural-language analysis question for the local coding agent.",
+    )
+    explore.add_argument(
+        "--outcome-col",
+        default=None,
+        help="Name of the target/outcome column, if any (e.g. 'label'). Omit to "
+             "auto-detect by name heuristics, or fall back to unsupervised EDA "
+             "when the data has no recognizable outcome.",
     )
     explore.add_argument(
         "--out",
@@ -97,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             skills=args.skill,
             allow_skills=args.allow_skills,
             use_bundled_skills=args.use_bundled_skills,
+            outcome_col=args.outcome_col,
         )
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)

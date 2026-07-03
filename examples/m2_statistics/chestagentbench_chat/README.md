@@ -1,10 +1,10 @@
-# ChestAgentBench M2 Explore
+# ChestAgentBench Exploratory Analysis
 
-This example runs a Lambda/Codex-style single-shot M2 exploration over an
+This example runs a Lambda/Codex-style single-shot exploratory analysis over an
 existing results directory. You do not write analysis code; the local coding
 agent writes and runs one exploratory analysis script inside EvalVitals' sandbox.
 
-For the general standalone M2 workflow, see
+For the general standalone exploratory analysis workflow, see
 [`docs/m2_analysis.md`](../../../docs/m2_analysis.md).
 
 Default data path:

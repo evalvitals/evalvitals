@@ -299,7 +299,13 @@ class StatsToolGenerator:
         )
 
     def _run_code(self, code: str, name: str) -> StatsToolResult:
-        sandbox_result = self._sandbox.run(code, timeout_sec=self._timeout_sec)
+        repo_root = Path(__file__).resolve().parents[3]
+        wrapped = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(repo_root)!r})\n"
+            + code
+        )
+        sandbox_result = self._sandbox.run(wrapped, timeout_sec=self._timeout_sec)
         if not sandbox_result.ok:
             err = (sandbox_result.stderr or "").strip()[:300] or "non-zero exit"
             return StatsToolResult(
@@ -421,6 +427,9 @@ def _parse_result(stdout: str, name: str, alpha: float = 0.05) -> StatsToolResul
         e_value=e_value,
         p_value=None,  # diagnostic at most; never a host decision input
         underpowered=bool(data.get("underpowered", False)),
+        analysis_key=f"generated:{name}",
+        correction_family="e_bh" if e_value is not None else None,
+        raw_reject=reject,
         details=details,
     )
 

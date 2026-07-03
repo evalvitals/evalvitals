@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
-from pathlib import Path
 
 import run  # build_codegen, OUT
 
@@ -61,7 +60,7 @@ def main() -> None:
     probe_results = state["probe_results"]
     cases = state["cases"]
 
-    from evalvitals.analysis import M2ExplorerAgent, run_fused_analysis
+    from evalvitals.analysis import ExploratoryAnalysisAgent, run_fused_analysis
     from evalvitals.analysis.operationalize import per_case_to_records
     from evalvitals.eval_agent.sandbox import ExperimentSandbox
     from evalvitals.eval_agent.stages.stats_tools import build_stats_input
@@ -76,7 +75,7 @@ def main() -> None:
         raise SystemExit("no per-case signals in the frozen M1 — nothing for the explorer to compose")
 
     FUSED_DIR.mkdir(parents=True, exist_ok=True)
-    explorer = M2ExplorerAgent(
+    explorer = ExploratoryAnalysisAgent(
         cli_config=run.build_codegen(args.backend, skills=args.skill, allow_skills=args.allow_skills),
         sandbox=ExperimentSandbox(workdir=FUSED_DIR / "sandbox", cleanup=False),
         timeout_sec=args.timeout_sec,

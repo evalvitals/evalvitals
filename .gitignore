@@ -218,6 +218,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 .claude/
+
+# Local evaluation outputs and run artifacts
+runs/
+evalvitals_chat_output/
+examples/**/outputs/
 .antigravitycli/examples/qwen_loop/outputs/
 examples/qwen_loop_agy/*
 .docker/
@@ -232,3 +237,6 @@ examples/deco_*/outputs/
 examples/diagnosis_loops/deco_pope/data/images/
 examples/diagnosis_loops/deco_hallu/outputs/m1_state.pkl
 .gstack/
+
+# large analysis state (keep local, do not commit)
+*.pkl

@@ -19,6 +19,10 @@ _HAVE_MPL = charts_mod._import_matplotlib() is not None
 def _report_with_workdir(workdir):
     (workdir / "tables").mkdir(parents=True)
     (workdir / "tables" / "t.csv").write_text("grp,val\na,3\nb,7\n", encoding="utf-8")
+    (workdir / "records.json").write_text(
+        json.dumps([{"case_id": "c0", "label": "pass"}, {"case_id": "c1", "label": "fail"}]),
+        encoding="utf-8",
+    )
     return ExploratoryAnalysisReport(
         question="q",
         ok=True,
@@ -42,6 +46,9 @@ def test_write_report_artifacts_persists_and_renders(tmp_path):
     assert saved["ok"] is True
     assert (out / "tables" / "t.csv").exists()         # tables copied
     assert (out / "analysis.py").exists()              # code persisted
+    # raw loaded records travel with the report so the dashboard can browse them
+    records = json.loads((out / "records.json").read_text())
+    assert records == [{"case_id": "c0", "label": "pass"}, {"case_id": "c1", "label": "fail"}]
     chart = saved["charts"][0]
     if _HAVE_MPL:
         assert chart.get("figure_path")                # rendered host-side

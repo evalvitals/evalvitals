@@ -23,12 +23,10 @@ One pass that DISCOVERS freely and CONFIRMS rigorously, with the two split apart
    operationalized / were underpowered / had no confirm data. Nothing is silently
    dropped and nothing is over-claimed.
 
-HONEST LIMITATION (encoded, not hidden): the catalog's marginal signal test
-(``signal_label_assoc``) is an unpaired bootstrap-CI test with NO e-value, so
-marginal per-case signals get a CI reject at ``alpha`` but sit OUTSIDE the e-BH
-family (``fdr_corrected=False``). Genuinely FDR-controlling marginal signals needs
-an e-value two-group test (DESIGN §10, "catalog 表达力"); this pipeline uses what
-the validated core actually provides and flags the rest.
+Multiplicity note: paired/e-value tools use e-BH and marginal p-value tools use
+BH. The report exposes both legacy ``rejected_tools`` and precise
+``rejected_result_keys`` so M1-M5 remains compatible while standalone M2 can
+audit the exact tested family.
 """
 
 from __future__ import annotations
@@ -61,10 +59,12 @@ class FusedSignal:
     effect: float | None = None
     ci: tuple[float, float] | None = None
     e_value: float | None = None
+    p_value: float | None = None
     reject: bool | None = None
     underpowered: bool = False
     host_adjudicated: bool = False
     fdr_corrected: bool = False
+    correction_method: str | None = None
     confirmed_on: str = ""      # "held_out" | "in_sample"
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,10 +78,12 @@ class FusedSignal:
             "effect": self.effect,
             "ci": list(self.ci) if self.ci is not None else None,
             "e_value": self.e_value,
+            "p_value": self.p_value,
             "reject": self.reject,
             "underpowered": self.underpowered,
             "host_adjudicated": self.host_adjudicated,
             "fdr_corrected": self.fdr_corrected,
+            "correction_method": self.correction_method,
             "confirmed_on": self.confirmed_on,
         }
 
@@ -189,7 +191,7 @@ def run_fused_analysis(
     Args:
         records:        list of row dicts (id/label/signal columns).
         explorer:       an object with ``explore_records(rows, question=...) ->
-                        ExploratoryAnalysisReport`` (e.g. :class:`M2ExplorerAgent`).
+                        ExploratoryAnalysisReport`` (e.g. :class:`ExploratoryAnalysisAgent`).
         stats_agent:    optional :class:`StatsAnalysisAgent`; one is built with a
                         high signal cap when omitted so the whole family is tested.
         confirm_split:  fraction held out for confirmation (0 = in-sample fallback).
@@ -283,6 +285,25 @@ def run_fused_analysis(
             f"namespaced to avoid overwriting a real signal: {sorted(collisions)}"
         )
 
+    # The deferred "leak-1" check: a bridged recipe (or catalog column) whose
+    # value RECONSTRUCTS the FAIL label is the label in disguise — it would
+    # trivially "confirm" with effect→1 and pollute confirmed_recipes.json. Route
+    # such columns to the sanity lane so they never enter the confirmatory family
+    # or get reported as discriminators; record a caveat for the audit trail.
+    # (build_stats_input_from_records already isolated raw leaks; this re-runs
+    # over the just-injected bridged signals.)
+    from evalvitals.eval_agent.stages.stats_tools import isolate_label_leaks
+
+    leaked = isolate_label_leaks(confirm_inp)
+    for key in leaked:
+        bridged_keys.discard(key)
+    if leaked:
+        report.caveats.append(
+            "label-reconstructing signal(s) held out of the confirmatory family "
+            "(sanity/plumbing, not discriminators): "
+            + ", ".join(f"{k} [{v}]" for k, v in sorted(leaked.items()))
+        )
+
     if stats_agent is None:
         from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 
@@ -297,6 +318,7 @@ def run_fused_analysis(
     report.conclusion = getattr(confirm_report, "conclusion", "")
     corrected = getattr(confirm_report, "corrected_rejections", {}) or {}
     rejected_tools = set(corrected.get("rejected_tools", []))
+    rejected_result_keys = set(corrected.get("rejected_result_keys", []))
 
     # ── 5. Assemble per-signal verdicts (provenance-tagged) ──
     verdict_by_signal = _verdicts_by_signal(getattr(confirm_report, "stats_results", []))
@@ -312,6 +334,7 @@ def run_fused_analysis(
                 recipe=recipe_by_name.get(origin),
                 result=result,
                 rejected_tools=rejected_tools,
+                rejected_result_keys=rejected_result_keys,
                 confirmed_on=confirm_label,
             )
         )
@@ -342,8 +365,10 @@ def run_fused_analysis(
     report.adjudication = {
         "method": corrected.get("method", "e-BH"),
         "alpha": corrected.get("alpha"),
-        "n_in_family": corrected.get("n_tested", 0),  # e-value-bearing tests only
+        "n_in_family": corrected.get("n_tested", 0),
         "rejected_tools": sorted(rejected_tools),
+        "rejected_result_keys": sorted(rejected_result_keys),
+        "families": corrected.get("families", {}),
         "n_signals_tested": len(confirm_inp.per_case),
         "n_signals_rejected": sum(1 for s in report.candidate_signals if s.reject),
         "split": confirm_label,
@@ -353,10 +378,11 @@ def run_fused_analysis(
             "CONFIRM split is IN-SAMPLE (batch too small to hold out); verdicts are "
             "not double-dip-protected — enlarge the batch or lower confirm_split"
         )
-    if any(s.host_adjudicated and not s.fdr_corrected for s in report.candidate_signals):
+    if any(s.host_adjudicated and s.reject and not s.fdr_corrected
+           for s in report.candidate_signals):
         report.caveats.append(
-            "marginal per-case signal verdicts are CI-based at alpha and NOT e-BH "
-            "FDR-corrected across the signal family (unpaired test has no e-value)"
+            "some rejected signal verdicts were not FDR-corrected; treat them as "
+            "descriptive until rerun with a correction-capable test"
         )
     return report
 
@@ -393,6 +419,7 @@ def _fused_signal(
     recipe: dict[str, Any] | None,
     result: Any,
     rejected_tools: set[str],
+    rejected_result_keys: set[str],
     confirmed_on: str,
 ) -> FusedSignal:
     fs = FusedSignal(
@@ -411,10 +438,15 @@ def _fused_signal(
     fs.effect = getattr(result, "effect", None)
     fs.ci = getattr(result, "ci", None)
     fs.e_value = getattr(result, "e_value", None)
+    fs.p_value = getattr(result, "p_value", None)
     fs.underpowered = bool(getattr(result, "underpowered", False))
     fs.reject = bool(getattr(result, "reject", False))
-    # e-BH only governs e-value-bearing tools; a marginal CI test is not FDR-corrected.
-    fs.fdr_corrected = fs.e_value is not None and getattr(result, "tool", "") in rejected_tools
+    fs.correction_method = getattr(result, "correction_method", None)
+    result_key = getattr(result, "analysis_key", None)
+    fs.fdr_corrected = bool(getattr(result, "fdr_corrected", False)) or (
+        (result_key in rejected_result_keys)
+        or (getattr(result, "tool", "") in rejected_tools and fs.e_value is not None)
+    )
     if fs.fdr_corrected:
         fs.reject = True
     return fs

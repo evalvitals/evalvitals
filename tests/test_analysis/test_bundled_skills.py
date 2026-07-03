@@ -34,7 +34,7 @@ def test_explore_applies_bundled_skills_on_claude_by_default(monkeypatch, tmp_pa
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "M2ExplorerAgent", _FakeAgent)
+    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
     explore_run.run_explore(tmp_path, coder_provider="claude_code", out=tmp_path / "o")
 
     cfg = captured["cli_config"]
@@ -53,7 +53,7 @@ def test_no_skills_flag_disables_bundled(monkeypatch, tmp_path):
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "M2ExplorerAgent", _FakeAgent)
+    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
     explore_run.run_explore(
         tmp_path, coder_provider="claude_code", out=tmp_path / "o", use_bundled_skills=False
     )
@@ -71,7 +71,7 @@ def test_non_skill_backend_does_not_vendor_skills(monkeypatch, tmp_path):
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "M2ExplorerAgent", _FakeAgent)
+    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
     # codex ignores skills; we don't vendor them there.
     explore_run.run_explore(tmp_path, coder_provider="codex", out=tmp_path / "o")
     assert captured["cli_config"].skills == ()

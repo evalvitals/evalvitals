@@ -245,6 +245,11 @@ class StatsAnalysisReport(AnalysisReport):
     stats_tool_results: list[dict[str, Any]] = field(default_factory=list)
     visualizations: list[dict[str, Any]] = field(default_factory=list)
     protocol: "ExperimentProtocol | None" = None
+    # When True the report carries effect sizes + charts but NO validity verdict:
+    # e-BH FDR correction was NOT run (``corrected_rejections`` is deferred). The
+    # analysis phase uses this so the dashboard shows distributions only; the
+    # confirm phase recomputes e-BH and flips this off. See VLDiagnoseLoop.
+    descriptive_only: bool = False
     # Judge I/O for the LLM-guided path (empty on the threshold-rules path).
     # Surfaced so RunLogger can persist exactly what the M2 judge was shown.
     llm_prompt: str = ""
@@ -263,6 +268,7 @@ class StatsAnalysisReport(AnalysisReport):
             "figures": self.figures,
             "stats_tool_results": self.stats_tool_results,
             "visualizations": self.visualizations,
+            "descriptive_only": self.descriptive_only,
         })
         return d
 
@@ -290,7 +296,7 @@ class StatsAnalysisAgent:
         stats_tool_agent: Any | None = None,
         enable_stats_tools: bool = True,
         figure_dir: "str | None" = None,
-        max_signal_tools: int = 4,
+        max_signal_tools: int | None = None,
         allow_codegen: bool = False,
         codegen_config: "CliAgentConfig | None" = None,
         tool_generator: "StatsToolGenerator | None" = None,
@@ -321,6 +327,7 @@ class StatsAnalysisAgent:
         protocol: "ExperimentProtocol | None" = None,
         data: "CaseBatch | None" = None,
         extra_figures: "list | None" = None,
+        confirmatory: bool = True,
     ) -> StatsAnalysisReport:
         """Analyze *results* into a :class:`StatsAnalysisReport`.
 
@@ -348,6 +355,7 @@ class StatsAnalysisAgent:
             results=results,
             extra_figures=extra_figures,
             legacy_tool_results=legacy_tool_results,
+            confirmatory=confirmatory,
         )
 
     def analyze_input(
@@ -418,11 +426,20 @@ class StatsAnalysisAgent:
         results: "dict[str, Result]",
         extra_figures: "list | None",
         legacy_tool_results: list[Any],
+        confirmatory: bool = True,
     ) -> StatsAnalysisReport:
-        """Shared implementation for loop-driven and standalone M2 analysis."""
+        """Shared implementation for loop-driven and standalone M2 analysis.
 
-        # ── Statistical tool layer (select → run → FDR-correct → plot) ──
-        stats_results, stats_plan, corrected, figures = self._run_stats_tools_input(inp, protocol)
+        ``confirmatory=False`` runs the tools (effect sizes + charts) but DEFERS
+        the validity verdict: e-BH FDR correction is skipped and the report is
+        marked ``descriptive_only`` so the dashboard shows distributions without
+        a supported/not-supported claim. The confirm phase recomputes e-BH.
+        """
+
+        # ── Statistical tool layer (select → run → [FDR-correct] → plot) ──
+        stats_results, stats_plan, corrected, figures = self._run_stats_tools_input(
+            inp, protocol, confirmatory=confirmatory
+        )
 
         # Merge in analyzer heatmap PNGs forwarded from the run logger.
         if extra_figures:
@@ -432,20 +449,23 @@ class StatsAnalysisAgent:
                 if _Path(p).exists() and str(p).endswith(".png")
             ]
 
+        report: "StatsAnalysisReport | None" = None
         if self._judge is not None and protocol is not None:
             try:
-                return self._analyze_llm_guided(
+                report = self._analyze_llm_guided(
                     base, results, protocol,
                     stats_results, stats_plan, corrected, figures,
                     legacy_tool_results,
                 )
             except Exception as exc:
                 logger.warning("LLM-guided M2 analysis failed, falling back: %s", exc)
-
-        return self._to_stats_report(
-            base, protocol, stats_results, stats_plan, corrected, figures,
-            legacy_tool_results,
-        )
+        if report is None:
+            report = self._to_stats_report(
+                base, protocol, stats_results, stats_plan, corrected, figures,
+                legacy_tool_results,
+            )
+        report.descriptive_only = not confirmatory
+        return report
 
     # ------------------------------------------------------------------
     # Statistical tool layer
@@ -469,8 +489,15 @@ class StatsAnalysisAgent:
         self,
         inp: StatsInput,
         protocol: "ExperimentProtocol | None",
+        confirmatory: bool = True,
     ) -> tuple[list[StatsToolResult], list[dict[str, Any]], dict[str, Any], list[str]]:
-        """Run the statistical tool layer over already-normalized input."""
+        """Run the statistical tool layer over already-normalized input.
+
+        ``confirmatory=False`` skips the e-BH FDR correction (the validity
+        verdict) — the per-tool effect sizes / CIs are still computed (the
+        charts need them), but the family-level reject decision is deferred to
+        the confirm phase.
+        """
         if not self._enable_stats_tools or not has_testable_data(inp):
             return [], [], {}, []
 
@@ -499,7 +526,13 @@ class StatsAnalysisAgent:
         stats_results.extend(gen_results)
         stats_plan.extend(gen_plan)
 
-        corrected = fdr_correct(stats_results)
+        # e-BH FDR correction is the validity verdict — deferred in descriptive
+        # (analysis-phase) mode; the confirm phase recomputes it.
+        corrected = (
+            fdr_correct(stats_results) if confirmatory
+            else {"method": "e-BH", "deferred": True, "n_tested": 0, "rejected_tools": [],
+                  "note": "validity deferred to the confirm phase (descriptive_only)"}
+        )
 
         figures: list[str] = []
         if self._figure_dir:
@@ -614,10 +647,10 @@ class StatsAnalysisAgent:
             return plan
         if not chosen:
             return plan
-        # Paired/omnibus tools (mcnemar, friedman) only enter the plan when an
-        # intervention produced strategy groups — they carry the causal verdicts
-        # and must never be silently dropped by name-based narrowing.
-        _mandatory = {"mcnemar_evalue", "friedman_nemenyi"}
+        # Paired/omnibus tools (mcnemar, friedman, attention_decoding) only enter
+        # the plan when their inputs exist — they carry causal / tensor-level
+        # verdicts and must never be silently dropped by name-based narrowing.
+        _mandatory = {"mcnemar_evalue", "friedman_nemenyi", "attention_decoding"}
         filtered = [p for p in plan if p[0] in chosen or p[0] in _mandatory]
         return filtered or plan
 

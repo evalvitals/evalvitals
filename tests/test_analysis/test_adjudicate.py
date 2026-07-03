@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from evalvitals.analysis import (
     CandidateSignal,
+    ExploratoryAnalysisAgent,
     ExploratoryAnalysisReport,
-    M2ExplorerAgent,
     adjudicate_report,
     adjudicate_signals,
 )
@@ -162,7 +162,7 @@ def test_self_declared_reject_and_evalue_are_ignored(tmp_path):
         {"case_id": f"c{i}", "label": "fail" if i < 4 else "pass", "flag": int(i < 4)}
         for i in range(8)
     ]
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         judge=_ScriptedJudge(_CODE_WITH_SELF_DECLARED_VERDICT),
         sandbox=ExperimentSandbox(workdir=tmp_path, cleanup=False),
     )

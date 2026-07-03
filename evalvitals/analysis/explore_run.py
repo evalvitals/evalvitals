@@ -7,7 +7,7 @@ deterministically, and everything is persisted (optionally a dashboard opens).
 
 Flow::
 
-    M2ExplorerAgent.explore_path        # free-form EDA (a CLI coding agent)
+    ExploratoryAnalysisAgent.explore_path        # free-form EDA (a CLI coding agent)
       -> adjudicate_report              # host recomputes verdicts (in-sample)
       -> render_chart_specs             # spec + CSV -> PNG, host-side
       -> write_report_artifacts         # report.json + figures/ + tables/ + code
@@ -23,7 +23,7 @@ from typing import Any
 
 from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
-from evalvitals.analysis.explorer import M2ExplorerAgent
+from evalvitals.analysis.explorer import RECORDS_FILENAME, ExploratoryAnalysisAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 from evalvitals.viz.renderer import render_chart_specs
 
@@ -31,7 +31,7 @@ from evalvitals.viz.renderer import render_chart_specs
 def run_explore(
     path: str | Path,
     *,
-    question: str = "Explore patterns that distinguish failures from passes.",
+    question: str = "Explore this dataset and surface the patterns that matter.",
     out: str | Path = "evalvitals_explore_output",
     coder_provider: str = "antigravity",
     coder_model: str = "",
@@ -46,6 +46,7 @@ def run_explore(
     skills: "list[str] | tuple[str, ...]" = (),
     allow_skills: bool = False,
     use_bundled_skills: bool = True,
+    outcome_col: str | None = None,
 ) -> int:
     """Run one exploratory analysis and persist its artifacts.
 
@@ -56,6 +57,10 @@ def run_explore(
     skill). By default (*use_bundled_skills*) the package's bundled skills are
     applied on the claude/agy backends; *skills* adds more dirs and *allow_skills*
     also enables globally-installed (`~/.claude/skills`) skills.
+
+    *outcome_col* optionally names the target/label column explicitly (M1
+    passes ``"label"``); omit it to let the agent auto-detect an outcome by
+    name heuristics, or fall back to unsupervised EDA when there is none.
     """
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +79,7 @@ def run_explore(
         skills=tuple(skill_dirs),
         allow_skills=allow_skills or bool(skill_dirs),
     )
-    agent = M2ExplorerAgent(
+    agent = ExploratoryAnalysisAgent(
         cli_config=cli_config,
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,
@@ -85,6 +90,7 @@ def run_explore(
         max_rows=max_rows,
         max_files=max_files,
         include_tool_calls=include_tool_calls,
+        outcome_col=outcome_col,
     )
 
     # Host adjudication: any candidate that attached host-checkable `sufficient`
@@ -185,3 +191,10 @@ def _copy_artifact_dirs(report: Any, out_dir: Path) -> None:
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(src, dest)
+    # Persist the raw loaded records alongside the report so the dashboard can
+    # offer a "browse raw data" view — otherwise they only live in the sandbox
+    # workdir, which isn't guaranteed to still exist by the time someone opens
+    # the dashboard.
+    records_src = workdir / RECORDS_FILENAME
+    if records_src.exists():
+        shutil.copy2(records_src, out_dir / RECORDS_FILENAME)

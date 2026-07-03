@@ -92,29 +92,48 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
     Returns ``None`` when no loop log is present (i.e. this is explore output).
     """
     root = Path(run_dir).resolve()
-    # A single run can be split across several logs (e.g. logs_m1/ for M1 and
-    # logs_m2_5/ for M2-M5). MERGE events from all of them so the story has the
-    # full M1->M2->M3->M5->Fix arc, not just whichever log sorts first.
-    log_paths = [
+    # A single run can be split across several logs (e.g. logs_m1/ for M1 and a
+    # logs_m2_5/ or logs_analysis/ for the M2+ arc). We MERGE the shared M1 probe
+    # with the M2+ arc — but a directory may hold SEVERAL M2+ arcs that are
+    # different runs (e.g. a descriptive analysis-phase pass AND a stale
+    # all-in-one confirm pass). Merging both mixes a descriptive run with
+    # surgeries/verdicts from another run. So: keep every M1-only log, but among
+    # the M2+ logs keep only the single most-recent arc.
+    candidate_paths = [
         p for p in [root / "run_log.jsonl", *sorted(root.glob("logs*/run_log.jsonl"))]
         if p.exists()
     ]
-    if not log_paths:
+    if not candidate_paths:
         return None
 
-    events: list[dict[str, Any]] = []
-    for lp in log_paths:
+    _M2PLUS = {"analysis", "diagnosis", "surgery", "fix"}
+    events_by_path: dict[Path, list[dict[str, Any]]] = {}
+    for lp in candidate_paths:
+        evs: list[dict[str, Any]] = []
         try:
             for line in lp.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    events.append(json.loads(line))
+                    evs.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
         except OSError:
             continue
+        events_by_path[lp] = evs
+
+    m2plus_logs = [p for p, evs in events_by_path.items()
+                   if any(str(e.get("event")) in _M2PLUS for e in evs)]
+    if len(m2plus_logs) > 1:
+        newest = max(m2plus_logs, key=lambda p: p.stat().st_mtime if p.exists() else 0.0)
+        # Drop the older/stale M2+ arcs; keep M1-only logs and the newest arc.
+        log_paths = [p for p in candidate_paths
+                     if p not in m2plus_logs or p == newest]
+    else:
+        log_paths = candidate_paths
+
+    events: list[dict[str, Any]] = [e for lp in log_paths for e in events_by_path.get(lp, [])]
     if not events:
         return None
 
@@ -139,8 +158,29 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
         "explore_report": explore_report,
         "explore_dir": explore_dir,
     }
+    if not story["diagnoses"]:
+        proposed = _read_proposed_hypotheses(root)
+        if proposed:
+            story["diagnoses"] = [{
+                "event": "diagnosis",
+                "cycle": 0,
+                "n_hypotheses": len(proposed),
+                "hypotheses": proposed,
+                "source": "analysis/proposed_hypotheses.json",
+            }]
     story["diagnostic_report"] = compile_diagnostic_report(story, explore_report).to_dict()
     return story
+
+
+def _read_proposed_hypotheses(root: Path) -> list[dict[str, Any]]:
+    """Fallback for analysis-phase dashboards when the M3 log event is absent."""
+    for path in (root / "analysis" / "proposed_hypotheses.json", root / "proposed_hypotheses.json"):
+        raw = _read_json(path)
+        if isinstance(raw, list):
+            return [h for h in raw if isinstance(h, dict)]
+        if isinstance(raw, dict) and isinstance(raw.get("hypotheses"), list):
+            return [h for h in raw["hypotheses"] if isinstance(h, dict)]
+    return []
 
 
 def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | None, str | None]:

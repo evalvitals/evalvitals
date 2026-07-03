@@ -48,6 +48,36 @@ _DEFAULT_STRATEGIES: dict[str, str] = {
 }
 
 
+_YESNO_RE = re.compile(r"\b(yes|no)\b")
+
+
+def _norm_answer(text: str) -> str:
+    """Coarse, task-agnostic answer key for cross-prompt agreement.
+
+    Yes/no answers (POPE-style) collapse to ``yes``/``no``; otherwise the
+    lowercased, whitespace-collapsed first 48 chars stand in. Good enough to tell
+    "the model said the same thing under every prompt" from "its answer flipped"
+    — a correctness-INDEPENDENT measure, so it never tracks the FAIL label."""
+    t = re.sub(r"\s+", " ", str(text).strip().lower())
+    m = _YESNO_RE.search(t)
+    return m.group(1) if m else t[:48]
+
+
+def _prompt_sensitivity(answers: dict, cid: str, strategies) -> "float | None":
+    """Disagreement rate among the strategies' answers for one case.
+
+    0.0 = every prompt yielded the same answer (prompt-robust); → 1.0 = the
+    answer flips across prompts (prompt-fragile). Independent of whether any
+    answer is correct, so it enters M2 as a genuine signal, not a label copy:
+    a confident hallucination is robust (≈0), a borderline case is fragile."""
+    from collections import Counter
+
+    vals = [_norm_answer(answers[s][cid]) for s in strategies if cid in answers.get(s, {})]
+    if len(vals) < 2:
+        return None
+    return round(1.0 - Counter(vals).most_common(1)[0][1] / len(vals), 4)
+
+
 def _word_in(term: str, text: str) -> bool:
     """Word-boundary match for plain alphanumeric terms, substring otherwise."""
     term = term.lower().strip()
@@ -175,11 +205,23 @@ class PromptContrastAnalyzer(Analyzer):
                     )
             per_case.append(entry)
 
+        # Per-case signal surfaced to M2 (findings["per_case"]): prompt
+        # sensitivity — how much the model's ANSWER flips across the prompt
+        # strategies, independent of correctness. Unlike the fixed_by_/broken_by_
+        # flags above (tautological, kept in artifacts), this does NOT track the
+        # FAIL label, so it can enter signal_label_assoc / rank_corr cleanly.
+        findings_per_case: list[dict[str, Any]] = []
+        for case in selected:
+            sens = _prompt_sensitivity(answers, case.id, self.strategies)
+            if sens is not None:
+                findings_per_case.append({"sample_id": case.id, "prompt_sensitivity": sens})
+
         findings: dict[str, Any] = {
             "n_cases": len(selected),
             "n_strategies": len(self.strategies),
             "n_unscored": n_unscored,
             "by_strategy": by_strategy,
+            "per_case": findings_per_case,
         }
         for strat in self.strategies:
             scored = by_strategy[strat]

@@ -11,6 +11,7 @@ from evalvitals.stats.ebh import ebh
 from evalvitals.stats.evalue import e_value_test, evalue_bernoulli
 from evalvitals.stats.friedman import chi2_sf, friedman_test, nemenyi_cd, nemenyi_pairs
 from evalvitals.stats.mcnemar import mcnemar
+from evalvitals.stats.multiplicity import MultiplicityReport, bh, correct_results
 from evalvitals.stats.subset_sampling import kendall_tau, sample_subset, stratified_subset
 
 __all__ = [
@@ -28,6 +29,9 @@ __all__ = [
     "nemenyi_cd",
     "nemenyi_pairs",
     "chi2_sf",
+    "bh",
+    "correct_results",
+    "MultiplicityReport",
     "stratified_subset",
     "kendall_tau",
     "sample_subset",

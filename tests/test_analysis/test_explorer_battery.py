@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evalvitals.analysis.explorer import M2ExplorerAgent
+from evalvitals.analysis.explorer import ExploratoryAnalysisAgent
 from evalvitals.viz.renderer import render_chart_specs
 
 # A compliant "Lambda-style" script: pre-aggregated CSVs + one spec per CSV.
@@ -75,7 +75,7 @@ def _records():
 
 
 def test_explorer_surfaces_multi_chart_battery():
-    agent = M2ExplorerAgent(judge=_FakeJudge(), max_attempts=1)
+    agent = ExploratoryAnalysisAgent(judge=_FakeJudge(), max_attempts=1)
     rep = agent.explore_records(_records(), question="distinguish FAIL from PASS")
     assert rep.ok
     names = [c["name"] for c in rep.charts]
@@ -88,7 +88,7 @@ def test_explorer_surfaces_multi_chart_battery():
 
 
 def test_battery_charts_all_render_to_png():
-    agent = M2ExplorerAgent(judge=_FakeJudge(), max_attempts=1)
+    agent = ExploratoryAnalysisAgent(judge=_FakeJudge(), max_attempts=1)
     rep = agent.explore_records(_records(), question="q")
     out = Path(rep.workdir)
     rendered = render_chart_specs(rep.charts, out, out)

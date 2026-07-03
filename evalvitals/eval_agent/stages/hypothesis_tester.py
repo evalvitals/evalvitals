@@ -58,7 +58,10 @@ logger = logging.getLogger(__name__)
 _SIGNAL_TOOLS = frozenset({"signal_label_assoc", "bootstrap_diff", "mcnemar_evalue"})
 # Tools that describe the run globally rather than a specific mechanism — used as
 # corroborating evidence only, never sufficient to confirm a specific hypothesis.
-_GLOBAL_TOOLS = frozenset({"single_rate_evalue", "friedman_nemenyi", "rank_corr"})
+# attention_decoding is a tensor-level OMNIBUS ("do the maps differ anywhere?") —
+# corroborating, not a directional per-mechanism verdict.
+_GLOBAL_TOOLS = frozenset({"single_rate_evalue", "friedman_nemenyi", "rank_corr",
+                           "attention_decoding"})
 # Descriptive-only tools whose "effect" is an artifact of the batch composition,
 # not a mechanism signal (e.g. single_rate_evalue's rate − p0 on a curated/
 # enriched batch). They are consulted for context but MUST NOT become a
@@ -293,6 +296,8 @@ class HypothesisTester:
         stats_results = list(getattr(stats_report, "stats_results", None) or [])
         if stats_results:
             core = self._verdict_from_stats_results(hypothesis, stats_report, stats_results)
+            if core.get("evidence_grade") == "none":
+                core = self._verdict_fallback(hypothesis, stats_report, data, family_size)
         else:
             core = self._verdict_fallback(hypothesis, stats_report, data, family_size)
 

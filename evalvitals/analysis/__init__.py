@@ -1,16 +1,21 @@
-"""Public statistical analysis API.
+"""Public data-analysis API: exploratory analysis + statistical confirmation.
 
-This package exposes the M2 statistical analysis layer as a standalone
-capability.  The eval-agent loops still use the same implementation internally,
-but callers do not need to import from ``evalvitals.eval_agent.stages``.
+This package exposes EvalVitals' data-analysis layer as a standalone
+capability — ``ExploratoryAnalysisAgent`` for descriptive EDA (no hypothesis
+generation or validation) and ``StatsAnalysisAgent`` for confirmatory
+effect/CI/e-value/FDR verdicts. The eval-agent loops still use the same
+implementation internally, but callers do not need to import from
+``evalvitals.eval_agent.stages``.
 """
 
 from evalvitals.analysis.adjudicate import adjudicate_report, adjudicate_signals
 from evalvitals.analysis.explorer import (
     CandidateSignal,
+    ExploratoryAnalysisAgent,
     ExploratoryAnalysisReport,
-    M2ExplorerAgent,
+    Takeaway,
     load_records_from_path,
+    scan_folder,
 )
 from evalvitals.analysis.fused_pipeline import (
     FusedReport,
@@ -27,9 +32,18 @@ from evalvitals.analysis.operationalize import (
     per_case_to_records,
     safe_ident,
 )
+from evalvitals.analysis.planner import AnalysisPlanItem, plan_stats_input, ranked_signal_names
+from evalvitals.analysis.profile import (
+    ColumnProfile,
+    DatasetProfile,
+    describe_outcome,
+    profile_records,
+    profile_stats_input,
+)
 from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.analysis.stats_tools import (
     STATS_TOOL_CATALOG,
+    EvidenceResult,
     StatsInput,
     StatsToolResult,
     build_stats_input,
@@ -44,8 +58,9 @@ from evalvitals.reporting.model import Claim, DiagnosticReport, Evidence, Report
 __all__ = [
     "StatsAnalysisAgent",
     "StatsAnalysisReport",
-    "M2ExplorerAgent",
+    "ExploratoryAnalysisAgent",
     "ExploratoryAnalysisReport",
+    "Takeaway",
     "CandidateSignal",
     "adjudicate_report",
     "adjudicate_signals",
@@ -57,6 +72,14 @@ __all__ = [
     "bridge_recipes_to_result",
     "safe_ident",
     "RecipeError",
+    "ColumnProfile",
+    "DatasetProfile",
+    "describe_outcome",
+    "profile_records",
+    "profile_stats_input",
+    "AnalysisPlanItem",
+    "ranked_signal_names",
+    "plan_stats_input",
     "run_fused_analysis",
     "FusedReport",
     "FusedSignal",
@@ -66,8 +89,10 @@ __all__ = [
     "ReportStep",
     "compile_diagnostic_report",
     "load_records_from_path",
+    "scan_folder",
     "StatsInput",
     "StatsToolResult",
+    "EvidenceResult",
     "STATS_TOOL_CATALOG",
     "build_stats_input",
     "build_stats_input_from_records",

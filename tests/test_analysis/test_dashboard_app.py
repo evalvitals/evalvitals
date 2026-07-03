@@ -75,9 +75,22 @@ def _build_loop_run(root):
          "conclusion": "Specific over-detection failure mode.",
          "evidence_chain": ["attention near-uniform"],
          "stats_results": [{"summary": "signal vs FAIL: effect=+0.86 -> REJECT H0"}]},
-        {"event": "diagnosis", "cycle": 1, "n_hypotheses": 1,
-         "hypotheses": [{"statement": "language-prior hallucination", "failure_mode": "lp"}],
-         "referenced_charts": ["Fail rate by signal"], "explore_context_used": True},
+        {"event": "diagnosis", "cycle": 1, "n_hypotheses": 2,
+         "hypotheses": [
+             {"statement": "language-prior hallucination", "failure_mode": "lp",
+              "test_design": "relative_attention.max_relative_weight"},
+             {"statement": "diffuse visual attention causes over-detection", "failure_mode": "diffuse_attention",
+              "test_design": "prompt_contrast describe_first contrast"},
+         ],
+         "referenced_charts": ["Fail rate by signal"], "explore_context_used": True,
+         "raw_judge_output": (
+             "HYPOTHESIS: language-prior hallucination\n"
+             "FAILURE_MODE: lp\n"
+             "TEST: relative_attention.max_relative_weight\n\n"
+             "HYPOTHESIS: diffuse visual attention causes over-detection\n"
+             "FAILURE_MODE: diffuse_attention\n"
+             "TEST: prompt_contrast describe_first contrast"
+         )},
         # surgery.hypothesis matches the diagnosis statement -> the M5 verdict joins.
         {"event": "surgery", "cycle": 1, "module": "m5", "status": "supported",
          "hypothesis": "language-prior hallucination"},
@@ -112,14 +125,201 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "Problem Setting" in blob
     assert "Bottom line" in blob
-    assert "Evidence you can use" in blob
+    # M2 is exploratory-only in the current scope — descriptive framing, no
+    # supported/not-supported verdict, even though this fixture's own data
+    # carries adjudication/reject fields that would have implied one.
+    assert "Candidate signals" in blob
+    assert "Evidence you can use" not in blob
+    assert any("descriptively, without a validity verdict" in str(i.value) for i in at.info)
+    # the "Bottom line" itself must not fall back to compile_diagnostic_report's
+    # own confirmatory answer (a "supported claim" or its "no supported claim"
+    # fallback) — it must use the descriptive computation instead.
+    assert "No supported diagnostic claim" not in blob
+    assert "shows the largest FAIL-vs-PASS separation" in blob
     assert "How to read this evidence" in blob
     assert "Takeaway" in blob
     assert "Supporting experiment" in blob
     assert "Method:" in blob
     assert "Takeaway:" in blob
     assert "Agent-authored dashboard narrative for this run." in blob
-    assert "M1" in blob and "M2" in blob and "M3" in blob and "M5" in blob
+    # M4/M5 stage chips are temporarily hidden (not adjusted to current scope).
+    assert "M1" in blob and "M2" in blob and "M3" in blob
+    assert "Mechanism test" not in blob and "Repair / surgery test" not in blob
+
+
+def test_standalone_m2_dashboard_does_not_show_hypothesis_tab(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "summary": "M2-only exploratory analysis.",
+        "observations": ["Candidate pattern surfaced for review."],
+        "candidate_signals": [{"name": "candidate_signal", "effect": 0.4}],
+        "recommended_confirmatory_tests": ["Formulate an explicit hypothesis later."],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Exploratory Analysis",
+        "3 Artifacts",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Suggested next steps" in blob
+    assert "Hypotheses & Artifacts" not in blob
+
+
+def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_path):
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables" / "yield_by_temp.csv").write_text(
+        "temp_bin,mean_yield\nlow,70.1\nhigh,88.4\n", encoding="utf-8"
+    )
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "question": "What predicts yield?",
+        "observations": ["30 batches, no missing values."],
+        "takeaways": [{
+            "title": "Higher temperature batches yield more (70.1% vs 88.4%).",
+            "chart_names": ["yield_by_temp"],
+            "table_names": [],
+            "analysis": "Mean yield rises from 70.1% in low-temperature batches to 88.4% in high-temperature ones.",
+            "caveat": "Descriptive only; temperature and pressure are correlated.",
+        }],
+        "charts": [{
+            "name": "yield_by_temp", "kind": "line",
+            "data": "tables/yield_by_temp.csv", "x": "temp_bin", "y": "mean_yield",
+            "title": "Mean yield by temperature bin",
+        }],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # the takeaway's numbered badge, headline, analysis, and caveat all render together
+    assert 'ev-takeaway-badge">1<' in blob
+    assert "Higher temperature batches yield more" in blob
+    assert "Mean yield rises from 70.1%" in blob
+    assert "Caveat" in blob and "Descriptive only" in blob
+    # its supporting chart was found and rendered, not left orphaned
+    assert "referenced evidence not found" not in blob
+    assert "Mean yield by temperature bin" in blob  # the chart's own title rendered
+    # no leftover M2/hypothesis-generation branding in the standalone view
+    assert "Standalone M2" not in blob
+    assert "M3 hypotheses" not in blob
+    assert "hypothesis formation" not in blob
+
+
+def test_standalone_dashboard_falls_back_gracefully_with_no_takeaways(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "observations": ["No structured takeaways in this older report."],
+        "charts": [],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(i.value) for i in at.info)
+    assert "no structured takeaways" in blob.lower()
+
+
+def test_standalone_dashboard_shows_data_structure_panel(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "data_profile": {
+            "n_rows": 30,
+            "loaded_rows": 30,
+            "grain": "case",
+            "outcome": {"present": True, "column": "yield_pct", "kind": "continuous", "unique": 29},
+            "columns": {
+                "yield_pct": {
+                    "role": "outcome", "dtype": "numeric", "unique": 29, "missing": 0,
+                    "numeric_min": 63.8, "numeric_max": 95.9,
+                },
+                "temperature": {
+                    "role": "predictor", "dtype": "numeric", "unique": 28, "missing": 0,
+                    "numeric_min": 151.4, "numeric_max": 248.7,
+                },
+                "catalyst": {"role": "predictor", "dtype": "categorical", "unique": 3, "missing": 0},
+            },
+            "warnings": ["column 'batch_id' is constant and unlikely to be testable"],
+            "folder_scan": {
+                "root": "/data/runs/chestagentbench",
+                "is_file": False,
+                "n_files_total": 4,
+                "n_dirs": 2,
+                "extensions": {".json": 3, ".txt": 1},
+                "json_files_found": 4,
+                "json_files_used": 3,
+                "entries": ["agent-a/", "agent-a/results.json", "notes.txt"],
+                "truncated": False,
+            },
+        },
+        "charts": [],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # schema is stated up front: row/column counts, grain, and outcome kind
+    assert "Data structure" in blob
+    assert "case-level" in blob
+    assert "Continuous outcome: Yield pct (29 distinct values)" in blob
+    # what was literally found on disk is shown too, before the parsed schema
+    assert "Folder contents" in blob
+    assert "/data/runs/chestagentbench" in blob
+    assert "4 files across 2 subdirectories" in blob
+    assert "3 of 4 JSON file(s) sampled" in blob
+    codes = " ".join(str(c.value) for c in at.code)
+    assert "agent-a/results.json" in codes
+    # the full column/role/type breakdown is a real table, not a truncated dict repr
+    assert len(at.dataframe) >= 1
+    schema_df = at.dataframe[0].value
+    assert "temperature" in schema_df["Field"].str.lower().tolist()
+    assert "outcome" in schema_df["Role"].tolist()
+    # profiling notes (e.g. constant columns) surface too
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "constant" in captions.lower()
+
+
+def test_standalone_dashboard_lets_you_browse_raw_records(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "data_profile": {"n_rows": 3, "columns": {}},
+        "charts": [],
+    }), encoding="utf-8")
+    (tmp_path / "records.json").write_text(json.dumps([
+        {"case_id": "c0", "region": "north", "yield_pct": 70.1},
+        {"case_id": "c1", "region": "south", "yield_pct": 88.4},
+        {"case_id": "c2", "region": "north", "yield_pct": 91.2},
+    ]), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert any(e.label == "Browse raw data (3 row(s) loaded)" for e in at.expander)
+    assert len(at.dataframe) >= 1
+    raw_df = at.dataframe[0].value
+    assert set(raw_df["case_id"]) == {"c0", "c1", "c2"}
+
+    at.text_input(key="raw_data_search").set_value("south").run()
+    raw_df = at.dataframe[0].value
+    assert list(raw_df["case_id"]) == ["c1"]
+
+
+def test_standalone_dashboard_falls_back_to_sample_rows_without_records_json(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "data_profile": {
+            "n_rows": 30,
+            "columns": {},
+            "sample_rows": [{"case_id": "c0", "yield_pct": 70.1}],
+        },
+        "charts": [],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert any(e.label == "Browse raw data (1 row(s) loaded)" for e in at.expander)
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "only a small sample was saved" in captions.lower()
 
 
 def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
@@ -140,19 +340,88 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     at = _run_app(tmp_path)
     assert not at.exception
     heads = [m.value for m in at.markdown if isinstance(m.value, str) and m.value.startswith("###")]
-    # the three-panel narrative sections are present
-    assert any("Problem Setting" in h for h in heads)
-    assert any("Analysis" in h for h in heads)
-    assert any("Hypotheses & Decision" in h for h in heads)
     blob = " ".join(str(m.value) for m in at.markdown)
+    # the three-panel narrative sections are present
+    assert "ev-section-title\">Problem Setting<" in blob
+    assert any("Analysis" in h for h in heads)
+    assert any("Proposed Hypotheses" in h for h in heads)
     assert "Measurement" in blob
-    assert "Confirmatory analysis" in blob
+    assert "Exploratory analysis" in blob
     assert "Hypothesis generation" in blob
-    # the hypothesis statement + its M5 verdict appear somewhere in the page
+    # the hypothesis statement appears, but M4/M5 (hypothesis testing) is out of
+    # scope — no support/not-supported verdict, even though this fixture's own
+    # data carries a matching surgery record that would have implied one.
     assert "language-prior hallucination" in blob
-    assert "supported" in blob.lower()
+    assert "M5: supported" not in blob
+    assert "M5" not in blob and "M4" not in blob
     assert any(e.label == "Why these charts were chosen" for e in at.expander)
     assert len(at.dataframe) >= 2  # signal table + visual-plan table
+
+
+def test_hypotheses_tab_shows_multiple_hypotheses_and_how_each_was_derived(tmp_path):
+    """M3 can propose 1-3 hypotheses per cycle (see diagnosis.py's _DIAGNOSE_PROMPT),
+    and the LLM's own TEST: line for each is real evidence of how it was derived —
+    both must actually reach the dashboard, not just the first hypothesis with no
+    justification."""
+    _build_loop_run(tmp_path)
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # both hypotheses from this cycle are shown, not just the first
+    assert "language-prior hallucination" in blob
+    assert "diffuse visual attention causes over-detection" in blob
+    # each hypothesis's own "how to check" line (from its test_design) is shown
+    assert "relative_attention.max_relative_weight" in blob
+    assert "prompt_contrast describe_first contrast" in blob
+    # the full M3 reasoning (raw judge output) is available, not just the
+    # parsed statement/failure_mode with no justification
+    assert any("Full M3 reasoning" in e.label for e in at.expander)
+    texts = " ".join(str(t.value) for t in at.text)
+    assert "HYPOTHESIS: language-prior hallucination" in texts
+
+
+def test_stale_case_matrix_never_silently_replaces_this_runs_own_charts(tmp_path, monkeypatch):
+    """A case matrix reconstructed from m1_state.pkl is a separate artifact from a
+    specific attention-probe pipeline — if an output dir is reused across runs, a
+    stale pickle must not silently stand in for (or hide) this run's own explorer
+    charts, and it must be clearly labeled as a distinct, possibly-mismatched source."""
+    import pandas as pd
+
+    _build_loop_run(tmp_path)
+    # This run's own group-stats/fail-rate tables (distinct signal name).
+    tables = tmp_path / "fused" / "sandbox" / "tables"
+    (tables / "groupstats_myown_signal.csv").write_text(
+        "outcome,mean\nFAIL,0.8\nPASS,0.3\n", encoding="utf-8"
+    )
+    (tables / "failrate_by_myown_signal.csv").write_text(
+        "bin,fail_rate\n[0-1),0.2\n[1-2),0.5\n", encoding="utf-8"
+    )
+
+    # A stale/unrelated case matrix (different signal, from a different pipeline).
+    fake_matrix = pd.DataFrame({
+        "case_id": [f"c{i}" for i in range(6)],
+        "label": ["FAIL", "PASS", "FAIL", "PASS", "FAIL", "PASS"],
+        "is_fail": [1, 0, 1, 0, 1, 0],
+        "model_yes": [1, 0, 1, 0, 1, 0],
+        "truth_yes": [1, 0, 0, 1, 1, 0],
+        "attn_max": [0.9, 0.1, 0.8, 0.2, 0.7, 0.3],
+    })
+    monkeypatch.setattr(
+        "evalvitals.analysis.eval_case_matrix.load_case_matrix", lambda root: fake_matrix
+    )
+    monkeypatch.setattr(
+        "evalvitals.analysis.eval_case_matrix.continuous_signals", lambda df: ["attn_max"]
+    )
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    expander_labels = [e.label for e in at.expander]
+    # the stale matrix is opt-in and clearly labeled as a separate artifact —
+    # never inline/unlabeled where it could be mistaken for this run's analysis
+    assert any("case-matrix charts" in lbl and "m1_state.pkl" in lbl for lbl in expander_labels)
+    assert any("Attention-probe statistical analysis" in lbl for lbl in expander_labels)
 
 
 def test_hypotheses_join_with_m5_outcomes():
@@ -169,6 +438,110 @@ def test_hypotheses_join_with_m5_outcomes():
     assert [h["statement"] for h in out] == ["H one", "H two"]
     assert len(out[0]["tests"]) == 2          # joined both tests by statement
     assert out[1]["tests"] == []              # H two was never tested
+
+
+def _build_analysis_phase_run(root):
+    """Same fused report as the confirmatory fixture, but the loop log is an
+    analysis-phase pass (descriptive_only, no surgery) under logs_analysis/."""
+    _build_loop_run(root)
+    # Replace the confirmatory M2_5 log with an analysis-phase logs_analysis/ log.
+    import shutil
+    shutil.rmtree(root / "logs_m2_5")
+    logs = root / "logs_analysis"
+    logs.mkdir(parents=True)
+    events = [
+        {"event": "analysis", "cycle": 0, "descriptive_only": True,
+         "conclusion": "Candidate signals described; verdict deferred."},
+        {"event": "diagnosis", "cycle": 0, "n_hypotheses": 1,
+         "hypotheses": [{"statement": "language-prior hallucination", "failure_mode": "lp"}],
+         "referenced_charts": ["Fail rate by signal"]},
+        {"event": "loop_end", "stopped_by": "analysis_complete"},
+    ]
+    (logs / "run_log.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    return root
+
+
+def test_analysis_phase_dashboard_shows_no_supported_verdicts(tmp_path):
+    # WS2 / decoupling: an analysis-phase run must present candidate signals
+    # DESCRIPTIVELY — no "Supported" / "Not supported" verdict pills, since the
+    # explorer's reject flags are not confirmation.
+    _build_analysis_phase_run(tmp_path)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Proposed Hypotheses",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "language-prior hallucination" in blob
+    assert "Proposed Hypotheses" in blob
+    # the descriptive evidence pills carry "Descriptive", never a verdict
+    assert "Descriptive</span>" in blob
+    assert ">Supported</span>" not in blob
+    assert ">Not supported</span>" not in blob
+    # the confirmatory method card ("tested signals survived") is replaced
+    assert "tested signals survived" not in blob
+    # an explicit analysis-phase banner orients the reader
+    assert any("Analysis phase" in str(i.value) for i in at.info)
+
+
+def test_analysis_phase_dashboard_recovers_proposed_hypotheses_file(tmp_path):
+    _build_analysis_phase_run(tmp_path)
+    logs = tmp_path / "logs_analysis"
+    (logs / "run_log.jsonl").write_text(
+        "\n".join([
+            json.dumps({"event": "analysis", "cycle": 0, "descriptive_only": True,
+                        "conclusion": "Candidate signals described; verdict deferred."}),
+            json.dumps({"event": "loop_end", "stopped_by": "analysis_complete"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "analysis"
+    analysis.mkdir(exist_ok=True)
+    (analysis / "proposed_hypotheses.json").write_text(json.dumps([
+        {
+            "hypothesis": "fallback hypothesis from proposed_hypotheses.json",
+            "predicted_failure_mode": "fallback_mode",
+        }
+    ]), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting",
+        "2 Analysis",
+        "3 Proposed Hypotheses",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "fallback hypothesis from proposed_hypotheses.json" in blob
+    assert "fallback_mode" in blob
+
+
+def test_resolve_scatter_axes_handles_real_named_and_legacy_columns():
+    import pandas as pd
+
+    from evalvitals.analysis.dashboard_app import _resolve_scatter_axes
+
+    # (a) newer schema: real signal names as columns, no report hint available.
+    d = pd.DataFrame({"attention_entropy": [0.8, 0.6], "center_offset": [0.2, 0.4],
+                      "outcome": ["PASS", "FAIL"]})
+    _d, xs, ys, oc = _resolve_scatter_axes(d, {}, "scatter_top_attention_pair.csv")
+    assert (xs, ys, oc) == ("attention_entropy", "center_offset", "outcome")
+
+    # (b) legacy schema: literal x/y renamed from the report's chart title.
+    d2 = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0], "outcome": ["FAIL", "PASS"]})
+    report = {"charts": [{"name": "scatter_pair",
+                          "title": "focus_share vs edge_mass by outcome"}]}
+    d2r, xs, ys, oc = _resolve_scatter_axes(d2, report, "scatter_pair.csv")
+    assert (xs, ys, oc) == ("focus_share", "edge_mass", "outcome")
+    assert {"focus_share", "edge_mass"} <= set(d2r.columns)  # columns were renamed
+
+    # (c) unresolvable (no two value axes) → all-None sentinel, no crash.
+    bad = pd.DataFrame({"outcome": ["FAIL", "PASS"]})
+    _b, xs, ys, oc = _resolve_scatter_axes(bad, {}, "scatter_bad.csv")
+    assert (xs, ys, oc) == (None, None, None)
 
 
 def test_signals_dataframe_and_effect_figure_helpers():

@@ -27,24 +27,9 @@ import run  # reuse build_judge / build_protocol / CFG
 OUT = run.OUT
 M1_STATE = OUT / "m1_state.pkl"
 
-
-class ReplayProbeAgent:
-    """Stands in for ProbeAgent: returns the frozen M1 result instead of
-    re-running analyzers. Exposes exactly the attributes the loop reads off the
-    probe agent after M1 (last_schema / last_selection_* / _failed_analyzers /
-    _generated_probes / run_logger), so VLDiagnoseLoop.run() is unmodified."""
-
-    def __init__(self, state: dict):
-        self._results = state["probe_results"]
-        self.last_schema = state.get("schema")
-        self.last_selection_prompt = state.get("selection_prompt", "")
-        self.last_selection_raw = state.get("selection_raw", "")
-        self._failed_analyzers = dict(state.get("failed_analyzers", {}) or {})
-        self._generated_probes = []        # tier-(b) codegen already happened in M1
-        self.run_logger = None             # set by the loop's _attach_run_logger
-
-    def probe(self, model, data, **kwargs):  # noqa: ARG002 - signature parity only
-        return self._results
+# ReplayProbeAgent (frozen-M1 stand-in) is shared from run.py so the staged
+# scripts (run_m2-5 / run_analysis / run_confirm_fix) replay M1 identically.
+ReplayProbeAgent = run.ReplayProbeAgent
 
 
 def main() -> None:

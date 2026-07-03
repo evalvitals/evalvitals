@@ -84,6 +84,49 @@ def test_load_loop_story_merges_multiple_logs(tmp_path):
     assert len(story["surgeries"]) == 1
 
 
+def test_load_loop_story_keeps_only_newest_m2_arc(tmp_path):
+    # A directory can hold a STALE confirmatory arc (logs_m2_5/, with surgeries)
+    # AND a newer descriptive analysis-phase arc (logs_analysis/). Merging both
+    # would resurrect the stale surgeries/verdicts on top of the descriptive run.
+    # The loader must keep M1 + only the most-recent M2+ arc.
+    import os
+
+    (tmp_path / "logs_m1").mkdir()
+    (tmp_path / "logs_m1" / "run_log.jsonl").write_text(
+        json.dumps({"event": "probe", "cycle": 0}) + "\n", encoding="utf-8"
+    )
+    stale = tmp_path / "logs_m2_5" / "run_log.jsonl"
+    stale.parent.mkdir()
+    stale.write_text(
+        "\n".join(json.dumps(e) for e in [
+            {"event": "analysis", "cycle": 1, "descriptive_only": None},
+            {"event": "surgery", "cycle": 1, "module": "m5", "status": "supported", "hypothesis": "h"},
+        ]),
+        encoding="utf-8",
+    )
+    fresh = tmp_path / "logs_analysis" / "run_log.jsonl"
+    fresh.parent.mkdir()
+    fresh.write_text(
+        "\n".join(json.dumps(e) for e in [
+            {"event": "analysis", "cycle": 0, "descriptive_only": True},
+            {"event": "diagnosis", "cycle": 0, "n_hypotheses": 1,
+             "hypotheses": [{"statement": "h", "failure_mode": "fm"}]},
+        ]),
+        encoding="utf-8",
+    )
+    # Make the descriptive arc unambiguously newer than the stale one.
+    os.utime(stale, (1_000_000_000, 1_000_000_000))
+    os.utime(fresh, (2_000_000_000, 2_000_000_000))
+
+    story = load_loop_story(tmp_path)
+    assert story is not None
+    # Stale surgeries must NOT leak in; the descriptive analysis is the only M2+ arc.
+    assert story["surgeries"] == []
+    assert len(story["analyses"]) == 1
+    assert story["analyses"][0]["descriptive_only"] is True
+    assert len(story["diagnoses"]) == 1
+
+
 def test_load_run_empty_dir():
     import tempfile
 

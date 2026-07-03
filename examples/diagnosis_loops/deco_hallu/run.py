@@ -158,6 +158,45 @@ def build_protocol():
 
 
 # ---------------------------------------------------------------------------
+# Frozen-M1 handoff helpers (shared by run_m2-5.py / run_analysis.py /
+# run_confirm_fix.py — the staged scripts that replay outputs/m1_state.pkl).
+# ---------------------------------------------------------------------------
+
+class ReplayProbeAgent:
+    """Stands in for ProbeAgent: returns the frozen M1 result instead of
+    re-running analyzers. Exposes exactly the attributes the loop reads off the
+    probe agent after M1 (last_schema / last_selection_* / _failed_analyzers /
+    _generated_probes / run_logger), so the loop's M1 step is unmodified."""
+
+    def __init__(self, state: dict):
+        self._results = state["probe_results"]
+        self.last_schema = state.get("schema")
+        self.last_selection_prompt = state.get("selection_prompt", "")
+        self.last_selection_raw = state.get("selection_raw", "")
+        self._failed_analyzers = dict(state.get("failed_analyzers", {}) or {})
+        self._generated_probes = []        # tier-(b) codegen already happened in M1
+        self.run_logger = None             # set by the loop's _attach_run_logger
+
+    def probe(self, model, data, **kwargs):  # noqa: ARG002 - signature parity only
+        return self._results
+
+
+class FrozenModel:
+    """Lightweight stand-in for the VLM during the GPU-free analysis phase.
+
+    M1 is replayed from the pickle and M2/M3 only need the model's repr string
+    (model_name in the stats narrative, the run_start provenance), so the
+    analysis phase never has to load weights or touch the GPU. The repair phase
+    (run_confirm_fix.py) loads the real model because run_fix calls it."""
+
+    def __init__(self, model_key: str):
+        self._key = model_key
+
+    def __repr__(self) -> str:
+        return self._key
+
+
+# ---------------------------------------------------------------------------
 # 3. Loop wiring (mirrors examples/diagnosis_loops/deco_pope/run.py)
 # ---------------------------------------------------------------------------
 

@@ -6,6 +6,122 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — M2 explorer adapts to arbitrary outcome shapes, not just FAIL/PASS
+
+- **Outcome-adaptive explorer prompt** (`analysis/explorer.py`, `analysis/profile.py`):
+  `ExploratoryAnalysisAgent`'s generated-code prompt used to hardcode a binary FAIL/PASS
+  framing (class balance, fail-rate curves, "call the two groups FAIL and PASS")
+  regardless of what the data actually was. The host now profiles the outcome
+  column via the new `describe_outcome()` (`profile.py`) and classifies it as
+  `binary` / `categorical` / `continuous` / `none`, and `_framing_block()` swaps
+  in the matching framing + standard chart battery — including a genuinely
+  unsupervised-EDA battery (missingness, distributions, correlation structure)
+  when there is no recognizable outcome column at all. `profile_records()` gained
+  an `outcome_col` override so callers with an arbitrarily-named target (e.g.
+  `revenue`, `yield_pct`) can point at it explicitly instead of relying on the
+  English name-heuristic list. `explore_records` / `explore_path` / `run_explore`
+  / the `evalvitals explore` and `evalvitals-explore` CLIs all take a new
+  `outcome_col` / `--outcome-col`. M1's diagnosis loop is unaffected — its
+  records already carry a `label` column the heuristic finds automatically, so
+  it still gets the same binary FAIL/PASS framing as before.
+
+### Added/Changed — signal hygiene, descriptive analysis, tensor-level attention
+
+- **Label-leak isolation (the deferred "leak-1" check)** (`eval_agent/stages/stats_tools.py`):
+  `label_leak_score` / `isolate_label_leaks` detect per-case signals that
+  *reconstruct* the FAIL label (a probe flag equal to the outcome) and route them
+  to a new `StatsInput.sanity` lane, out of the tested family / e-BH multiplicity
+  / candidate charts / hypothesis seeding. A leak is a **binary flag that ~equals
+  the label** (best-split accuracy ≥ 0.985, ≥ 10 cases) — a *continuous* feature
+  that perfectly separates the classes is legitimate discovery and is NOT flagged.
+  Wired into `build_stats_input` / `build_stats_input_from_records` and the fused
+  pipeline's confirm step, so `generated:probe1.false_detection` /
+  `explored.probe1_positive` no longer get tested, charted, or "confirmed."
+
+- **Descriptive analysis phase (validity deferred to confirm)**
+  (`StatsAnalysisAgent.analyze(confirmatory=…)`, `VLDiagnoseLoop`,
+  `reporting/compiler.py`): `run_analysis()` now runs M2 with the e-BH validity
+  verdict DEFERRED (`StatsAnalysisReport.descriptive_only=True`, `corrected_rejections`
+  marked deferred) — effect sizes + charts only. `run_confirm()` recomputes e-BH
+  (`_finalize_confirmatory_stats`) and logs the confirmatory M2, so the dashboard
+  shows supported/not-supported claims ONLY after confirmation. The compiler
+  demotes every claim to descriptive in analysis-phase mode with a banner; the
+  all-in-one `run()` path stays confirmatory and unchanged.
+
+- **Richer per-case attention features + per-case map stack**
+  (`analyzers/attention/relative_attn.py`): each case now also emits
+  `attention_entropy`, `top1_share`, `center_offset`, `edge_mass` (diffuse-vs-spike,
+  peripheral, positional-sink proxies) alongside max/mean/focus, and the full
+  per-case spatial maps are stored (float16) in `artifacts["per_case_maps"]`.
+  `prompt_contrast` now surfaces a non-tautological per-case `prompt_sensitivity`
+  signal (answer instability across prompts, correctness-independent) — the
+  tautological `fixed_by_*`/`broken_by_*` flags stay in artifacts.
+
+- **`attention_decoding` — tensor-level omnibus** (`stats_tools.py`): a new M2 tool
+  over the FULL per-case attention map (not a scalar reduction), answering "do
+  FAIL and PASS attend differently anywhere?" — feature-agnostic, pure numpy,
+  robust at features≫samples. Primary test is a two-sample **energy-distance
+  permutation** test (more powerful than linear decoding at low n; sensitive to
+  nonlinear / distributional differences), with a cross-validated linear-decoder
+  AUC reported alongside as an interpretable companion. Reads
+  `StatsInput.per_case_vectors`, runs as a mandatory global/omnibus tool in M5,
+  and is added to `default_plan` when map vectors exist. On the deco_hallu slice
+  the energy test flips the verdict from inconclusive (CV-AUC 0.42) to a real
+  finding (energy-distance D=1.88, permutation p=0.018) — the maps differ
+  distributionally even though no linear boundary separates them.
+
+### Fixed — analysis-phase dashboard rendering
+
+- **Stale confirm runs no longer leak verdicts into the analysis view**
+  (`analysis/dashboard.py`): `load_loop_story` merged events from *every*
+  `logs*/` dir, so a directory holding both a descriptive `logs_analysis/` run
+  and a stale all-in-one `logs_m2_5/` run would resurrect the old surgeries +
+  supported/not-supported verdicts on top of the descriptive run. It now keeps
+  the shared M1 probe log plus only the **single most-recent M2+ arc** (by
+  mtime), so an analysis-phase directory renders descriptively without a symlink
+  workaround.
+- **Analysis phase shows candidate signals descriptively** (`analysis/dashboard_app.py`):
+  when the loaded run is analysis-only (`_story_is_descriptive`: every M2
+  `descriptive_only`, no surgery), evidence cards render a **"Descriptive"**
+  badge ranked by |effect| instead of mapping the explorer's `reject` flags to
+  "Supported"/"Not supported", the method card drops the e-BH/"tested signals
+  survived" framing, and an "Analysis phase" banner orients the reader. The
+  explorer's per-recipe `reject` is not confirmation.
+- **Scatter tables with real-named columns no longer crash** (`_resolve_scatter_axes`):
+  the explorer now writes scatter CSVs with real signal columns
+  (`attention_entropy, center_offset, outcome`); the dashboard assumed legacy
+  `x`/`y` columns and fell back to literal `"x"`/`"y"`, raising plotly's
+  `Value of 'x' is not the name of a column`. Axis resolution now prefers the
+  report's recovered names, then the CSV's own non-outcome columns, and skips
+  cleanly when two value axes can't be formed.
+
+### Added — decoupled analysis vs. confirm+fix
+
+- **`VLDiagnoseLoop.run_analysis()` + `VLDiagnoseLoop.run_confirm()`**
+  (`eval_agent/loop.py`): split the diagnosis pipeline so the analysis
+  dashboard can be produced *before* hypotheses are confirmed. `run_analysis()`
+  runs **M1 → M2 → M3** (the same rigorous e-BH stats + charts, then *propose*
+  hypotheses) and stops — the returned `VLDiagnoseReport` carries
+  `all_hypotheses` (proposed, unconfirmed) and `final_stats_report`, with
+  `all_test_results` / `verified_hypotheses` empty (`stopped_by="analysis_complete"`).
+  `run_confirm(data, hypotheses, stats_report=...)` runs **M5** on those
+  hypotheses — typically reloaded via `hypothesis_from_dict` and confirmed
+  against the *exact* M2 report the dashboard showed (regenerated from the
+  frozen M1 when omitted) — then feeds `run_m4` / `run_fix` as before. The
+  shared per-stage helpers (`_do_m1/_do_m2/_do_m3/_do_m5`) are factored out of
+  `run()`, whose behavior is unchanged. The dashboard renders proposed
+  hypotheses without M5/M4/Fix verdicts and gains them once the confirm phase's
+  log dir is present.
+
+- **deco_hallu decoupled scripts** (`examples/diagnosis_loops/deco_hallu/`):
+  `run_analysis.py` (GPU-free: replay M1 → M2 stats/charts → M3 propose →
+  dashboard, persisting `outputs/analysis/{proposed_hypotheses.json,
+  analysis_state.pkl}`) and `run_confirm_fix.py` (reload those artifacts → M5
+  confirm → M4 + tiered Fix), with matching `run_analysis.sh` /
+  `run_confirm_fix.sh` wrappers. The shared frozen-M1 `ReplayProbeAgent` and a
+  GPU-free `FrozenModel` stub now live in `run.py`. The one-shot `run_m2-5.py`
+  path is unchanged.
+
 ### Added — run output ownership & tiered repair
 
 - **`RunContext`** (`eval_agent/run_context.py`): single owner of a diagnosis

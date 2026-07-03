@@ -11,7 +11,7 @@ from evalvitals.analysis.fused_pipeline import (
 
 
 class _FakeExplorer:
-    """Stand-in for M2ExplorerAgent: returns scripted candidates, records what it saw."""
+    """Stand-in for ExploratoryAnalysisAgent: returns scripted candidates, records what it saw."""
 
     def __init__(self, candidates, *, observations=(), recommended=(), dashboard_storyboard=()):
         self._candidates = candidates
@@ -125,9 +125,10 @@ def test_bridged_signal_is_confirmed_on_held_out_split():
     assert sig.host_adjudicated is True
     assert sig.reject is True                 # strong, separable -> CI excludes 0
     assert sig.confirmed_on == "held_out"
-    # marginal CI test has no e-value -> honestly flagged as not FDR-corrected
-    assert sig.fdr_corrected is False
-    assert any("not e-BH" in c or "NOT e-BH" in c for c in rep.caveats)
+    assert sig.p_value is not None
+    assert sig.fdr_corrected is True
+    assert sig.correction_method == "BH"
+    assert rep.adjudication["families"]["bh"]["n_tested"] >= 1
 
 
 def test_catalog_and_explorer_sources_are_tagged():

@@ -122,3 +122,43 @@ def test_stats_layer_runs_paired_contrasts():
     assert r.ok and r.effect is not None
     # sensitive repairs 2 and breaks 1 → net positive effect
     assert r.effect > 0
+
+# ── WS3: non-tautological per-case signal surfaced to M2 (prompt_sensitivity) ──
+
+class _ConsistentModel(Model):
+    """Answers the same thing under every prompt (prompt-robust)."""
+    capabilities = frozenset({Capability.GENERATE})
+    modalities = frozenset({"text", "image"})
+
+    def generate(self, inputs, **kwargs):
+        return "Yes."
+
+    def forward(self, inputs, capture, spec=None):
+        raise NotImplementedError
+
+
+def test_prompt_sensitivity_surfaced_to_findings_per_case():
+    res = PromptContrastAnalyzer().run(InterventionModel(), _batch())
+    pc = res.findings["per_case"]
+    assert pc and all("prompt_sensitivity" in e and "sample_id" in e for e in pc)
+    # baseline "no" vs describe/subtle "yes" → answer flips → sensitivity 1/3.
+    assert all(abs(e["prompt_sensitivity"] - 0.3333) < 1e-3 for e in pc)
+    # The tautological repair flags stay OUT of findings["per_case"].
+    assert all("fixed_by_describe_first" not in e for e in pc)
+
+
+def test_prompt_robust_model_has_zero_sensitivity():
+    res = PromptContrastAnalyzer().run(_ConsistentModel(), _batch())
+    pc = res.findings["per_case"]
+    assert pc and all(e["prompt_sensitivity"] == 0.0 for e in pc)
+
+
+def test_prompt_sensitivity_is_a_clean_stats_signal():
+    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+
+    batch = _batch()
+    res = PromptContrastAnalyzer().run(InterventionModel(), batch)
+    inp = build_stats_input({"prompt_contrast": res}, batch)
+    # Enters the tested family; not isolated as a label leak.
+    assert "prompt_contrast.prompt_sensitivity" in inp.per_case
+    assert "prompt_contrast.prompt_sensitivity" not in inp.sanity
