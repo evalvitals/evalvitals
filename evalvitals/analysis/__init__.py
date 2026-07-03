@@ -1,11 +1,13 @@
-"""Public data-analysis API: exploratory analysis + statistical confirmation.
+"""Public data-analysis API: exploratory analysis, hypothesis proposal, and
+statistical confirmation.
 
 This package exposes EvalVitals' data-analysis layer as a standalone
-capability — ``ExploratoryAnalysisAgent`` for descriptive EDA (no hypothesis
-generation or validation) and ``StatsAnalysisAgent`` for confirmatory
-effect/CI/e-value/FDR verdicts. The eval-agent loops still use the same
-implementation internally, but callers do not need to import from
-``evalvitals.eval_agent.stages``.
+capability — ``ExploratoryAnalysisAgent`` (M2) for descriptive EDA (no
+hypothesis generation or validation itself), ``HypothesisAgent`` (M3) for
+proposing falsifiable hypotheses from M2's takeaways (proposal only, no
+validation), and ``StatsAnalysisAgent`` for confirmatory effect/CI/e-value/FDR
+verdicts. The eval-agent loops still use the same implementation internally,
+but callers do not need to import from ``evalvitals.eval_agent.stages``.
 """
 
 from evalvitals.analysis.adjudicate import adjudicate_report, adjudicate_signals
@@ -22,6 +24,7 @@ from evalvitals.analysis.fused_pipeline import (
     FusedSignal,
     run_fused_analysis,
 )
+from evalvitals.analysis.hypothesis_agent import Hypothesis, HypothesisAgent
 from evalvitals.analysis.operationalize import (
     RecipeError,
     SignalRecipe,
@@ -62,6 +65,8 @@ __all__ = [
     "ExploratoryAnalysisReport",
     "Takeaway",
     "CandidateSignal",
+    "Hypothesis",
+    "HypothesisAgent",
     "adjudicate_report",
     "adjudicate_signals",
     "SignalRecipe",

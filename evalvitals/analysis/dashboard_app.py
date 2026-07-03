@@ -66,17 +66,17 @@ def main() -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    setting, analysis, artifacts = st.tabs([
+    setting, analysis, hypotheses = st.tabs([
         "1 Problem Setting",
         "2 Exploratory Analysis",
-        "3 Artifacts",
+        "3 Hypotheses",
     ])
     with setting:
         _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
     with analysis:
         _render_standalone_analysis(report, turn_dir, root)
-    with artifacts:
-        _render_standalone_artifacts(report, turn_dir)
+    with hypotheses:
+        _render_standalone_hypotheses(report, turn_dir)
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -975,29 +975,65 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
         _render_visual_plan(report)
 
 
-def _render_standalone_artifacts(report: dict[str, Any], turn_dir: Path) -> None:
+def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
+    """Panel 3: M3 hypotheses proposed from M2's takeaways — proposal only, no
+    validation (there is no confirm/test phase wired up for the standalone
+    tool). Candidate signals / suggested next steps / raw artifacts are
+    demoted into an expander below, since they're optional inputs for a
+    separate downstream pipeline, not the primary content of this tab."""
     st.markdown(
         '<div class="ev-section-head">'
-        '<div class="ev-section-title">Artifacts</div>'
-        '<div class="ev-section-sub">Descriptive exploratory analysis only — no hypotheses were '
-        "generated or validated. These are optional inputs for a separate, downstream "
-        "confirmatory pipeline, not conclusions.</div>"
+        '<div class="ev-section-title">Hypotheses</div>'
+        '<div class="ev-section-sub">M3 — falsifiable candidate explanations proposed from the '
+        "M2 takeaways above. Proposed only, not validated — there is no confirm/test "
+        "phase wired up here.</div>"
         "</div>",
         unsafe_allow_html=True,
     )
+    hypotheses = [h for h in report.get("hypotheses") or [] if isinstance(h, dict) and h.get("statement")]
+    if hypotheses:
+        for h in hypotheses:
+            _render_standalone_hypothesis_card(h)
+    else:
+        st.info(
+            "No hypotheses were recorded for this report. Re-run with the CLI's M3 step "
+            "enabled (on by default; pass --no-hypotheses to skip it), or the exploratory "
+            "findings above may have been too thin to propose one from."
+        )
+
     signals = _candidate_signals(report)
     tests = report.get("recommended_confirmatory_tests") or []
-    if signals:
-        st.markdown("#### Candidate signals (optional follow-up)")
-        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
-    if tests:
-        st.markdown("#### Suggested next steps")
-        for item in tests:
-            st.markdown(f"- {item}")
-    if not signals and not tests:
-        st.info("No candidate signals or suggested next steps were recorded.")
-    with st.expander("Inspect generated artifacts", expanded=True):
+    with st.expander("Candidate signals, suggested next steps, and raw artifacts", expanded=False):
+        if signals:
+            st.markdown("#### Candidate signals (optional follow-up)")
+            st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
+        if tests:
+            st.markdown("#### Suggested next steps")
+            for item in tests:
+                st.markdown(f"- {item}")
+        if not signals and not tests:
+            st.caption("No candidate signals or suggested next steps were recorded.")
         _render_artifacts(report, turn_dir)
+
+
+def _render_standalone_hypothesis_card(h: dict[str, Any]) -> None:
+    basis = str(h.get("basis") or "").strip()
+    test_design = str(h.get("test_design") or "").strip()
+    basis_line = f'<div class="ev-signal-body">based on: {_html_escape(basis)}</div>' if basis else ""
+    test_line = (
+        f'<div class="ev-signal-test">How this could be checked: {_html_escape(test_design)}</div>'
+        if test_design else ""
+    )
+    st.markdown(
+        f"""
+        <div class="ev-signal">
+          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
+          {basis_line}
+          {test_line}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_stat_panel(root) -> None:

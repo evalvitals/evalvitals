@@ -353,13 +353,18 @@ class ExploratoryAnalysisReport:
     """Output of the exploratory analysis agent: a data profile, a ranked list
     of takeaways (each paired with its supporting chart/table), and the raw
     charts/tables/code behind them. Purely descriptive — this agent does not
-    generate or validate hypotheses; see ``StatsAnalysisAgent`` for that.
+    generate or validate hypotheses itself; ``hypotheses`` (if present) is
+    filled in by a separate downstream stage (M3, see
+    ``evalvitals.analysis.hypothesis_agent.HypothesisAgent``), not by this
+    class — proposal only, still no validation; see ``StatsAnalysisAgent``
+    for confirmatory testing.
     """
 
     question: str = ""
     ok: bool = False
     observations: list[str] = field(default_factory=list)
     takeaways: list[Takeaway] = field(default_factory=list)
+    hypotheses: list[dict[str, Any]] = field(default_factory=list)
     visual_plan: list[dict[str, Any]] = field(default_factory=list)
     chart_readings: list[dict[str, Any]] = field(default_factory=list)
     dashboard_storyboard: list[dict[str, Any]] = field(default_factory=list)
@@ -393,6 +398,7 @@ class ExploratoryAnalysisReport:
             "ok": self.ok,
             "observations": self.observations,
             "takeaways": [t.to_dict() for t in self.takeaways],
+            "hypotheses": self.hypotheses,
             "visual_plan": self.visual_plan,
             "chart_readings": self.chart_readings,
             "dashboard_storyboard": self.dashboard_storyboard,
