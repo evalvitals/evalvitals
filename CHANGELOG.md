@@ -6,6 +6,31 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — figure skills on by default across claude/agy/codex
+
+- **`eval-chart-style` bundled skill** (`agent_assets/skills/eval-chart-style/`):
+  the chart-type + house-style policy that `analysis/eval_viz_theme.py` codifies
+  for host plotly charts, rewritten as an Agent Skill for the sandbox coder —
+  distribution-first chart selection (violin/ECDF/heatmap/forest/paired-slope,
+  never a mean as a bar), the FAIL `#C0413B` / PASS `#5B7A99` semantic palette,
+  human bin/number formatting, and leakage-demotion rules. Complements
+  `nature-figure` (journal polish); the two divide chart-TYPE vs styling.
+- **Bundled skills are now default-on for every figure-drawing agent flow**
+  (`analysis/explorer.py`): `ExploratoryAnalysisAgent` injects the bundled
+  skills into any bare `CliAgentConfig` on a skill-capable backend, so the
+  fused pipeline and example scripts get them without wiring
+  (`use_bundled_skills=False` opts out; explicit `skills=` is respected).
+  The prompt hint is no longer opt-in ("you MAY invoke") — agents are told to
+  apply the skills BY DEFAULT before plotting, with the non-interactive guard
+  kept (never pause to ask; styling only).
+- **codex now receives skills too** (`agent_assets/skills.py`,
+  `eval_agent/cli_agent.py`): `SKILL_BACKENDS` gains `codex`; since codex has
+  no `Skill` tool, `CodexAgent._install_skills` surfaces the vendored
+  `.claude/skills/<name>/SKILL.md` files through the workdir's `AGENTS.md`
+  (appending, never clobbering), and `_skills_hint` tells codex to read the
+  vendored guides rather than invoke a tool. deco_hallu example
+  `codegen_timeout_sec` 240→480 to absorb the skill read+apply overhead.
+
 ### Changed — M2 explorer adapts to arbitrary outcome shapes, not just FAIL/PASS
 
 - **Outcome-adaptive explorer prompt** (`analysis/explorer.py`, `analysis/profile.py`):
