@@ -67,6 +67,7 @@ report = loop.run(failure_cases)
 - [Quickstart](quickstart.md): runnable examples and common entry points.
 - [Exploratory Analysis (M2/M3)](m2_analysis.md): standalone `evalvitals
   explore` — descriptive analysis + hypothesis proposal, no code required.
+- [Analyzer Zoo](analyzers.md): reference tables of implemented analyzers and registered models.
 - [Architecture](architecture.md): package structure and design contracts.
 - [Extending EvalVitals](extending.md): how to add analyzers, specs, and backends.
 - [Roadmap](roadmap.md): current implementation status and planned surfaces.
