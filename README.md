@@ -787,7 +787,8 @@ cd examples/analyzer_demos/qwen_attention       && docker compose up   # attenti
 cd examples/analyzer_demos/hallucination        && docker compose up   # POPE / CHAIR hallucination
 cd examples/analyzer_demos/mm_shap              && docker compose up   # multimodal SHAP attribution
 cd examples/analyzer_demos/logprob_entropy      && docker compose up   # logprob uncertainty
-cd examples/m2_statistics/stats_compare         && docker compose up   # A/B statistical comparison
+cd examples/m2_statistics/synthetic_yield_explore && docker compose up # M2/M3 explore, continuous outcome
+cd examples/m2_statistics/deco_hallu_explore      && docker compose up # M2/M3 explore, real M1 data
 cd examples/diagnosis_loops/eval_agent          && docker compose up   # AutoDiagnoseLoop M1→M4
 cd examples/diagnosis_loops/qwen_loop_agy       && docker compose up   # VLDiagnoseLoop M1→M5 (VLM)
 cd examples/diagnosis_loops/qwen_video_temporal && docker compose up   # video temporal diagnosis

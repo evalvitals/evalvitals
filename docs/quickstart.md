@@ -324,8 +324,6 @@ print(mr.avg_ranks)          # {"A": 2.1, "B": 1.7, "C": 2.2}
 print(mr.significant_pairs)  # [("A", "B"), ...] — pairs that pass Nemenyi CD
 ```
 
-Full runnable example: `examples/m2_statistics/stats_compare/` (no API key, `docker compose up`).
-
 ---
 
 ## AutoDiagnoseLoop — automated false-attribution pipeline
