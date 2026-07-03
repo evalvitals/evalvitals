@@ -914,9 +914,12 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
                 elif name in plots_by_stem:
                     found_charts.append(("plot", plots_by_stem[name]))
             if found_charts:
-                cols = st.columns(min(2, len(found_charts)))
+                # Always a two-column grid: a takeaway with a single chart gets a
+                # half-width card, not a full-page blow-up — keeps every
+                # takeaway's evidence at the same visual scale.
+                cols = st.columns(2)
                 for idx, (kind, item) in enumerate(found_charts):
-                    with cols[idx % len(cols)]:
+                    with cols[idx % 2]:
                         if kind == "chart":
                             _render_chart_card(item, turn_dir, heading_level="caption", key_prefix=f"takeaway{i}")
                         else:
