@@ -121,7 +121,17 @@ def test_keyword_fallback_when_no_design():
 def test_descriptive_tool_never_becomes_inconclusive_headline():
     """single_rate_evalue (rate−0.5 = large |effect|) must NOT be surfaced as the
     'best' result when nothing discriminates — that printed a meaningless
-    'vs p0=0.50 → reject' as the verdict (defect 6)."""
+    'vs p0=0.50 → reject' as the verdict (defect 6).
+
+    Since "Generalize M2 analysis planning" (commit 5fd27e2), a "no
+    discriminating M2 result" verdict (evidence_grade == "none") is not the
+    final word: the tester falls through to the rigorous label-free fallback
+    (the same per-case ``compare()`` used when M2 supplies no stats_results at
+    all) before giving up. That fallback is independent of single_rate_evalue's
+    artifact effect, so defect 6 stays fixed either way — here the fallback
+    also finds nothing (no per-case signal for this hypothesis in the fixture
+    batch), so the final verdict is an honest "insufficient data", never the
+    descriptive tool's misleading "reject"."""
     report = StatsAnalysisReport(
         model_name="m", findings=[], severity="none", narrative="",
         raw_results={}, conclusion="c",
@@ -138,7 +148,8 @@ def test_descriptive_tool_never_becomes_inconclusive_headline():
     tr = HypothesisTester().test([h], report, _labeled_batch())[0]
     assert tr.status == HypothesisStatus.INCONCLUSIVE
     assert "reject" not in tr.verdict.lower()
-    assert "discriminating" in tr.verdict.lower()
+    assert "insufficient" in tr.verdict.lower()
+    assert tr.evidence["source"] == "fallback_compare"
 
 
 # ── P4 stopping tiers ───────────────────────────────────────────────────────
