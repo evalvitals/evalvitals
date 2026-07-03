@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 
-from evalvitals.analysis.explore_run import _verdict_suffix, write_report_artifacts
+from evalvitals.analysis import explore_run
+from evalvitals.analysis.explore_run import _verdict_suffix, run_explore, write_report_artifacts
 from evalvitals.analysis.explorer import CandidateSignal, ExploratoryAnalysisReport
+from evalvitals.analysis.hypothesis_agent import Hypothesis
 from evalvitals.viz import renderer as charts_mod
 
 _HAVE_MPL = charts_mod._import_matplotlib() is not None
@@ -66,3 +68,59 @@ def test_verdict_suffix_tags_descriptive_vs_adjudicated():
     adjudicated = CandidateSignal(name="s", host_adjudicated=True, reject=True, e_value=51.2)
     tag = _verdict_suffix(adjudicated)
     assert "REJECT H0" in tag and "e-BH family" in tag
+
+
+class _FakeExploreAgent:
+    """Stands in for ExploratoryAnalysisAgent — returns a fixed M2 report
+    without touching a real sandbox/coding-agent backend."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def explore_path(self, path, **_kwargs):
+        return ExploratoryAnalysisReport(
+            question="What predicts yield?",
+            ok=True,
+            observations=["30 batches, no missing values."],
+            takeaways=[],
+            data_profile={"loaded_rows": 30},
+        )
+
+
+class _FakeHypothesisAgent:
+    """Stands in for HypothesisAgent — returns a fixed hypothesis without a
+    real LLM/CLI-agent call."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def propose(self, report, **_kwargs):
+        return [Hypothesis(statement="Temperature drives yield.", basis="b", test_design="t")]
+
+
+def test_run_explore_wires_m3_hypotheses_into_the_persisted_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeExploreAgent)
+    monkeypatch.setattr(explore_run, "HypothesisAgent", _FakeHypothesisAgent)
+
+    out_dir = tmp_path / "out"
+    rc = run_explore(tmp_path / "records.json", out=out_dir, coder_provider="llm")
+
+    assert rc == 0
+    saved = json.loads((out_dir / "exploratory_report.json").read_text())
+    assert saved["hypotheses"] == [{"statement": "Temperature drives yield.", "basis": "b", "test_design": "t"}]
+
+
+def test_run_explore_skips_m3_when_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeExploreAgent)
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("HypothesisAgent should not be constructed when disabled")
+
+    monkeypatch.setattr(explore_run, "HypothesisAgent", _boom)
+
+    out_dir = tmp_path / "out"
+    rc = run_explore(tmp_path / "records.json", out=out_dir, coder_provider="llm", propose_hypotheses=False)
+
+    assert rc == 0
+    saved = json.loads((out_dir / "exploratory_report.json").read_text())
+    assert saved["hypotheses"] == []

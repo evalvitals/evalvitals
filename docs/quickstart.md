@@ -93,6 +93,38 @@ print(evalvitals.registry.analyzers.names_compatible_with(model))
 
 This is the same discovery surface intended for an automated evaluation agent.
 
+## Agent — Tool-Calling Loop, Any Backend
+
+`Agent(wraps=handle)` is **backend-agnostic**: it needs only `GENERATE` +
+`TOOL_CALLS` (checked up front), never internals — so the *same* loop drives
+an API model and a local model. The single thing that varies is the
+`ToolCallCodec` (auto-selected): OpenAI-native structured calls for the API,
+Hermes-style `<tool_call>{…}</tool_call>` text parsing for local templates.
+Tool execution goes through a pluggable `ToolExecutor` (swap in your
+`APIToolHandler`).
+
+```python
+from evalvitals import Agent, Tool, compose, RuntimeConfig
+from evalvitals.models.backends import call_vision_api_chat_fn
+
+search = Tool(name="search", description="web search",
+              parameters={"type": "object", "properties": {"q": {"type": "string"}}},
+              fn=my_search)
+
+# API agent (reuse your engine): native tool-calls, OpenAI codec
+api = compose("qwen3-8b", "api", RuntimeConfig(chat_fn=call_vision_api_chat_fn(call_vision_api)))
+traj = Agent(api, tools=[search]).run("who won the 2022 world cup?")   # -> Trajectory
+
+# Local agent: SAME Agent; tools rendered via the model's chat template, Qwen codec
+local = compose("qwen3-8b", "hf_local")        # TOOL_CALLS granted only if spec.tool_calling
+traj = Agent(local, tools=[search]).run("...")  # -> Trajectory (steps: USER→ACTOR→TOOL→…)
+```
+
+`TOOL_CALLS` is a **conditional** capability for local models: the backend
+provides the channel, but it's granted only when the model's chat template
+renders tools (`spec.tool_calling`, verified against the template at load).
+So `compose(non_tool_model, "hf_local", want={TOOL_CALLS})` fails up front.
+
 ## Standalone M2 Explore
 
 If you already have result logs and want M2 to analyze them without writing
@@ -117,9 +149,8 @@ pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
 ```
 
-See [Exploratory Analysis & Confirmatory Statistics](m2_analysis.md) for the
-full standalone workflow and the boundary between exploratory analysis and
-confirmatory `StatsAnalysisAgent` tests.
+See [Exploratory Analysis (M2/M3)](m2_analysis.md) for the full standalone
+explore + hypothesis-generation workflow.
 
 ## Convenience Shim
 
@@ -325,11 +356,153 @@ print(mr.avg_ranks)          # {"A": 2.1, "B": 1.7, "C": 2.2}
 print(mr.significant_pairs)  # [("A", "B"), ...] — pairs that pass Nemenyi CD
 ```
 
-Full runnable example: `examples/m2_statistics/stats_compare/` (no API key, `docker compose up`).
-
 ---
 
-## AutoDiagnoseLoop — automated false-attribution pipeline
+## VLDiagnoseLoop — Automated Failure Attribution (Current)
+
+Two diagnosis loops are available. `VLDiagnoseLoop` is the current
+architecture for VL and LLM tasks (`AutoDiagnoseLoop`, below, is kept for
+backward compatibility):
+
+```text
+M1  ProbeAgent         protocol-guided analyzer selection + execute
+M2  StatsAnalysisAgent stats tools + e-BH FDR correction + LLM evidence chain
+M3  DiagnosisAgent     "AI scientist" hypothesis generation
+M5  HypothesisTester   stats test + protocol consistency check
+     ↑___________________________________|
+     stop when M5 finds a verified, protocol-consistent hypothesis
+```
+
+M4 (`SurgeryAgent`) runs **after** the loop via `loop.run_m4()` to propose
+(Plan A) or execute (Plan B) a targeted fix for the best verified hypothesis.
+See [Architecture](architecture.md#eval_agent-automated-diagnosis-pipeline)
+for the stage contracts, M1's two-tier analyzer selection, and what M2/M5 ask.
+
+```python
+from evalvitals import compose
+from evalvitals.core.capability import Capability
+from evalvitals.eval_agent import VLDiagnoseLoop, AgyModel, RunLogger
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
+
+protocol = ExperimentProtocol(
+    description="The VLM gives wrong left/right positions in spatial questions.",
+    task_domain="spatial reasoning",
+    success_criteria="Positions must match what is visible in the image.",
+)
+
+model = compose("qwen2.5-vl-7b-instruct", "hf_local",
+                want={Capability.GENERATE, Capability.ATTENTION})
+judge = AgyModel()   # or any Model with Capability.GENERATE
+
+loop = VLDiagnoseLoop(
+    model=model,
+    probe_agent=ProbeAgent(max_analyzers=3),
+    stats_agent=StatsAnalysisAgent(judge=judge),
+    diagnosis_agent=DiagnosisAgent(judge=judge),
+    max_cycles=3,
+    protocol=protocol,
+    run_logger=RunLogger(),
+)
+report = loop.run(failure_cases)
+
+print(report.resolved)           # True when M5 finds a supported, consistent hypothesis
+print(report.final_hypotheses)   # list[Hypothesis] — status SUPPORTED/REFUTED/INCONCLUSIVE
+
+fix = loop.run_m4(report, failure_cases)   # post-loop fix proposal
+```
+
+`RunLogger()` above writes just the JSONL event log. For the full output
+directory — `report/`, `figures/`, `artifacts/`, per-trial `fixes/`/`experiments/`
+folders, `manifest.json` — construct a `RunContext` and pass `run_logger=ctx.logger`
+instead; see [RunContext](architecture.md#runcontext-single-owner-of-a-runs-output-directory).
+
+**`ExperimentProtocol`** is the human prior that anchors the loop. M1 uses it
+to select analyzers relevant to the task; M5 uses it to reject hypotheses that
+drift from what the user was investigating:
+
+```python
+from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
+
+protocol = ExperimentProtocol(
+    description="free text — what the experiment tests and what failure looks like",
+    task_domain="spatial reasoning",      # short label
+    success_criteria="what counts as a pass",
+    failure_patterns="observations already noticed (optional)",
+    target_modalities=frozenset({"text", "image"}),
+)
+```
+
+## Input Modes — Submitting a Diagnosis Run
+
+There are two ways to trigger the diagnosis agent.
+
+### Mode 1 — Container Submission (Reproduce a Known Failure)
+
+Write a `run.py` that defines your failure cases as `FailureCase` objects,
+then package it into a Docker container. The agent runs the M1→M5 loop
+inside the container and writes findings to `outputs/`.
+
+1. **Define failure cases and run the loop** in `run.py` — see the
+   `VLDiagnoseLoop` example above; build a `CaseBatch` of `FailureCase`
+   objects instead of `failure_cases` and call `loop.run(cases)`.
+2. **Add a Dockerfile + docker-compose.yml** mirroring one of the concrete
+   example directories under `examples/analyzer_demos/`, `examples/m2_statistics/`,
+   or `examples/diagnosis_loops/`.
+3. **Submit the container:**
+
+```bash
+docker compose up
+```
+
+Outputs (logs, analyzer artifacts, hypotheses) are written to `outputs/` in
+the container, mounted to your local directory via the compose volume. See
+`examples/diagnosis_loops/qwen_loop_agy/` and
+`examples/diagnosis_loops/qwen_video_temporal/` for complete working examples.
+
+### Mode 2 — Natural-Language Description (Agent Writes the Container)
+
+Describe the failure in plain English. The scaffold generator produces a
+ready-to-run Docker experiment with a `run.py`, `Dockerfile`, and
+`docker-compose.yml`. A CLI coding agent (Claude Code, Gemini CLI, …) can
+write a fully customised `run.py`; otherwise a template is used as a
+starting point.
+
+```python
+from evalvitals.eval_agent import scaffold_from_description
+
+out = scaffold_from_description(
+    description="My VLM frequently confuses left and right when answering "
+                "spatial relationship questions about images.",
+    model_key="qwen2.5-vl-7b-instruct",
+    output_dir="./my_experiment",
+    provider="claude_code",   # optional: generates a bespoke run.py; omit for a template
+    cli_model="sonnet",
+)
+# cd my_experiment && docker compose up
+```
+
+Or via CLI:
+
+```bash
+python -m evalvitals.eval_agent.nl_runner \
+    --description "My VLM confuses left and right in spatial questions" \
+    --model qwen2.5-vl-7b-instruct \
+    --out ./my_experiment \
+    --provider claude_code --cli-model sonnet   # omit --provider for template mode
+
+cd my_experiment && docker compose up
+```
+
+The generated scaffold contains `run.py` (diagnosis script with
+`ExperimentProtocol` pre-filled from your description), `Dockerfile`,
+`docker-compose.yml` (mounts HF cache, GPU, outputs, and agy binary), and
+`.gitignore`. In template mode, edit the `CASES` list in `run.py` to add your
+own failure examples before running `docker compose up`.
+
+## AutoDiagnoseLoop — Legacy M1→M4 Pipeline
 
 `AutoDiagnoseLoop` closes the analysis→diagnosis→intervention cycle automatically.
 It needs a **judge model** (any instruction-following model with `GENERATE`) and

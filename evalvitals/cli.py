@@ -74,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-skills", dest="use_bundled_skills", action="store_false", default=True,
         help="Do not apply the package's bundled skills (e.g. nature-figure).",
     )
+    explore.add_argument(
+        "--no-hypotheses", dest="propose_hypotheses", action="store_false", default=True,
+        help="Skip M3 (falsifiable hypotheses proposed from the M2 takeaways). "
+             "Runs by default after a successful explore.",
+    )
 
     dashboard = sub.add_parser(
         "dashboard",
@@ -105,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_skills=args.allow_skills,
             use_bundled_skills=args.use_bundled_skills,
             outcome_col=args.outcome_col,
+            propose_hypotheses=args.propose_hypotheses,
         )
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)

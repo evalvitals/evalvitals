@@ -7,8 +7,9 @@ deterministically, and everything is persisted (optionally a dashboard opens).
 
 Flow::
 
-    ExploratoryAnalysisAgent.explore_path        # free-form EDA (a CLI coding agent)
+    ExploratoryAnalysisAgent.explore_path        # M2: free-form EDA (a CLI coding agent)
       -> adjudicate_report              # host recomputes verdicts (in-sample)
+      -> HypothesisAgent.propose        # M3: falsifiable hypotheses from M2's takeaways
       -> render_chart_specs             # spec + CSV -> PNG, host-side
       -> write_report_artifacts         # report.json + figures/ + tables/ + code
       -> launch_dashboard (optional)
@@ -24,6 +25,7 @@ from typing import Any
 from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
 from evalvitals.analysis.explorer import RECORDS_FILENAME, ExploratoryAnalysisAgent
+from evalvitals.analysis.hypothesis_agent import HypothesisAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 from evalvitals.viz.renderer import render_chart_specs
 
@@ -47,6 +49,7 @@ def run_explore(
     allow_skills: bool = False,
     use_bundled_skills: bool = True,
     outcome_col: str | None = None,
+    propose_hypotheses: bool = True,
 ) -> int:
     """Run one exploratory analysis and persist its artifacts.
 
@@ -61,6 +64,10 @@ def run_explore(
     *outcome_col* optionally names the target/label column explicitly (M1
     passes ``"label"``); omit it to let the agent auto-detect an outcome by
     name heuristics, or fall back to unsupervised EDA when there is none.
+
+    *propose_hypotheses* runs M3 (``HypothesisAgent``) on M2's takeaways after
+    a successful explore, using the same coding-agent backend; set False to
+    skip it (e.g. to save the extra LLM call).
     """
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -98,6 +105,16 @@ def run_explore(
     # decides). A standalone run has no held-out split, so verdicts are IN-SAMPLE.
     adjudicate_report(report, split_label="in_sample")
 
+    # M3: propose falsifiable hypotheses from M2's takeaways — proposal only,
+    # no validation. Only worth trying when M2 actually produced something to
+    # reason over.
+    if propose_hypotheses and report.ok and (report.takeaways or report.observations):
+        hyp_agent = HypothesisAgent(cli_config=cli_config, timeout_sec=timeout_sec)
+        try:
+            report.hypotheses = [h.to_dict() for h in hyp_agent.propose(report.to_dict())]
+        except Exception as exc:  # noqa: BLE001 — M3 is best-effort, never blocks persistence
+            print(f"hypothesis generation failed: {exc}")
+
     write_report_artifacts(report, out_dir)
 
     print(f"ok: {report.ok}")
@@ -106,6 +123,10 @@ def run_explore(
     print(f"output: {out_dir}")
     if report.error:
         print(f"error: {report.error}")
+    if report.hypotheses:
+        print("\nhypotheses (M3, proposed only — not validated):")
+        for h in report.hypotheses[:8]:
+            print(f"- {h.get('statement')}")
     if report.observations:
         print("\nobservations:")
         for obs in report.observations[:8]:

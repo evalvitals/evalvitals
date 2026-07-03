@@ -45,6 +45,21 @@ Specs live in `evalvitals.specs` and are intentionally torch-free.  When
 `wrap()` is used, a minimal spec is inferred at runtime from `model.config` via
 `evalvitals.models.inference.infer_spec` — no registry entry is required.
 
+**Modality is a set, not a class fork.** A spec declares modalities by the
+components it carries — `vision` adds `"image"`, `audio` adds `"audio"`,
+`video` adds `"video"` — so an *omni* model (Qwen3-Omni reference) is just a
+spec with more than one. Analyzers match on `model.modalities`, and `Inputs`
+carries `image` / `audio` / `video` slots beside the prompt:
+
+```python
+omni = compose("qwen3-omni-30b-a3b-instruct", "api", rt)
+omni.modalities    # frozenset({'text', 'image', 'audio', 'video'})
+spec.is_omni       # True;  the audio-only Captioner -> {'text', 'audio'}
+```
+
+The thinker (text-emitting multimodal LM) is what failure analysis hooks; the
+talker (speech out) is out of scope.
+
 ### `Backend`
 
 `Backend` describes how a model is run. Backends declare the capabilities they
@@ -59,7 +74,29 @@ Current backend categories:
 | `vllm_offline` | Planned high-throughput offline inference backend. |
 
 Capabilities belong to the backend because the same model identity can expose
-different information under different runtimes.
+different information under different runtimes — `compose()` negotiates them
+up front, before any weights load:
+
+```python
+from evalvitals import compose, RuntimeConfig
+from evalvitals.core import Capability
+
+# 1) API / black-box (also covers a `vllm serve` endpoint). Reuse your own engine:
+from evalvitals.models.backends import call_vision_api_generate_fn
+rt = RuntimeConfig(generate_fn=call_vision_api_generate_fn(my_call_vision_api))
+api_model = compose("qwen3-vl-8b-instruct", "api", rt)         # caps: GENERATE, TOOL_CALLS
+
+# 2) Local white-box, full internals (forces eager when attention is requested):
+wb = compose("qwen3-vl-8b-instruct", "hf_local", want={Capability.ATTENTION})
+
+# 3) Wrong ask fails immediately, before any weights load:
+compose("qwen3-vl-8b-instruct", "api", want={Capability.ATTENTION})   # -> CapabilityError
+```
+
+Module paths in a spec are *hints*: the white-box backend **discovers** the
+real decoder-layer `ModuleList` at load time (`models/_discover.py`) instead
+of trusting a hardcoded path — robust across transformers releases and the
+doubled-`.model.` / no-`.model` / fused-experts traps.
 
 ### `Model`
 
@@ -208,6 +245,57 @@ eval_agent/
 | M3 | `stages/diagnosis.py` | `DiagnosisAgent` | `diagnose(report, prior_cycles) → DiagnosisResult` |
 | M4 | `stages/surgery.py` | `SurgeryAgent` | `operate(hypothesis, model, results, data) → InterventionResult` |
 | M5 | `stages/hypothesis_tester.py` | `HypothesisTester` | `test(hypotheses, report, data, protocol) → list[HypothesisTestResult]`; `stopping_criteria_met(results) → bool` |
+
+**M1 analyzer selection** happens in two tiers:
+
+- **Tier (a)** `StrategyProbe` ranks analyzers by diagnostic value for the
+  detected model kind, guided by the protocol description via an LLM judge:
+
+  | Kind detected | Priority analyzers |
+  |---|---|
+  | VLM (image/video) | `pope`, `chair`, `attention`, `attention_rollout`, `attention_sink`, `prompt_contrast`, `mm_shap`, `logprob_entropy` |
+  | Agent (`TOOL_CALLS`) | `loop_detect`, `ignored_obs`, `first_error_judge`, `counterfactual` |
+  | LLM (text-only) | `attention`, `logit_lens`, `token_entropy`, `logprob_entropy`, `attention_sink`, `prompt_contrast`, `cka` |
+
+- **Tier (b)** `ProbeGenerator` / `WhiteboxProbeGenerator` — when no standard
+  analyzer covers the failure mode, an LLM or CLI agent writes a bespoke probe
+  and runs it in a sandbox.
+
+**M2 `StatsAnalysisAgent`** runs a catalog of statistical tools
+(`signal_label_assoc`, `mcnemar_evalue`, `bootstrap_diff`, `friedman`,
+`rank_corr`, `single_rate_evalue`) over the analyzer findings, applies e-BH
+FDR correction, and produces a `StatsAnalysisReport` with a structured
+evidence chain for M3. It can also be used standalone, outside the loop:
+
+```python
+from evalvitals.analysis import StatsAnalysisAgent
+
+rows = [
+    {"case_id": "c0", "label": "fail", "low_img_attn": 1},
+    {"case_id": "c1", "label": "pass", "low_img_attn": 0},
+]
+
+report = StatsAnalysisAgent().analyze_records(
+    rows, id_col="case_id", label_col="label", signal_cols=["low_img_attn"],
+)
+print(report.conclusion)
+print([r.summary for r in report.stats_results])
+```
+
+This is a different, confirmatory system from the standalone
+`ExploratoryAnalysisAgent`/`HypothesisAgent` pair covered in
+[Exploratory Analysis (M2/M3)](m2_analysis.md) — that one is purely
+descriptive with no verdict; `StatsAnalysisAgent` is the loop's FDR-controlled
+confirmatory stage.
+
+**M5 `HypothesisTester`** asks two questions per hypothesis:
+
+1. *Statistical support* — does the signal group fail at a significantly
+   higher rate than the control group? Consumes M2's FDR-corrected stats when
+   present; falls back to a clustered-bootstrap `stats.compare` call.
+2. *Protocol consistency* — does the hypothesis match what the user
+   described? Keyword-based by default; an optional `judge=` runs an LLM
+   critic.
 
 All stages are injectable:
 

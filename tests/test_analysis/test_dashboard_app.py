@@ -147,7 +147,7 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     assert "Mechanism test" not in blob and "Repair / surgery test" not in blob
 
 
-def test_standalone_m2_dashboard_does_not_show_hypothesis_tab(tmp_path):
+def test_standalone_dashboard_hypotheses_tab_falls_back_gracefully_when_absent(tmp_path):
     (tmp_path / "fused_report.json").write_text(json.dumps({
         "summary": "M2-only exploratory analysis.",
         "observations": ["Candidate pattern surfaced for review."],
@@ -161,11 +161,42 @@ def test_standalone_m2_dashboard_does_not_show_hypothesis_tab(tmp_path):
     assert [t.label for t in at.tabs] == [
         "1 Problem Setting",
         "2 Exploratory Analysis",
-        "3 Artifacts",
+        "3 Hypotheses",
     ]
     blob = " ".join(str(m.value) for m in at.markdown)
+    assert any("No hypotheses were recorded" in str(i.value) for i in at.info)
+    # candidate signals / suggested next steps still exist, just demoted into
+    # an expander (not the tab's primary content anymore)
     assert "Suggested next steps" in blob
     assert "Hypotheses & Artifacts" not in blob
+
+
+def test_standalone_dashboard_renders_m3_hypotheses_with_no_verdict(tmp_path):
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "question": "What predicts yield?",
+        "observations": ["Higher temperature batches yield more."],
+        "hypotheses": [
+            {
+                "statement": "Higher temperature accelerates the reaction, raising yield.",
+                "basis": "Higher temperature batches yield more (70.1% vs 88.4%).",
+                "test_design": "Run a controlled temperature-ramp experiment holding pressure fixed.",
+            },
+            {"statement": "Catalyst B underperforms due to a side reaction.", "basis": "", "test_design": ""},
+        ],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Higher temperature accelerates the reaction, raising yield." in blob
+    assert "Run a controlled temperature-ramp experiment holding pressure fixed." in blob
+    assert "Catalyst B underperforms due to a side reaction." in blob
+    # proposal only — no support/tested verdict pill, since there's no
+    # confirm/M4/M5 phase wired up for the standalone tool
+    assert 'ev-pill" style="border-color' not in blob
+    assert "not yet tested" not in blob.lower()
+    assert any("Proposed only, not validated" in str(m.value) for m in at.markdown)
 
 
 def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_path):

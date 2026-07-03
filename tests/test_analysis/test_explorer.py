@@ -200,6 +200,54 @@ def test_load_records_from_path_samples_across_files(tmp_path):
     assert {r["_source_dir"] for r in loaded} == {"agent-a", "agent-b"}
 
 
+def test_load_records_from_path_unpacks_dict_wrapped_case_list(tmp_path):
+    """A common M1-output shape: one file per model/run, scalar run metadata
+    plus a list of per-case dicts under a conventional key (e.g. "cases").
+    This must load as one flat row per case — carrying the run metadata —
+    with no bespoke pre-processing script, so `evalvitals explore` can point
+    directly at a raw M1 case directory."""
+    run_dir = tmp_path / "cases"
+    run_dir.mkdir()
+    (run_dir / "model_a.json").write_text(json.dumps({
+        "model": "model-a",
+        "seed": 42,
+        "cases": [
+            {"case_id": "c0", "label": "pass"},
+            {"case_id": "c1", "label": "fail"},
+        ],
+    }), encoding="utf-8")
+    (run_dir / "model_b.json").write_text(json.dumps({
+        "model": "model-b",
+        "seed": 7,
+        "cases": [{"case_id": "c2", "label": "pass"}],
+    }), encoding="utf-8")
+
+    loaded = load_records_from_path(tmp_path)
+
+    assert len(loaded) == 3
+    by_case = {r["case_id"]: r for r in loaded}
+    assert by_case["c0"]["model"] == "model-a"
+    assert by_case["c0"]["seed"] == 42
+    assert by_case["c2"]["model"] == "model-b"
+    # per-case fields win over same-named run metadata on collision
+    assert by_case["c0"]["label"] == "pass"
+
+
+def test_load_records_from_path_leaves_plain_dict_records_alone(tmp_path):
+    """A dict with no recognizable list-of-dicts field is a single record
+    (existing behavior), not something to unpack."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "single.json").write_text(
+        json.dumps({"question_id": "q0", "is_correct": True}), encoding="utf-8"
+    )
+
+    loaded = load_records_from_path(tmp_path)
+
+    assert len(loaded) == 1
+    assert loaded[0]["question_id"] == "q0"
+
+
 def test_scan_folder_reports_filesystem_structure_not_just_row_schema(tmp_path):
     for agent in ("agent-a", "agent-b"):
         run_dir = tmp_path / agent
@@ -271,3 +319,76 @@ def test_explorer_explore_path(tmp_path):
     assert report.ok
     assert report.data_profile["loaded_rows"] == 6
     assert report.data_profile["source_path"] == str(data_dir.parent)
+
+
+def test_explore_path_hands_cli_agent_the_raw_folder_not_host_parsed_rows(tmp_path, monkeypatch):
+    """With a CLI coding-agent backend, `explore_path` must not pre-parse the
+    data itself: the host copies the raw files into the sandbox verbatim and
+    the agent's own generated code is responsible for figuring out the shape
+    (here: a dict-wrapped per-model case list, an arbitrary M1 output layout
+    the host loader was never taught about) and organizing it into rows."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "model_a.json").write_text(json.dumps({
+        "model": "model-a",
+        "cases": [
+            {"case_id": "c0", "label": "fail"},
+            {"case_id": "c1", "label": "pass"},
+        ],
+    }), encoding="utf-8")
+    (src / "model_b.json").write_text(json.dumps({
+        "model": "model-b",
+        "cases": [{"case_id": "c2", "label": "pass"}],
+    }), encoding="utf-8")
+
+    agent_written_code = """
+import json
+from pathlib import Path
+
+rows = []
+for f in sorted(Path("raw_input").glob("*.json")):
+    payload = json.loads(f.read_text())
+    for case in payload["cases"]:
+        row = dict(case)
+        row["model"] = payload["model"]
+        rows.append(row)
+
+Path("records.json").write_text(json.dumps(rows))
+fails = [r for r in rows if r["label"] == "fail"]
+result = {
+    "observations": [f"{len(rows)} rows loaded from raw folder, {len(fails)} fail"],
+    "visual_plan": [], "takeaways": [], "candidate_signals": [],
+    "charts": [], "caveats": [],
+}
+print("EXPLORATORY_RESULT_JSON=" + json.dumps(result))
+"""
+
+    class _FakeCliAgent:
+        def run(self, prompt, *, workdir, timeout_sec):
+            from evalvitals.eval_agent.cli_agent import CliAgentResult
+            return CliAgentResult(
+                files={"analysis.py": agent_written_code},
+                provider_name="fake", elapsed_sec=0.1, raw_output="fake trajectory",
+            )
+
+    monkeypatch.setattr(
+        "evalvitals.eval_agent.cli_agent.create_cli_agent", lambda config: _FakeCliAgent()
+    )
+
+    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+
+    sandbox = ExperimentSandbox(workdir=tmp_path / "wd", cleanup=False)
+    agent = ExploratoryAnalysisAgent(cli_config=CliAgentConfig(provider="claude_code"), sandbox=sandbox)
+
+    report = agent.explore_path(src, question="What predicts failure?")
+
+    assert report.ok, report.error
+    assert report.observations == ["3 rows loaded from raw folder, 1 fail"]
+    # the host copied the raw files byte-for-byte -- no host-side unpacking
+    copied = sorted(p.name for p in (sandbox.workdir / "raw_input").glob("*.json"))
+    assert copied == ["model_a.json", "model_b.json"]
+    raw_copy = json.loads((sandbox.workdir / "raw_input" / "model_a.json").read_text())
+    assert raw_copy["cases"][0]["case_id"] == "c0"
+    # data_profile carries the filesystem scan, not a host-computed row/outcome profile
+    assert "outcome" not in report.data_profile
+    assert report.data_profile["folder_scan"]["json_files_found"] == 2
