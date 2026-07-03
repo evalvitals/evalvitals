@@ -27,6 +27,7 @@ theme:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Exploratory Analysis (M2/M3): m2_analysis.md
   - Architecture: architecture.md
   - Extending: extending.md
   - Roadmap: roadmap.md

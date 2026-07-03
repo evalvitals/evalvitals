@@ -342,10 +342,10 @@ evalvitals explore /path/to/results \
 ```
 
 The run writes `exploratory_report.json`, the generated `analysis.py`,
-stdout/stderr, and any rendered charts under `figures/` + `tables/`. The
-exploratory report surfaces candidate signals; run `StatsAnalysisAgent` on
-promoted signals when you need confirmatory effect/CI/e-value/FDR verdicts.
-(The standalone console script `evalvitals-explore` is equivalent.)
+stdout/stderr, and any rendered charts under `figures/` + `tables/`. It also
+proposes 1-3 falsifiable hypotheses from the findings (M3, proposal-only —
+pass `--no-hypotheses` to skip). (The standalone console script
+`evalvitals-explore` is equivalent.)
 
 To inspect the output as a Streamlit dashboard:
 
@@ -354,10 +354,8 @@ pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
 ```
 
-See [docs/m2_analysis.md](docs/m2_analysis.md) for the standalone exploratory
-analysis workflow, including the single-shot explore entry, dashboard review,
-generated artifacts, and when to promote candidate signals into confirmatory
-`StatsAnalysisAgent` tests.
+See [docs/m2_analysis.md](docs/m2_analysis.md) for the full standalone
+M2 (exploratory analysis) → M3 (hypothesis generation) workflow.
 
 **`HypothesisTester`** (M5) asks two questions per hypothesis:
 

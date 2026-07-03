@@ -117,9 +117,8 @@ pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
 ```
 
-See [Exploratory Analysis & Confirmatory Statistics](m2_analysis.md) for the
-full standalone workflow and the boundary between exploratory analysis and
-confirmatory `StatsAnalysisAgent` tests.
+See [Exploratory Analysis (M2/M3)](m2_analysis.md) for the full standalone
+explore + hypothesis-generation workflow.
 
 ## Convenience Shim
 
