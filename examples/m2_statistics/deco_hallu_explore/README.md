@@ -58,6 +58,39 @@ Open the dashboard to see the charts and hypothesis cards:
 evalvitals dashboard outputs
 ```
 
+## Attention-enriched variant (continuous per-case signals)
+
+The raw probe files carry only categorical fields, so the analysis above can
+never show FAIL-vs-PASS *distributions*. `data_attn_full/` fixes that: the same
+606 cases enriched with 7 per-case attention-geometry scalars
+(attention_entropy, focus_share, center_offset, edge_mass, top1_share,
+max/mean_relative_weight) extracted with the `relative_attention` analyzer over
+ALL cases of ALL three checkpoints (no `max_cases` cap; per-case float16
+spatial maps kept under `data_attn_full/maps/`). Regenerate with:
+
+```bash
+python extract_attention_all.py --device cuda   # GPU; downloads any missing
+                                                # COCO val2014 images itself
+```
+
+Then explore it (distribution views become meaningful):
+
+```bash
+evalvitals explore data_attn_full --backend claude_code --outcome-col label \
+  --out outputs_attn_full -q "Compare the attention-geometry distributions \
+between FAIL and PASS within adversarial probes, overall and per checkpoint." \
+  --timeout-sec 900
+```
+
+A real run found: within adversarial probes, focus_share is the strongest
+separator (Cohen's d≈1.3, FAIL more peaked/off-center); the same signals
+separate FAIL/PASS at every checkpoint (direction is scale-invariant, magnitude
+uneven: 2B ≫ 8B > 4B); after collinearity pruning only focus_share,
+center_offset, mean_relative_weight and edge_mass carry independent signal.
+`data_2b_attn/` is the smaller 2B-only variant whose attention scalars were
+transplanted from the diagnosis-loop's frozen M1 state (32/201 coverage —
+useful mainly as an informative-missingness case study).
+
 See [`docs/m2_analysis.md`](../../../docs/m2_analysis.md) for the general
 standalone M2/M3 workflow, and
 [`examples/diagnosis_loops/deco_hallu/README.md`](../../diagnosis_loops/deco_hallu/README.md)
