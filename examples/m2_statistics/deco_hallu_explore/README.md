@@ -7,9 +7,11 @@ object-presence probe results already committed at
 (three Qwen3-VL checkpoints — 2b/4b/8b — answering "Is there a {object} in
 the image?" for COCO images, `label` = pass/fail).
 
-`build_dataset.py` merges the three per-model case files (606 rows total)
-into one dataset with a `model` column; no GPU or new M1 run is needed since
-this data was already produced by that example's `run_m1.py`.
+No GPU or new M1 run is needed — this data was already produced by that
+example's `run_m1.py`. The raw per-model files are handed to the M2 agent
+as-is; it reads them, figures out the shape itself (each is a dict with
+scalar run metadata plus a nested `cases` list), and organizes the three
+files into one tidy table before analysing it — no pre-processing script.
 
 ## Run it
 

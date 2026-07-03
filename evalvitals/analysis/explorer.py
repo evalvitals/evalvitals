@@ -23,9 +23,10 @@ import json
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from evalvitals.analysis.profile import describe_outcome, profile_records
 from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 RECORDS_FILENAME = "records.json"  # also read by explore_run.py / dashboard_app.py
 _RESULT_MARKER = "EXPLORATORY_RESULT_JSON="
 
-_GENERATE_PROMPT = """\
+_INTRO_AND_QUESTION = """\
 You are an exploratory data-analysis agent (Lambda-style): given ANY tabular
 dataset — with a binary outcome, a multi-class outcome, a continuous outcome,
 or no outcome at all — you write Python that discovers and charts the
@@ -48,6 +49,9 @@ structure that actually matters, adapting the story to what the data is.
 Question:
 {question}
 
+"""
+
+_DATA_ACCESS_RECORDS = """\
 A JSON file named "{input_filename}" is in the current working directory.
 It contains a list of row dictionaries. Data profile (the host already
 inferred column roles/dtypes and classified the outcome below — trust this
@@ -68,6 +72,71 @@ Setup:
 
 {framing}
 
+"""
+
+_DATA_ACCESS_RAW_FOLDER = """\
+The RAW M1-style output is at "{raw_input_dir}/" in the current working
+directory — nothing has been parsed, reshaped, or profiled for you. A
+filesystem-level scan of what's on disk (file/dir counts, extensions, a
+sample of entries — NOT parsed rows):
+{folder_scan}
+
+Write a self-contained Python script that performs a THOROUGH, Lambda-style
+exploratory analysis and PRODUCES A RICH SET OF CHARTS BY DEFAULT.
+
+Setup:
+- FIRST, load and organize the raw data into ONE tidy table YOURSELF — this is
+  part of your job, not a solved input. The files under "{raw_input_dir}/" may
+  be a single file or many, and each file's JSON shape is not guaranteed: it
+  could already be a flat list of row dicts, JSONL (one JSON object per line),
+  or a dict holding scalar run/file metadata (e.g. "model", "seed") alongside
+  a list of per-case records under a conventional key such as "cases" /
+  "results" / "rows" / "items" / "data" / "examples" / "samples" — or
+  something else entirely. Inspect what is actually there before assuming a
+  shape. If a file wraps a list of per-case dicts alongside scalar metadata,
+  merge that metadata into every row it produces (e.g. a per-model file's
+  "model" field becomes a "model" column on each of that file's rows).
+{outcome_hint}- after building the tidy table, determine whether it has a recognizable
+  outcome column (binary / categorical / continuous) or none at all — do NOT
+  invent a FAIL/PASS split when there is no such column.
+- also write the tidy table you built to "{input_filename}" (a JSON list of
+  row dicts) in the current working directory, so it is available to whoever
+  reviews this analysis afterward.
+- may use only local Python packages (pandas / numpy / matplotlib are fine); no
+  network and no repo mutation
+
+{framing}
+
+"""
+
+_GENERIC_FRAMING = """\
+OUTCOME FRAMING — apply whichever case matches what you find after loading:
+  - BINARY outcome (2 distinct values in some column): call the two groups
+    FAIL and PASS and tell the FAIL-vs-PASS story — class balance; per numeric
+    signal vs FAIL/PASS (distribution view + binned fail-rate curve); a ranked
+    bar of each signal's FAIL-vs-PASS separation; fail rate by categorical
+    group columns; signal correlations; 1-2 scatter plots of the most
+    discriminative pairs coloured by outcome.
+  - CATEGORICAL outcome (3+ classes): tell the per-class story — do NOT
+    collapse it into a binary split. Class balance per class; per numeric
+    signal's distribution across classes (box/violin) plus a ranked
+    cross-class separation bar; class composition by categorical group
+    columns; signal correlations; 1-2 scatter plots coloured by class.
+  - CONTINUOUS outcome: a correlation/regression-style story — do not
+    binarize it unless the question explicitly asks for that. Outcome
+    distribution; per numeric signal vs outcome (scatter + trend line, plus a
+    binned mean-outcome curve); a ranked bar of correlation magnitude with the
+    outcome; outcome distribution by categorical group columns; predictor
+    correlation heatmap; 1-2 scatter plots of the most associated pairs.
+  - NO recognizable outcome/target column: unsupervised exploration — describe
+    structure, do NOT invent a label that isn't in the data. Missingness
+    overview; per-numeric-column distributions; per-categorical-column value
+    counts (skip columns with very high cardinality as a bar chart, note it in
+    caveats); correlation table/heatmap; 1-2 scatter plots of the most
+    correlated numeric pairs; if a group/time column exists, contrast numeric
+    distributions across it."""
+
+_ANALYSIS_CONTRACT = """\
 VISUAL ANALYSIS — before writing plotting code, make an explicit intermediate
 visualization plan. The plan is part of the machine-readable output and should
 show that YOU selected plot types from the data semantics, not from a fixed
@@ -243,6 +312,9 @@ pipeline — NOT the primary reader-facing narrative; keep these terse):
 {skills_hint}
 Return ONLY the Python code{fences_hint}."""
 
+_GENERATE_PROMPT_RECORDS = _INTRO_AND_QUESTION + _DATA_ACCESS_RECORDS + _ANALYSIS_CONTRACT
+_GENERATE_PROMPT_RAW_FOLDER = _INTRO_AND_QUESTION + _DATA_ACCESS_RAW_FOLDER + _ANALYSIS_CONTRACT
+
 _REPAIR_PROMPT = """\
 The exploratory analysis script failed or produced an invalid result.
 
@@ -266,8 +338,9 @@ Sandbox stderr:
 Parser/execution error:
 {error}
 
-Rewrite the script. It must read "{input_filename}" and print a final
-{marker} JSON line with the required keys. Return ONLY Python code{fences_hint}."""
+Rewrite the script so it succeeds end-to-end and still prints a final
+{marker} JSON line with the required keys, in the same format as before.
+Return ONLY Python code{fences_hint}."""
 
 
 @dataclass
@@ -475,7 +548,104 @@ class ExploratoryAnalysisAgent:
         rows = _records_to_rows(records)
         profile = _profile_rows(rows, outcome_col=outcome_col)
         self._write_input(rows)
+        return self._run_explore_loop(
+            question, profile, lambda: self._write_code(question, profile)
+        )
 
+    def explore_path(
+        self,
+        path: str | Path,
+        *,
+        question: str = "Explore this dataset and surface the patterns that matter.",
+        max_rows: int = 2000,
+        max_files: int = 200,
+        include_tool_calls: bool = False,
+        outcome_col: str | None = None,
+    ) -> ExploratoryAnalysisReport:
+        """Run exploratory analysis directly over *path* (a file or directory).
+
+        This is the no-code entrypoint behind the CLI. With a CLI coding-agent
+        backend (``cli_config``, the ``evalvitals explore`` default), the raw
+        source is handed to the agent as-is and IT loads/organizes whatever
+        shape it finds — no host-side JSON-shape parsing, so this works for an
+        arbitrary M1 output layout, not just the ones the host loader
+        recognizes. With a plain LLM ``judge`` (no filesystem access), the host
+        must still pre-flatten records via :func:`load_records_from_path`
+        before handing them to :meth:`explore_records`.
+        """
+        folder_scan = scan_folder(path, max_files=max_files, include_tool_calls=include_tool_calls)
+        is_agentic = self._cli_config is not None and self._cli_config.provider != "llm"
+        if is_agentic:
+            report = self._explore_raw_folder(
+                path,
+                question=question,
+                folder_scan=folder_scan,
+                max_files=max_files,
+                include_tool_calls=include_tool_calls,
+                outcome_col=outcome_col,
+            )
+        else:
+            rows = load_records_from_path(
+                path,
+                max_rows=max_rows,
+                max_files=max_files,
+                include_tool_calls=include_tool_calls,
+            )
+            report = self.explore_records(rows, question=question, outcome_col=outcome_col)
+            report.data_profile.setdefault("loaded_rows", len(rows))
+        report.data_profile.setdefault("source_path", str(Path(path)))
+        report.data_profile.setdefault("folder_scan", folder_scan)
+        return report
+
+    def _explore_raw_folder(
+        self,
+        path: str | Path,
+        *,
+        question: str,
+        folder_scan: dict[str, Any],
+        max_files: int,
+        include_tool_calls: bool,
+        outcome_col: str | None,
+    ) -> ExploratoryAnalysisReport:
+        raw_input_dir = self._copy_raw_input(path, max_files=max_files, include_tool_calls=include_tool_calls)
+        profile: dict[str, Any] = {"folder_scan": folder_scan, "raw_input_dir": raw_input_dir}
+        return self._run_explore_loop(
+            question,
+            profile,
+            lambda: self._write_code_raw_folder(question, folder_scan, raw_input_dir, outcome_col),
+        )
+
+    def _copy_raw_input(self, path: str | Path, *, max_files: int, include_tool_calls: bool) -> str:
+        """Copy the raw source into the sandbox untouched, so the CLI agent
+        reads and organizes it itself — the host does no JSON-shape parsing
+        for this path. Mirrors the same file selection ``load_records_from_path``
+        would use (extension filter, ``tool_calls_*`` skip, ``max_files`` cap),
+        but copies the original bytes instead of parsing them."""
+        root = Path(path)
+        dest_root = Path(self._sandbox.workdir) / "raw_input"
+        if dest_root.exists():
+            shutil.rmtree(dest_root)
+        dest_root.mkdir(parents=True)
+        if root.is_file():
+            shutil.copy2(root, dest_root / root.name)
+        else:
+            files, _ = _discover_json_files(root, max_files=max_files, include_tool_calls=include_tool_calls)
+            for f in files:
+                dest = dest_root / f.relative_to(root)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+        return "raw_input"
+
+    def _run_explore_loop(
+        self,
+        question: str,
+        profile: dict[str, Any],
+        write_first: "Callable[[], tuple[str, str]]",
+    ) -> ExploratoryAnalysisReport:
+        """Shared write/run/repair-attempt loop behind :meth:`explore_records`
+        and :meth:`_explore_raw_folder` — they differ only in how the first
+        attempt's code is written (pre-loaded records vs. a raw folder); repair
+        attempts reuse :meth:`_repair_code` either way."""
         if not self.available:
             return ExploratoryAnalysisReport(
                 question=question,
@@ -493,7 +663,7 @@ class ExploratoryAnalysisAgent:
         for attempt in range(1, self._max_attempts + 1):
             try:
                 if attempt == 1:
-                    code, raw = self._write_code(question, profile)
+                    code, raw = write_first()
                 else:
                     code, raw = self._repair_code(
                         question, profile, code, last_result, last_error
@@ -536,43 +706,12 @@ class ExploratoryAnalysisAgent:
             raw_outputs=raw_outputs,
         )
 
-    def explore_path(
-        self,
-        path: str | Path,
-        *,
-        question: str = "Explore this dataset and surface the patterns that matter.",
-        max_rows: int = 2000,
-        max_files: int = 200,
-        include_tool_calls: bool = False,
-        outcome_col: str | None = None,
-    ) -> ExploratoryAnalysisReport:
-        """Load JSON/JSONL records from *path* and run exploratory analysis.
-
-        This is the no-code entrypoint behind the CLI. It recursively loads
-        structured log records, samples large directories deterministically, and
-        passes normalized row dictionaries to :meth:`explore_records`.
-        """
-        rows = load_records_from_path(
-            path,
-            max_rows=max_rows,
-            max_files=max_files,
-            include_tool_calls=include_tool_calls,
-        )
-        report = self.explore_records(rows, question=question, outcome_col=outcome_col)
-        report.data_profile.setdefault("source_path", str(Path(path)))
-        report.data_profile.setdefault("loaded_rows", len(rows))
-        report.data_profile.setdefault(
-            "folder_scan",
-            scan_folder(path, max_files=max_files, include_tool_calls=include_tool_calls),
-        )
-        return report
-
     def _write_input(self, rows: list[dict[str, Any]]) -> None:
         path = Path(self._sandbox.workdir) / RECORDS_FILENAME
         path.write_text(json.dumps(rows, default=str), encoding="utf-8")
 
     def _write_code(self, question: str, profile: dict[str, Any]) -> tuple[str, str]:
-        prompt = _GENERATE_PROMPT.format(
+        prompt = _GENERATE_PROMPT_RECORDS.format(
             question=question,
             input_filename=RECORDS_FILENAME,
             data_profile=json.dumps(profile, indent=2, default=str),
@@ -582,6 +721,32 @@ class ExploratoryAnalysisAgent:
             fences_hint=_fences_hint(self._cli_config),
         )
         return self._run_writer(prompt, use_inspector=False)
+
+    def _write_code_raw_folder(
+        self,
+        question: str,
+        folder_scan: dict[str, Any],
+        raw_input_dir: str,
+        outcome_col: str | None,
+    ) -> tuple[str, str]:
+        outcome_hint = (
+            f'- the caller named "{outcome_col}" as the target/outcome column — '
+            "use it as the outcome if it exists in your tidy table, regardless "
+            "of any other auto-detection heuristic you might otherwise apply\n"
+            if outcome_col else ""
+        )
+        prompt = _GENERATE_PROMPT_RAW_FOLDER.format(
+            question=question,
+            input_filename=RECORDS_FILENAME,
+            raw_input_dir=raw_input_dir,
+            folder_scan=json.dumps(folder_scan, indent=2, default=str),
+            outcome_hint=outcome_hint,
+            framing=_GENERIC_FRAMING,
+            marker=_RESULT_MARKER,
+            skills_hint=_skills_hint(self._cli_config),
+            fences_hint=_fences_hint(self._cli_config),
+        )
+        return self._run_cli_writer(prompt)
 
     def _repair_code(
         self,
@@ -789,6 +954,9 @@ def load_records_from_path(
     return rows
 
 
+_RECORD_LIST_KEYS = ("cases", "records", "results", "rows", "items", "data", "examples", "samples")
+
+
 def _load_json_records(path: Path) -> list[Any]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -801,6 +969,10 @@ def _load_json_records(path: Path) -> list[Any]:
         parsed = json.loads(stripped)
         if isinstance(parsed, list):
             return parsed
+        if isinstance(parsed, dict):
+            unpacked = _unpack_record_container(parsed)
+            if unpacked is not None:
+                return unpacked
         return [parsed]
     except json.JSONDecodeError:
         pass
@@ -814,6 +986,33 @@ def _load_json_records(path: Path) -> list[Any]:
         except json.JSONDecodeError:
             continue
     return records
+
+
+def _unpack_record_container(parsed: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Recognize a common M1-output shape: one JSON object per run/model, with
+    a list of per-case dicts under a conventional key (``cases``, ``results``,
+    ...) alongside scalar run metadata (e.g. ``model``, ``seed``). Unpack it
+    into one row per case, each carrying the file's scalar metadata merged in
+    (per-case fields win on collision) — so a directory of these files loads
+    as a flat, analyzable table without a bespoke pre-processing script."""
+    list_key = next(
+        (
+            key
+            for key in _RECORD_LIST_KEYS
+            if isinstance(parsed.get(key), list)
+            and parsed[key]
+            and all(isinstance(item, dict) for item in parsed[key])
+        ),
+        None,
+    )
+    if list_key is None:
+        return None
+    meta = {
+        key: value
+        for key, value in parsed.items()
+        if key != list_key and (isinstance(value, (str, int, float, bool)) or value is None)
+    }
+    return [{**meta, **item} for item in parsed[list_key]]
 
 
 def _flatten_record(record: Any, *, max_text: int = 500) -> dict[str, Any]:

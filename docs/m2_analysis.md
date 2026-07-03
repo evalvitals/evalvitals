@@ -45,14 +45,18 @@ Does tool usage correlate with failures?
 What predicts yield / latency / cost? (any continuous outcome)
 ```
 
-### Any outcome shape
+### Arbitrary folders, any outcome shape
 
-The host profiles your data first and classifies the outcome column (if any)
-as `binary`, `categorical`, `continuous`, or `none`, and adapts the analysis
-and chart battery accordingly — you are not limited to pass/fail logs.
-Outcome detection is name-heuristic (`label`, `outcome`, `target`,
-`is_correct`, ...); pass `--outcome-col <name>` to point it at anything else
-(e.g. `yield_pct`).
+`explore` does not pre-parse your data. The raw file or directory is handed to
+the coding agent as-is (`--path` may be one file or many, in any JSON shape —
+a flat list, JSONL, or per-file metadata wrapping a nested list of records
+under a key like `cases`/`results`/`rows`); the agent's own generated code
+loads and organizes it into a tidy table, then classifies the outcome column
+(if any) as `binary`, `categorical`, `continuous`, or `none` and adapts the
+analysis and chart battery accordingly — you are not limited to pass/fail
+logs, and no host-side loader needs to know your data's shape in advance.
+Pass `--outcome-col <name>` to point the agent at an explicit target column
+(e.g. `yield_pct`) instead of relying on its own name-based detection.
 
 ## Output layout
 
@@ -60,8 +64,9 @@ Outcome detection is name-heuristic (`label`, `outcome`, `target`,
 evalvitals_explore_output/
   exploratory_report.json   # takeaways, observations, candidate signals,
                              # charts, tables, and M3 hypotheses
-  analysis.py                # the generated code that was actually run
-  records.json                # sampled input records
+  analysis.py                # the generated code that was actually run,
+                              # including its own data-loading step
+  records.json                # the tidy table the agent built and analyzed
   figures/  tables/           # rendered charts + tabular artifacts
 ```
 
