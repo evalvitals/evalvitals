@@ -73,13 +73,10 @@ python extract_attention_all.py --device cuda   # GPU; downloads any missing
                                                 # COCO val2014 images itself
 ```
 
-Then explore it (distribution views become meaningful):
+The enriched data ships with the repo, so exploring it needs no GPU:
 
 ```bash
-evalvitals explore data_attn_full --backend claude_code --outcome-col label \
-  --out outputs_attn_full -q "Compare the attention-geometry distributions \
-between FAIL and PASS within adversarial probes, overall and per checkpoint." \
-  --timeout-sec 900
+bash run_attn.sh        # same env overrides as run.sh (CODER_PROVIDER/CODER_MODEL/...)
 ```
 
 A real run found: within adversarial probes, focus_share is the strongest
