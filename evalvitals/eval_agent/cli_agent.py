@@ -581,6 +581,37 @@ class CodexAgent(_CliAgentBase):
 
     _provider_name = "codex"
 
+    def _install_skills(self, workdir: Path) -> None:
+        """Vendor skill dirs, then surface them via the workdir's ``AGENTS.md``.
+
+        Codex has no ``Skill`` tool and does not scan ``.claude/skills/``, but it
+        does read ``AGENTS.md`` in its working directory — so the same vendored
+        ``SKILL.md`` files are exposed as read-and-apply guides."""
+        super()._install_skills(workdir)
+        names = [Path(s).name for s in self._skills if Path(s).is_dir()]
+        if not names:
+            return
+        section = "\n".join([
+            "# Agent Skills (vendored)",
+            "",
+            "Before writing any figure/plot, read and APPLY these style guides:",
+            "",
+            *[f"- `.claude/skills/{n}/SKILL.md`" for n in names],
+            "",
+            "They govern chart-type choice and styling only — never change the "
+            "data, the analysis, or the required output format.",
+            "",
+        ])
+        agents_md = workdir / "AGENTS.md"
+        try:
+            existing = (
+                agents_md.read_text(encoding="utf-8").rstrip() + "\n\n"
+                if agents_md.exists() else ""
+            )
+            agents_md.write_text(existing + section, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("could not write AGENTS.md for codex skills: %s", exc)
+
     def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
         cmd = [
             self._binary, "exec", prompt,

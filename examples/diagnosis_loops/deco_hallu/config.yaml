@@ -11,7 +11,7 @@ judge_effort: low
 codegen_model: claude-opus-4-8
 codegen_effort: low
 codegen_budget_usd: 2.0
-codegen_timeout_sec: 240
+codegen_timeout_sec: 480   # bundled figure skills (eval-chart-style/nature-figure) add read+apply time
 
 # Fix module: allow internals-write (L3b). Whether any tier flips a confident
 # hallucination without breaking present detections is the open question.

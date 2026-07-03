@@ -106,3 +106,63 @@ def test_skills_hint_names_the_skill_and_scopes_to_figures():
     assert "figures/" in hint
     # must NOT invite changing the data/analysis/result
     assert "styling only" in hint
+
+
+def test_skills_hint_is_default_on_not_optional():
+    cfg = CliAgentConfig(
+        provider="claude_code", skills=("/x/eval-chart-style", "/x/nature-figure")
+    )
+    hint = _skills_hint(cfg)
+    assert "BY DEFAULT" in hint and "BEFORE plotting" in hint
+    assert "MAY invoke" not in hint  # the old opt-in wording agents ignored
+    # division of labor is stated so both skills get applied
+    assert "chart-TYPE" in hint and "publication-grade" in hint
+
+
+def test_skills_hint_codex_points_at_vendored_files():
+    cfg = CliAgentConfig(provider="codex", skills=("/x/eval-chart-style",))
+    hint = _skills_hint(cfg)
+    # codex has no Skill tool — it must be told to READ the vendored guide
+    assert ".claude/skills/eval-chart-style/SKILL.md" in hint
+    assert "Skill tool and follow" not in hint
+
+
+# ---------------------------------------------------------------------------
+# codex delivery: vendored skills surfaced through the workdir's AGENTS.md
+# ---------------------------------------------------------------------------
+
+def test_codex_install_skills_writes_agents_md(tmp_path):
+    from evalvitals.eval_agent.cli_agent import CodexAgent
+
+    skill = _make_skill(tmp_path, "eval-chart-style")
+    workdir = tmp_path / "wd"
+    CodexAgent(binary_path="codex", skills=[str(skill)])._install_skills(workdir)
+
+    # vendored like every other backend
+    assert (workdir / ".claude" / "skills" / "eval-chart-style" / "SKILL.md").exists()
+    # and surfaced where codex actually looks
+    agents = (workdir / "AGENTS.md").read_text(encoding="utf-8")
+    assert ".claude/skills/eval-chart-style/SKILL.md" in agents
+    assert "styling only" in agents or "styling" in agents
+
+
+def test_codex_install_skills_appends_to_existing_agents_md(tmp_path):
+    from evalvitals.eval_agent.cli_agent import CodexAgent
+
+    skill = _make_skill(tmp_path, "nature-figure")
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "AGENTS.md").write_text("# Existing project notes\n", encoding="utf-8")
+    CodexAgent(binary_path="codex", skills=[str(skill)])._install_skills(workdir)
+
+    agents = (workdir / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Existing project notes" in agents  # not clobbered
+    assert ".claude/skills/nature-figure/SKILL.md" in agents
+
+
+def test_codex_install_skills_noop_without_skills(tmp_path):
+    from evalvitals.eval_agent.cli_agent import CodexAgent
+
+    workdir = tmp_path / "wd"
+    CodexAgent(binary_path="codex")._install_skills(workdir)
+    assert not (workdir / "AGENTS.md").exists()

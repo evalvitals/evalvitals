@@ -1,26 +1,37 @@
 """Bundled (package-vendored) Agent Skills travel with the repo and are applied
-by `explore` on the claude/agy backends by default.
+by default on every skill-capable coding backend (claude/agy/codex).
 
-This is what makes a skill like nature-figure available to anyone who clones the
-repo (or pip-installs it) — no per-machine ~/.claude setup required.
+This is what makes skills like eval-chart-style and nature-figure available to
+anyone who clones the repo (or pip-installs it) — no per-machine ~/.claude
+setup required.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from evalvitals.agent_assets.skills import bundled_skill_paths
+from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis import explore_run
 
 
-def test_nature_figure_is_bundled_in_the_package():
+def test_bundled_skill_set():
     paths = bundled_skill_paths()
     names = {Path(p).name for p in paths}
     assert "nature-figure" in names
     assert "evalvitals-report-ui" in names
+    # The eval_viz_theme chart-type policy, codified as a skill for agents.
+    assert "eval-chart-style" in names
     nf = next(Path(p) for p in paths if Path(p).name == "nature-figure")
     assert (nf / "SKILL.md").is_file()
     assert (nf / "LICENSE").is_file()  # Apache-2.0 attribution preserved
+    ecs = next(Path(p) for p in paths if Path(p).name == "eval-chart-style")
+    body = (ecs / "SKILL.md").read_text(encoding="utf-8")
+    assert "never" in body.lower() and "bar" in body.lower()  # the anti-mean-bar policy
+    assert "#C0413B" in body  # FAIL palette locked to eval_viz_theme's
+
+
+def test_skill_backends_cover_claude_agy_codex():
+    assert {"claude_code", "antigravity", "codex"} <= SKILL_BACKENDS
 
 
 def test_explore_applies_bundled_skills_on_claude_by_default(monkeypatch, tmp_path):
@@ -39,7 +50,26 @@ def test_explore_applies_bundled_skills_on_claude_by_default(monkeypatch, tmp_pa
 
     cfg = captured["cli_config"]
     assert any(Path(s).name == "nature-figure" for s in cfg.skills)
+    assert any(Path(s).name == "eval-chart-style" for s in cfg.skills)
     assert cfg.allow_skills is True  # implied by bundled skills
+
+
+def test_explore_applies_bundled_skills_on_codex_by_default(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeAgent:
+        def __init__(self, *, cli_config, **kw):
+            captured["cli_config"] = cli_config
+
+        def explore_path(self, *a, **k):
+            from evalvitals.analysis.explorer import ExploratoryAnalysisReport
+            return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
+
+    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
+    # codex reaches the same vendored SKILL.md files through AGENTS.md.
+    explore_run.run_explore(tmp_path, coder_provider="codex", out=tmp_path / "o")
+    cfg = captured["cli_config"]
+    assert any(Path(s).name == "eval-chart-style" for s in cfg.skills)
 
 
 def test_no_skills_flag_disables_bundled(monkeypatch, tmp_path):
@@ -72,6 +102,34 @@ def test_non_skill_backend_does_not_vendor_skills(monkeypatch, tmp_path):
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
     monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
-    # codex ignores skills; we don't vendor them there.
-    explore_run.run_explore(tmp_path, coder_provider="codex", out=tmp_path / "o")
+    # opencode has no skill discovery mechanism; we don't vendor skills there.
+    explore_run.run_explore(tmp_path, coder_provider="opencode", out=tmp_path / "o")
     assert captured["cli_config"].skills == ()
+
+
+def test_explorer_agent_defaults_bundled_skills():
+    """Any flow that hands the explorer a bare CliAgentConfig (e.g. the fused
+    pipeline via an example's build_codegen) gets the bundled skills without
+    caller wiring; opt out via use_bundled_skills=False."""
+    from evalvitals.analysis.explorer import ExploratoryAnalysisAgent
+    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+
+    agent = ExploratoryAnalysisAgent(cli_config=CliAgentConfig(provider="claude_code"))
+    names = {Path(s).name for s in agent._cli_config.skills}
+    assert {"eval-chart-style", "nature-figure"} <= names
+    assert agent._cli_config.allow_skills is True
+
+    off = ExploratoryAnalysisAgent(
+        cli_config=CliAgentConfig(provider="claude_code"), use_bundled_skills=False
+    )
+    assert off._cli_config.skills == ()
+
+    # explicit skills are respected, not overridden
+    custom = ExploratoryAnalysisAgent(
+        cli_config=CliAgentConfig(provider="claude_code", skills=("/my/skill",))
+    )
+    assert custom._cli_config.skills == ("/my/skill",)
+
+    # non-skill backends stay untouched
+    oc = ExploratoryAnalysisAgent(cli_config=CliAgentConfig(provider="opencode"))
+    assert oc._cli_config.skills == ()

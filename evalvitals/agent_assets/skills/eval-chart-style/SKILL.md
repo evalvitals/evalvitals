@@ -1,0 +1,94 @@
+---
+name: eval-chart-style
+version: 0.2.0
+description: >
+  Chart-type policy + house style for FAIL-vs-PASS LLM/VLM eval analysis
+  figures. Use whenever you plot eval results inside an EvalVitals analysis
+  sandbox — matplotlib PNGs under figures/ or deterministic chart specs — and
+  the point is to NOT default to a bar chart. This skill decides WHAT chart to
+  draw and the semantic palette; for journal-grade polish (fonts, export, QA)
+  additionally apply the nature-figure skill on the figures you draw.
+---
+
+# Eval Chart Style
+
+House chart-type policy for FAIL-vs-PASS eval analysis. It exists to stop three
+recurring failures: plotting a **mean as a bar** when the claim depends on the
+*distribution*; inconsistent FAIL/PASS colors between charts; and raw machine
+output (column ids, `pandas.cut` edges) leaking into axes and titles.
+
+It is the agent-side counterpart of the host module
+`evalvitals.analysis.eval_viz_theme` (plotly). If plotly is available you may
+`from evalvitals.analysis import eval_viz_theme as viz; viz.apply()` and use its
+builders; otherwise apply the rules below directly in matplotlib.
+
+## 0. Chart-type policy (the most important rule)
+
+**A bar's filled area means "amount accumulated from zero." Use bars only for
+counts.** For a mean, a proportion, a measurement, or an effect size, a bar
+hides the distribution and fakes certainty. Pick by *what the reader must see*:
+
+| What you're showing | DON'T | DO |
+|---|---|---|
+| Discrete class counts (FAIL/PASS n) | — | grouped bars, n annotated |
+| A continuous signal across outcomes | two-bar "mean by outcome" | violin/box + jittered points, one panel |
+| Several signals' effects ranked | green/grey bars | horizontal **dot + CI** (forest) |
+| Fail rate vs a continuous signal | bare binned bars | binned rate **line** (or logistic curve) + n per bin |
+| Two continuous signals jointly | scatter squeezed small | full-width scatter colored by outcome (+ marginals if easy) |
+| Rates across two categoricals | grouped bars ×k | **heatmap** with annotated cells |
+| Distribution shape / tail claims | histogram only | ECDF or KDE overlay by outcome |
+| Paired/intervention outcomes | two bars | paired slope or discordant counts |
+
+Why distributions: with small FAIL n a mean is outlier-driven, and any
+"two sub-populations" story is a *bimodality claim* — a bar can show neither.
+
+**Suppress degenerate charts.** A binary/constant signal's fail-rate curve
+collapses to one or two dots — don't render it; note it in caveats instead.
+Aim for *diversity that matches the data*: across the figure set prefer
+violin + ECDF + heatmap + forest + scatter over eight bar charts.
+
+## 1. Semantic palette (color encodes role, not decoration)
+
+Lock these and reuse in every figure — the reader must never re-learn who is who:
+
+- FAIL → warning red `#C0413B`; PASS → neutral slate `#5B7A99` (same side, same
+  hue in every chart).
+- Supported / survived-adjudication → green `#2E8B6F`; inconclusive → grey
+  `#B8BCC2`. Unknown significance defaults to grey, never green.
+- Leakage/sanity signals → muted grey `#9AA0A6`, never a "winner" color.
+
+Never print a raw column id (`generated_probe1_false_detection`) on an axis,
+tick, or title — use a short human alias (≤ ~12 chars) and keep the raw name in
+a caption/hover/table only.
+
+## 2. Layout
+
+- Distribution plots and scatters get full width; never squeeze a scatter into
+  a narrow subplot.
+- One title per chart; don't repeat the section heading inside the figure.
+- Label every axis with the *short* name + unit; annotate the zero/reference
+  line on effect axes.
+
+## 3. Numbers and bins
+
+- effects/correlations → 2 dp; p-values/statistics → 3 dp; percents → integer
+  (`41%`); counts → integer.
+- **Never display raw `pandas.cut` edges** (`(113.844, 233.066]`). Render
+  human bins: `114–233`. Annotate per-bin n when bins are sparse.
+
+## 4. Statistical honesty
+
+- A signal that *is* the outcome re-measured (fail rate 1.00/0.00, effect ≈
+  perfect) is target leakage: demote it to a greyed sanity-check, never rank
+  it #1.
+- Pick ONE primary effect metric for headline figures; relegate the rest to a
+  table, and label which metric every axis shows.
+- Descriptive is descriptive: no "confirmed/validated" wording in titles.
+
+## Scope note for EvalVitals sandboxes
+
+Host-rendered chart *specs* stay deterministic (`kind` ∈ bar/line/scatter with
+pre-aggregated CSVs) — apply §1/§3 to their data and titles. The chart-type
+diversity of §0 lives in the PNGs you draw under `figures/` — that is where
+violins, ECDFs, heatmaps, forests, and paired-slope figures belong. Styling
+only: never change the data, the analysis, or the final result JSON.

@@ -56,10 +56,11 @@ def run_explore(
     Returns a process exit code: ``0`` if the exploration succeeded, else ``1``.
     When *dashboard* is set, the return value is the dashboard process's code.
 
-    Skills style the agent-authored figures (e.g. the bundled nature-figure
-    skill). By default (*use_bundled_skills*) the package's bundled skills are
-    applied on the claude/agy backends; *skills* adds more dirs and *allow_skills*
-    also enables globally-installed (`~/.claude/skills`) skills.
+    Skills style the agent-authored figures (e.g. the bundled eval-chart-style
+    and nature-figure skills). By default (*use_bundled_skills*) the package's
+    bundled skills are applied on the claude/agy/codex backends; *skills* adds
+    more dirs and *allow_skills* also enables globally-installed
+    (`~/.claude/skills`) skills.
 
     *outcome_col* optionally names the target/label column explicitly (M1
     passes ``"label"``); omit it to let the agent auto-detect an outcome by
@@ -90,6 +91,7 @@ def run_explore(
         cli_config=cli_config,
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,
+        use_bundled_skills=use_bundled_skills,
     )
     report = agent.explore_path(
         path,
