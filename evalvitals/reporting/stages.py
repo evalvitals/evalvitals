@@ -24,10 +24,11 @@ STAGE_SPECS: tuple[StageSpec, ...] = (
     ),
     StageSpec(
         id="M2",
-        name="Confirmatory analysis",
-        question="Which signals distinguish FAIL from PASS on a held-out split?",
-        artifacts="Effect sizes, confidence intervals, e-values/e-BH decisions, charts/tables.",
-        dashboard_role="Analysis: method, evidence, chart, and takeaway.",
+        name="Exploratory analysis",
+        question="Which signals are worth investigating, and how do they relate to the outcome?",
+        artifacts="Effect sizes, relationship charts/tables — descriptive, no validity verdict.",
+        dashboard_role="Analysis: method, evidence, chart, and takeaway (no supported/not-supported "
+                        "claim; a confirm phase with e-BH/FDR is a separate, currently out-of-scope step).",
     ),
     StageSpec(
         id="M3",

@@ -279,6 +279,12 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "test_design": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 }
               }
@@ -562,6 +568,12 @@
                     ]
                   },
                   "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "test_design": {
                     "type": [
                       "string",
                       "null"

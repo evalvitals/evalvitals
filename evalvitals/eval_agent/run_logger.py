@@ -684,6 +684,10 @@ class RunLogger:
                     "statement": h.statement,
                     "failure_mode": h.predicted_failure_mode,
                     "status": h.status.value if h.status else None,
+                    # How M3 says this claim should be verified (the LLM's TEST:
+                    # line) — was computed but silently dropped before this fix,
+                    # leaving no record of how a hypothesis could be checked.
+                    "test_design": h.test_design,
                 }
                 for h in diag.hypotheses
             ],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -110,13 +111,16 @@ def _render_empty(root: Path) -> None:
 
 def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, Any]]) -> None:
     """Render a diagnostic loop run with a data-rich Analysis tab (signal effects,
-    e-BH adjudication, explorer charts & tables) plus the M2→M3→M5→Fix flow."""
+    e-BH adjudication, explorer charts & tables) plus the M1→M2→M3 flow.
+
+    M4/M5 are temporarily out of scope (not yet adjusted), so the header and
+    stage strip stop at M3 rather than implying a 5-stage pipeline is live."""
     st.markdown(
         f"""
         <div class="ev-header">
           <div>
             <div class="ev-kicker">Diagnostic Loop Run</div>
-            <h1>M1 → M2 → M3 → M5 → Fix</h1>
+            <h1>M1 → M2 → M3</h1>
             <div class="ev-path">{_html_escape(str(root))}</div>
           </div>
         </div>
@@ -189,6 +193,7 @@ def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
             out.append({
                 "statement": stmt,
                 "failure_mode": _hypothesis_failure_mode(h),
+                "test_design": _hypothesis_test_design(h),
                 "cycle": d.get("cycle"),
                 "referenced_charts": d.get("referenced_charts") or [],
                 "tests": tests_by_stmt.get(stmt, []),
@@ -214,6 +219,12 @@ def _hypothesis_failure_mode(hypothesis: dict[str, Any]) -> str:
     ).strip()
 
 
+def _hypothesis_test_design(hypothesis: dict[str, Any]) -> str:
+    """How M3 says this claim could be checked (the LLM's own TEST: line) —
+    not a verdict, just the evidence/analyzer it named as relevant."""
+    return str(hypothesis.get("test_design") or hypothesis.get("test") or "").strip()
+
+
 def _render_problem_setting(
     root: Path,
     report: dict[str, Any] | None,
@@ -225,7 +236,6 @@ def _render_problem_setting(
     report = report or {}
     storyboard = _storyboard_panels(report, story=story)
     question = str(report.get("question") or "What distinguishes failures from passes?")
-    adj = report.get("adjudication") or {}
     signals = _candidate_signals(report)
     charts = [c for c in report.get("charts", []) if isinstance(c, dict)]
 
@@ -347,22 +357,20 @@ def _render_problem_setting(
 
     with c2:
         st.markdown("#### Evaluation frame")
-        split = adj.get("split") or "not recorded"
-        method = adj.get("method") or "exploratory only"
+        # M2 is exploratory-only in the current scope — no confirm/e-BH verdict,
+        # and M4/M5 (mechanism test, repair/surgery) counts are not shown even
+        # if the loaded run's own data carries them.
         stages = []
         if story:
             stages = [
                 ("M2 analyses", len(story.get("analyses") or [])),
                 ("M3 diagnoses", len(story.get("diagnoses") or [])),
-                ("M5/M4 tests", len(story.get("surgeries") or [])),
-                ("Fix events", len(story.get("fixes") or [])),
             ]
         st.markdown(
-            f"""
+            """
             <div class="ev-brief-card">
-              <div class="ev-brief-label">Confirmatory method</div>
-              <div class="ev-brief-value">{_html_escape(str(method))}</div>
-              <div class="ev-signal-test">Split: {_html_escape(str(split))}</div>
+              <div class="ev-brief-label">Analysis method</div>
+              <div class="ev-brief-value">Exploratory (descriptive) — no confirm phase in the current scope</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -373,9 +381,14 @@ def _render_problem_setting(
 
 
 def _render_stage_map(*, active: set[str]) -> None:
-    """Small stage strip: context, not content."""
+    """Small stage strip: context, not content.
+
+    M4/M5 are temporarily omitted from this strip — they haven't been adjusted
+    to the current M1-M3 scope yet, so showing them would be misleading."""
     chips = []
     for spec in stage_specs_as_dicts():
+        if spec["id"] in ("M4", "M5"):
+            continue
         cls = "ev-stage-chip ev-stage-active" if spec["id"] in active else "ev-stage-chip"
         chips.append(
             f'<span class="{cls}"><b>{_html_escape(spec["id"])}</b> '
@@ -477,15 +490,38 @@ def _humanize_storyboard_text(text: str) -> str:
     return out
 
 
-def _analysis_takeaway(report: dict[str, Any] | None, story: dict[str, Any] | None = None) -> str:
-    diag = (story or {}).get("diagnostic_report") or {}
-    answer = str(diag.get("answer") or "").strip()
-    if answer:
-        return answer
+def _analysis_takeaway(
+    report: dict[str, Any] | None,
+    story: dict[str, Any] | None = None,
+    *,
+    descriptive: bool = True,
+) -> str:
+    candidates = [s for s in _candidate_signals(report) if not _is_leaky_signal(s)]
+    if not descriptive:
+        # compile_diagnostic_report's `answer` is itself a confirmatory verdict
+        # (a "supported" claim's text, or an explicit "no supported claim"
+        # fallback — see reporting/compiler.py::_answer) — only trust it in
+        # non-descriptive mode; the descriptive branch below never asks it.
+        diag = (story or {}).get("diagnostic_report") or {}
+        answer = str(diag.get("answer") or "").strip()
+        if answer:
+            return answer
+    if descriptive:
+        if candidates:
+            def _abs_eff(s: dict[str, Any]) -> float:
+                try:
+                    return abs(float(s.get("effect")))
+                except (TypeError, ValueError):
+                    return 0.0
+            lead = max(candidates, key=_abs_eff)
+            name = display_name(lead.get("display_name") or lead.get("name"))
+            return f"{name} shows the largest FAIL-vs-PASS separation in this run (descriptive; not yet confirmed)."
+        conclusion = str((report or {}).get("conclusion") or "").strip()
+        return conclusion or "No candidate signals were identified in the loaded report."
     supported = [
         display_name(s.get("display_name") or s.get("name"))
-        for s in _candidate_signals(report)
-        if s.get("reject") is True and not _is_leaky_signal(s)
+        for s in candidates
+        if s.get("reject") is True
     ]
     if supported:
         return f"{supported[0]} is the leading held-out supported signal."
@@ -521,22 +557,24 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
     adj = explore_report.get("adjudication") or {}
     readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
     storyboard = _storyboard_panels(explore_report, story=story)
-    descriptive = _story_is_descriptive(story)
+    # M2 is exploratory-only in the current scope (no confirm/M4/M5 phase wired
+    # up yet), so it never shows a supported/not-supported verdict — always
+    # descriptive, regardless of what the loaded run's own data says.
+    descriptive = True
 
     st.markdown("### Analysis")
     _render_stage_map(active={"M2"})
-    if descriptive:
-        st.info(
-            "Analysis phase — candidate signals and proposed hypotheses are shown "
-            "**descriptively, without a validity verdict**. Run the confirm phase to "
-            "adjudicate them on the held-out split.",
-            icon="🔍",
-        )
+    st.info(
+        "Analysis phase — candidate signals and proposed hypotheses are shown "
+        "**descriptively, without a validity verdict**. A confirm phase to "
+        "adjudicate them on a held-out split is not part of the current scope.",
+        icon="🔍",
+    )
     st.markdown(
         f"""
         <div class="ev-report-answer">
           <div class="ev-brief-label">Bottom line</div>
-          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(explore_report, story))}</div>
+          <div class="ev-report-answer-text">{_html_escape(_analysis_takeaway(explore_report, story, descriptive=descriptive))}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -574,7 +612,9 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
                 readings[0].get("reading", "Charts are leads for hypotheses, not causal proof.")
                 if readings else "No chart readings were recorded.",
             )
-        if adj:
+        # e-BH adjudication numbers are a confirmatory verdict — only shown once
+        # M2 is no longer forced into descriptive-only mode (see `descriptive` above).
+        if adj and not descriptive:
             st.dataframe(pd.DataFrame([{
                 "method": adj.get("method", "-"),
                 "alpha": adj.get("alpha", "-"),
@@ -601,46 +641,26 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
 
 
 def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> None:
-    """Panel 3: hypotheses, downstream tests, and artifacts needed for decisions."""
+    """Panel 3: M3 hypotheses only.
+
+    M4/M5 (mechanism test, repair/surgery) are temporarily out of scope — this
+    run doesn't do hypothesis testing, so no downstream decision evidence,
+    test verdicts, or fix records are shown here, regardless of whether the
+    loaded run's own data happens to carry them."""
     hyps = _hypotheses_with_outcomes(story)
     storyboard = _storyboard_panels(explore_report or {}, story=story)
-    has_downstream = bool(story.get("surgeries") or story.get("fixes"))
-    st.markdown("### Hypotheses & Decision" if has_downstream else "### Proposed Hypotheses")
-    _render_stage_map(active={"M3", "M4", "M5"} if has_downstream else {"M3"})
+    st.markdown("### Proposed Hypotheses")
+    _render_stage_map(active={"M3"})
     _render_storyboard_panel(storyboard, "hypotheses_artifacts")
     if hyps:
-        if has_downstream:
-            st.caption(
-                "These are M3 hypotheses formed from the analysis panel. Treat them as "
-                "decision candidates until M5/M4 tests or fix outcomes support them."
-            )
-        else:
-            st.caption(
-                "These are M3 hypotheses proposed from the M2 analysis. They have not "
-                "been confirmed by M5 and have no fix verdict yet."
-            )
+        st.caption("These are M3 hypotheses proposed from the M2 analysis. Hypothesis "
+                   "testing is not part of the current scope.")
         for h in hyps:
             _render_hypothesis_card(h)
     else:
         st.warning("No M3 hypotheses were recorded for this run.")
 
-    surgeries = story.get("surgeries") or []
-    fixes = story.get("fixes") or []
-    if surgeries or fixes:
-        st.markdown("#### Downstream decision evidence")
-        for s in surgeries:
-            tag = str(s.get("module", "")).upper()
-            st.markdown(
-                f"- **[{tag}]** {s.get('status', '')}: "
-                f"{_truncate(str(s.get('hypothesis', '')), 180)}"
-            )
-        if fixes:
-            with st.expander("Fix adjudication records", expanded=False):
-                for f in fixes:
-                    st.json(f)
-
-    label = "Inspect M1-M3 artifacts and flow" if not has_downstream else "Inspect M1-M4 artifacts and flow"
-    with st.expander(label, expanded=True):
+    with st.expander("Inspect M1-M3 artifacts and flow", expanded=True):
         _render_loop_flow(story, explore_report, explore_dir)
     with st.expander("Inspect raw tables", expanded=False):
         _render_explore_tables(explore_report, explore_dir, full=True)
@@ -722,6 +742,11 @@ def _render_folder_scan(scan: dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
+    if scan.get("scan_capped"):
+        st.caption(
+            "This folder is large enough that the scan stopped early — counts above "
+            "are a lower bound, not the full total."
+        )
     if entries:
         label = "Folder listing" + (f" (first {len(entries)} entries)" if truncated else "")
         with st.expander(label, expanded=True):
@@ -781,6 +806,48 @@ def _render_data_structure_panel(report: dict[str, Any]) -> None:
         st.caption("Profiling notes: " + "; ".join(warnings[:5]))
 
 
+def _render_raw_data_browser(report: dict[str, Any], turn_dir: Path) -> None:
+    """Let a reader browse the actual rows the agent analyzed, not just their
+    schema — when a takeaway looks surprising, the next thing people want is
+    to see the underlying records themselves, searchable, right here."""
+    df: pd.DataFrame | None = None
+    note = ""
+    records_path = _resolve_artifact_path("records.json", turn_dir)
+    if records_path.exists():
+        try:
+            data = json.loads(records_path.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(data, list) and data:
+                df = pd.DataFrame(data)
+        except (OSError, json.JSONDecodeError, ValueError):
+            df = None
+    if df is None:
+        sample_rows = (report.get("data_profile") or {}).get("sample_rows") or []
+        if sample_rows:
+            df = pd.DataFrame(sample_rows)
+            note = (
+                f"Only a small sample was saved with this report ({len(sample_rows)} row(s)); "
+                "the full loaded records weren't persisted alongside it."
+            )
+    if df is None or df.empty:
+        return
+
+    with st.expander(f"Browse raw data ({len(df)} row(s) loaded)", expanded=False):
+        if note:
+            st.caption(note)
+        search = st.text_input(
+            "Search rows", value="", placeholder="Filter by any value…", key="raw_data_search"
+        )
+        view = df
+        if search.strip():
+            mask = df.astype(str).apply(
+                lambda col: col.str.contains(search, case=False, na=False, regex=False)
+            ).any(axis=1)
+            view = df[mask]
+        shown = min(len(view), 500)
+        st.caption(f"Showing {shown} of {len(view)} matching row(s) (of {len(df)} total).")
+        st.dataframe(view.head(500), width="stretch", height=420)
+
+
 def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Path) -> None:
     """The primary exploratory-analysis view: pure descriptive EDA, no hypotheses.
 
@@ -796,6 +863,7 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
         unsafe_allow_html=True,
     )
     _render_data_structure_panel(report)
+    _render_raw_data_browser(report, turn_dir)
     storyboard = _storyboard_panels(report, story=None)
     _render_storyboard_panel(storyboard, "problem_setting")
 
@@ -932,143 +1000,15 @@ def _render_standalone_artifacts(report: dict[str, Any], turn_dir: Path) -> None
         _render_artifacts(report, turn_dir)
 
 
-def _render_loop_analysis(story, explore_report, explore_dir, root=None) -> None:
-    """A connected diagnostic report: what was analysed -> what was found ->
-    therefore which hypotheses were formed (each linked to its evidence + test)."""
-    analyses = story.get("analyses") or []
-    signals = _candidate_signals(explore_report)
-    adj = (explore_report or {}).get("adjudication") or {}
-    charts = [c for c in (explore_report or {}).get("charts", []) if isinstance(c, dict)]
-    plots = (explore_report or {}).get("plots") or []
-    hyps = _hypotheses_with_outcomes(story)
-
-    concl = next((a.get("conclusion") or a.get("narrative") for a in analyses
-                  if a.get("conclusion") or a.get("narrative")), "")
-    _render_diagnostic_report(story.get("diagnostic_report") or {}, story, explore_report, concl)
-    _render_interpretation_guide()
-
-    if concl:
-        st.markdown("### Conclusion")
-        st.info(str(concl))
-
-    # ── ① What we analysed ────────────────────────────────────────────────
-    st.markdown("### ① What we analysed")
-    obs = (explore_report or {}).get("observations") or []
-    n_signals = len(signals)
-    n_charts = len(charts) + len(plots)
-    st.caption(
-        f"Exploratory failure analysis examined {n_signals} candidate signal(s) "
-        f"and produced {n_charts} chart(s) comparing FAIL vs PASS cases."
-    )
-    if obs:
-        for o in obs[:10]:
-            st.markdown(f"- {o}")
-    _render_visual_plan(explore_report)
-
-    # ── ② What we found ───────────────────────────────────────────────────
-    st.markdown("### ② What we found")
-    _render_plain_findings(story.get("diagnostic_report") or {})
-    if adj:
-        st.caption(
-            "Each candidate signal was confirmed on a HELD-OUT split with e-BH "
-            "(FDR-controlled). In the chart below, green survived; grey did not."
-        )
-        cols = st.columns(5)
-        cells = [
-            ("Method", adj.get("method", "-")),
-            ("alpha", adj.get("alpha", "-")),
-            ("Signals tested", adj.get("n_signals_tested", adj.get("n_in_family", "-"))),
-            ("Rejected (real)", adj.get("n_signals_rejected", adj.get("n_rejected", "-"))),
-            ("Split", adj.get("split", "-")),
-        ]
-        for col, (label, value) in zip(cols, cells, strict=False):
-            col.metric(label, value)
-
-    if signals:
-        st.markdown("**Signal effect sizes (failure association)**")
-        n_leaky = sum(1 for s in signals if _is_leaky_signal(s))
-        if _viz_ready():
-            st.plotly_chart(viz.forest_effects(_forest_rows(signals)),
-                            width="stretch", key="diagnostic_forest_effects")
-            st.caption(
-                "Dot = effect size, bar = confidence interval, dotted line = 0 (no "
-                "association). Green survived e-BH (FDR); grey did not."
-                + (" Greyed/leaky signals are the outcome re-measured (perfect "
-                   "separation) — confirmatory, not causal, so they are demoted "
-                   "from the ranking." if n_leaky else "")
-            )
-        else:
-            fig = _signal_effect_figure(signals)
-            if fig is not None:
-                st.pyplot(fig, clear_figure=True)
-        st.dataframe(_signals_dataframe(signals), width="stretch", hide_index=True)
-
-    # Statistical deep-dive built from the per-case matrix (model eval, distribution
-    # diagnostics, relationships, decision) — replaces the 2-group descriptive view.
-    _render_stat_panel(root)
-
-    # The analyst's reasoning chain + statistical-test summaries, when logged.
-    evidence = next((a.get("evidence_chain") for a in analyses if a.get("evidence_chain")), None)
-    if evidence:
-        st.markdown("**Evidence chain (analyst reasoning)**")
-        for step in evidence[:10]:
-            st.markdown(f"- {step}")
-    stat_summaries = [
-        str(r.get("summary")) for a in analyses for r in (a.get("stats_results") or [])
-        if isinstance(r, dict) and r.get("summary")
-    ]
-    if stat_summaries:
-        st.markdown("**Statistical tests**")
-        for s in stat_summaries[:10]:
-            st.markdown(f"- {s}")
-
-    # Primary: themed, distribution-first charts rebuilt from the explorer's data
-    # tables (counts→bar, two-signal→scatter, fail-rate→binned curve, group
-    # stats→dumbbell). Replaces the explorer's default bar PNGs as the lead view.
-    if _viz_ready():
-        st.markdown("**Exploratory charts**")
-        _render_explore_tables(explore_report, explore_dir, full=False, root=root)
-        if charts or plots:
-            with st.expander("Explorer's original figures (as rendered during Step 1)",
-                             expanded=False):
-                _render_charts_and_plots(explore_report, explore_dir)
-    else:
-        if charts or plots:
-            st.markdown("**Exploratory charts**")
-            _render_charts_and_plots(explore_report, explore_dir)
-        _render_explore_tables(explore_report, explore_dir, full=False)
-
-    # ── ③ Hypotheses formed ───────────────────────────────────────────────
-    st.markdown("### ③ Hypotheses formed")
-    if hyps:
-        if story.get("surgeries") or story.get("fixes"):
-            st.caption(
-                "From the findings above, M3 proposed these falsifiable root-cause "
-                "hypotheses. Each was tested downstream (M5/M4) before any fix."
-            )
-        else:
-            st.caption(
-                "From the M2 findings above, M3 proposed these falsifiable root-cause "
-                "hypotheses. They are proposed only; M5/M4 has not run yet."
-            )
-        for h in hyps:
-            _render_hypothesis_card(h)
-    else:
-        st.caption("No hypotheses were recorded for this run.")
-
-    if not (signals or adj or charts or plots or hyps or concl):
-        st.warning(
-            "This run has no explore report alongside the log, so there are no "
-            "measured signals/charts to show. Re-run Step 2 with "
-            "`--explore-report outputs/fused/fused_report.json`, or point the "
-            "dashboard at an explore-output directory."
-        )
-
-
 def _render_stat_panel(root) -> None:
     """Inferential / distributional panel built from the per-case feature matrix
     reconstructed from m1_state.pkl: model-evaluation, distribution diagnostics,
-    variable relationships, and decision analysis. Silent if data unavailable."""
+    variable relationships, and decision analysis. Silent if data unavailable.
+
+    This pickle is a separate artifact from a specific attention/hallucination-
+    probe pipeline, not from the current run's own explorer output, so the whole
+    panel renders inside a collapsed, explicitly-labeled expander — it must never
+    look like it's describing this run's own analysis."""
     if root is None or not _viz_ready() or load_case_matrix is None:
         return
     try:
@@ -1080,83 +1020,89 @@ def _render_stat_panel(root) -> None:
     sigs = continuous_signals(df)
 
     st.markdown("---")
-    st.markdown("#### 📈 Statistical analysis (per-case)")
-    cov = ", ".join(f"{s}: {int(df[s].notna().sum())}" for s in sigs) if sigs else "—"
-    st.caption(
-        f"Reconstructed from the frozen M1 state ({len(df)} cases). Continuous-signal "
-        f"coverage — {cov}. Charts below go beyond FAIL-vs-PASS means: discrimination "
-        f"(ROC/coef), error structure (confusion), distribution shape, and relationships."
-    )
+    with st.expander(
+        "📈 Attention-probe statistical analysis (from a separate m1_state.pkl, if present)",
+        expanded=False,
+    ):
+        cov = ", ".join(f"{s}: {int(df[s].notna().sum())}" for s in sigs) if sigs else "—"
+        st.caption(
+            f"Reconstructed from a frozen M1 state pickle written by a specific "
+            f"attention/hallucination-probe pipeline ({len(df)} cases) — a different "
+            f"artifact from this run's own explorer analysis, and not guaranteed to "
+            f"belong to this run if the output directory was reused. Continuous-signal "
+            f"coverage — {cov}. Charts below go beyond FAIL-vs-PASS means: discrimination "
+            f"(ROC/coef), error structure (confusion), distribution shape, and relationships."
+        )
 
-    # ── Model evaluation ──────────────────────────────────────────────────
-    st.markdown("**Model evaluation**")
-    c1, c2 = st.columns(2)
-    has_answers = df["model_yes"].notna().any() and df["truth_yes"].notna().any()
-    if has_answers:
-        with c1:
-            st.plotly_chart(
-                viz.confusion_matrix(df["truth_yes"], df["model_yes"],
-                                     pos_label="Yes (present)", neg_label="No (absent)",
-                                     title="Model answer vs ground truth"),
-                width="stretch",
-                key="stat_confusion_matrix",
-            )
-            st.caption("FP = hallucination (said Yes, object absent); FN = miss.")
-    if sigs:
-        with (c2 if has_answers else c1):
-            st.plotly_chart(viz.roc_curves(df, sigs, label_col="is_fail"),
-                            width="stretch", key="stat_roc_curves")
-            st.caption("How well each signal alone separates FAIL from PASS (AUC).")
-        st.plotly_chart(viz.coef_plot(df, sigs, label_col="is_fail"),
-                        width="stretch", key="stat_coef_plot")
-        st.caption("Standardized univariate logistic coefficients (bootstrap 95% CI); "
-                   "comparable across signals — CI crossing 0 ⇒ not significant.")
+        # ── Model evaluation ──────────────────────────────────────────────
+        st.markdown("**Model evaluation**")
+        c1, c2 = st.columns(2)
+        has_answers = df["model_yes"].notna().any() and df["truth_yes"].notna().any()
+        if has_answers:
+            with c1:
+                st.plotly_chart(
+                    viz.confusion_matrix(df["truth_yes"], df["model_yes"],
+                                         pos_label="Yes (present)", neg_label="No (absent)",
+                                         title="Model answer vs ground truth"),
+                    width="stretch",
+                    key="stat_confusion_matrix",
+                )
+                st.caption("FP = hallucination (said Yes, object absent); FN = miss.")
+        if sigs:
+            with (c2 if has_answers else c1):
+                st.plotly_chart(viz.roc_curves(df, sigs, label_col="is_fail"),
+                                width="stretch", key="stat_roc_curves")
+                st.caption("How well each signal alone separates FAIL from PASS (AUC).")
+            st.plotly_chart(viz.coef_plot(df, sigs, label_col="is_fail"),
+                            width="stretch", key="stat_coef_plot")
+            st.caption("Standardized univariate logistic coefficients (bootstrap 95% CI); "
+                       "comparable across signals — CI crossing 0 ⇒ not significant.")
 
-    # ── Distribution diagnostics (interactive signal picker) ──────────────
-    if sigs:
-        st.markdown("**Distribution diagnostics**")
-        # default to the most discriminative signal (highest |AUC-0.5|)
-        aucs = {s: abs(viz._roc(df[s].to_numpy(float), df["is_fail"].to_numpy(float))[2] - 0.5)
-                for s in sigs}
-        default = max(aucs, key=aucs.get)
-        pick = st.selectbox("signal", sigs, index=sigs.index(default),
-                            format_func=lambda s: viz.short(s), key="stat_sig")
-        d1, d2 = st.columns(2)
-        with d1:
-            st.plotly_chart(viz.violin_by_outcome(df, pick), width="stretch", key=f"stat_violin_{pick}")
-            st.plotly_chart(viz.ecdf_by_outcome(df, pick), width="stretch", key=f"stat_ecdf_{pick}")
-        with d2:
-            st.plotly_chart(viz.kde_by_outcome(df, pick), width="stretch", key=f"stat_kde_{pick}")
-            st.plotly_chart(viz.qq_normal(df, pick), width="stretch", key=f"stat_qq_{pick}")
+        # ── Distribution diagnostics (interactive signal picker) ──────────
+        if sigs:
+            st.markdown("**Distribution diagnostics**")
+            # default to the most discriminative signal (highest |AUC-0.5|)
+            aucs = {s: abs(viz._roc(df[s].to_numpy(float), df["is_fail"].to_numpy(float))[2] - 0.5)
+                    for s in sigs}
+            default = max(aucs, key=aucs.get)
+            pick = st.selectbox("signal", sigs, index=sigs.index(default),
+                                format_func=lambda s: viz.short(s), key="stat_sig")
+            d1, d2 = st.columns(2)
+            with d1:
+                st.plotly_chart(viz.violin_by_outcome(df, pick), width="stretch", key=f"stat_violin_{pick}")
+                st.plotly_chart(viz.ecdf_by_outcome(df, pick), width="stretch", key=f"stat_ecdf_{pick}")
+            with d2:
+                st.plotly_chart(viz.kde_by_outcome(df, pick), width="stretch", key=f"stat_kde_{pick}")
+                st.plotly_chart(viz.qq_normal(df, pick), width="stretch", key=f"stat_qq_{pick}")
 
-    # ── Variable relationships ────────────────────────────────────────────
-    rel_sigs = sigs + (["probe1_fd"] if "probe1_fd" in df.columns else [])
-    if len(rel_sigs) >= 2:
-        st.markdown("**Variable relationships**")
-        r1, r2 = st.columns(2)
-        with r1:
-            st.plotly_chart(viz.corr_heatmap(df, rel_sigs), width="stretch", key="stat_corr_heatmap")
-        with r2:
-            if len(sigs) >= 2:
-                st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), width="stretch", key="stat_quadrant")
+        # ── Variable relationships ─────────────────────────────────────────
+        rel_sigs = sigs + (["probe1_fd"] if "probe1_fd" in df.columns else [])
+        if len(rel_sigs) >= 2:
+            st.markdown("**Variable relationships**")
+            r1, r2 = st.columns(2)
+            with r1:
+                st.plotly_chart(viz.corr_heatmap(df, rel_sigs), width="stretch", key="stat_corr_heatmap")
+            with r2:
+                if len(sigs) >= 2:
+                    st.plotly_chart(viz.quadrant(df, sigs[0], sigs[1]), width="stretch", key="stat_quadrant")
 
-    # ── Decision analysis: which prompt strategies fix vs break cases ─────
-    pareto_items = [
-        ("describe-first fixes", "pc_fixed_describe"),
-        ("sensitive fixes", "pc_fixed_sensitive"),
-        ("describe-first breaks", "pc_broken_describe"),
-        ("sensitive breaks", "pc_broken_sensitive"),
-    ]
-    avail = [(lbl, col) for lbl, col in pareto_items if col in df.columns]
-    if avail:
-        vals = [int(df[col].fillna(False).astype(bool).sum()) for _, col in avail]
-        if sum(vals) > 0:
-            st.markdown("**Decision analysis**")
-            st.plotly_chart(viz.pareto([lbl for lbl, _ in avail], vals,
-                                       title="Prompt-strategy repairs vs regressions"),
-                            width="stretch", key="stat_prompt_pareto")
-            st.caption("How many cases each reprompting strategy fixed vs broke — "
-                       "ranks whether prompt-level fixes are worth pursuing.")
+        # ── Decision analysis: which prompt strategies fix vs break cases ──
+        pareto_items = [
+            ("describe-first fixes", "pc_fixed_describe"),
+            ("sensitive fixes", "pc_fixed_sensitive"),
+            ("describe-first breaks", "pc_broken_describe"),
+            ("sensitive breaks", "pc_broken_sensitive"),
+        ]
+        avail = [(lbl, col) for lbl, col in pareto_items if col in df.columns]
+        if avail:
+            vals = [int(df[col].fillna(False).astype(bool).sum()) for _, col in avail]
+            if sum(vals) > 0:
+                st.markdown("**Decision analysis**")
+                st.plotly_chart(viz.pareto([lbl for lbl, _ in avail], vals,
+                                           title="Prompt-strategy repairs vs regressions"),
+                                width="stretch", key="stat_prompt_pareto")
+                st.caption("How many cases each reprompting strategy fixed vs broke — "
+                           "ranks whether prompt-level fixes are worth pursuing.")
 
 
 def _render_diagnostic_report(
@@ -1405,27 +1351,25 @@ def _render_visual_plan(explore_report: dict[str, Any] | None) -> None:
 
 
 def _render_hypothesis_card(h: dict[str, Any]) -> None:
-    """One hypothesis with its evidence (cited charts) and M5/M4 test verdicts."""
-    badges = ""
-    for t in h.get("tests") or []:
-        mod = str(t.get("module", "")).upper()
-        status = str(t.get("status", "") or ("fixed" if t.get("fixed") else "tested"))
-        ok = bool(t.get("fixed")) or status.lower() in {"supported", "confirmed"}
-        bad = status.lower() in {"refuted", "rejected", "not_fixed", "failed"}
-        color = "#0f8a5f" if ok else ("#b42318" if bad else "#667085")
-        badges += (
-            f'<span class="ev-pill" style="border-color:{color};color:{color};">'
-            f'{mod}: {_html_escape(status)}</span> '
-        )
+    """One M3 hypothesis with its cited evidence — no test/support verdict.
+
+    Hypothesis testing (M4/M5) is out of the current scope, so a hypothesis's
+    ``tests`` (M5/M4 records the loaded run's own data might carry) are
+    deliberately not read or rendered here."""
     refs = h.get("referenced_charts") or []
     ref_line = ("based on: " + ", ".join(str(r) for r in refs)) if refs else ""
+    test_design = str(h.get("test_design") or "").strip()
+    test_block = (
+        f'<div class="ev-signal-test">How this could be checked: {_html_escape(test_design)}</div>'
+        if test_design else ""
+    )
     st.markdown(
         f"""
         <div class="ev-signal">
           <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
           <div class="ev-signal-body">failure mode: <b>{_html_escape(str(h.get('failure_mode', '')))}</b>
             {('· ' + _html_escape(ref_line)) if ref_line else ''}</div>
-          <div>{badges or '<span class="ev-pill">not yet tested</span>'}</div>
+          {test_block}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1433,7 +1377,11 @@ def _render_hypothesis_card(h: dict[str, Any]) -> None:
 
 
 def _render_loop_flow(story, explore_report, explore_dir) -> None:
-    """The ordered narrative: explore notes → M2 → M3 hypotheses → M5 → Fix."""
+    """The ordered narrative: explore notes → M2 → M3 hypotheses.
+
+    M4/M5 (tested interventions, fix adjudication) are temporarily out of
+    scope and deliberately not read from `story` here, even if the loaded
+    run's own data carries surgery/fix records."""
     if explore_report:
         with st.expander("Step 1 — exploratory observations (UNCONFIRMED; fed to M3 only)", expanded=False):
             for o in (explore_report.get("observations") or [])[:10]:
@@ -1443,11 +1391,9 @@ def _render_loop_flow(story, explore_report, explore_dir) -> None:
 
     analyses = story.get("analyses") or []
     diagnoses = story.get("diagnoses") or []
-    surgeries = story.get("surgeries") or []
-    fixes = story.get("fixes") or []
 
     if analyses:
-        st.markdown("### M2 — stats analysis")
+        st.markdown("### M2 — exploratory analysis")
         for a in analyses:
             sev = a.get("severity") or ""
             st.markdown(f"- **Cycle {a.get('cycle')}** {('· severity ' + str(sev)) if sev else ''}")
@@ -1464,26 +1410,25 @@ def _render_loop_flow(story, explore_report, explore_dir) -> None:
         if refs:
             st.caption("M3 referenced explore artifacts: " + ", ".join(str(r) for r in refs))
         for h in diag.get("hypotheses") or []:
+            test_design = str(h.get("test_design") or "").strip()
+            test_line = (
+                f'<div class="ev-signal-test">how to check: {_html_escape(test_design)}</div>'
+                if test_design else ""
+            )
             st.markdown(
                 f"""
                 <div class="ev-signal">
                   <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
                   <div class="ev-signal-test">failure_mode: {_html_escape(str(h.get('failure_mode', '')))}</div>
+                  {test_line}
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-
-    if surgeries:
-        st.markdown("### M5 / M4 — tested interventions")
-        for s in surgeries:
-            tag = str(s.get("module", "")).upper()
-            st.markdown(f"- **[{tag}]** {s.get('status', '')} · {_truncate(str(s.get('hypothesis', '')), 120)}")
-
-    if fixes:
-        st.markdown("### Fix — e-BH adjudicated outcomes")
-        for f in fixes:
-            st.json(f)
+        raw = str(diag.get("raw_judge_output") or "").strip()
+        if raw:
+            with st.expander(f"Full M3 reasoning — cycle {diag.get('cycle')} (raw judge output)", expanded=False):
+                st.text(raw)
 
 
 def _signal_effect_figure(signals: list[dict[str, Any]]):
@@ -2009,6 +1954,12 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
 
     st.markdown("#### Data behind the analysis")
 
+    # This run's own signals — always the primary view. NOTE: a case matrix
+    # reconstructed from m1_state.pkl (below) is a SEPARATE artifact from a
+    # specific attention/hallucination-probe pipeline; it is not guaranteed to
+    # belong to this run (a reused output dir can carry a stale pickle from an
+    # unrelated experiment), so it must never silently replace what this run's
+    # own explorer tables actually say.
     matrix = None
     if root is not None and load_case_matrix is not None:
         try:
@@ -2028,19 +1979,9 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
                 pass
             break
 
-    combined = False
-    if matrix is not None and len(sigs) >= 1:
-        combined = True
-        st.plotly_chart(viz.groupstats_strip(matrix, sigs), width="stretch", key="explore_groupstats_combined")
-        st.caption("All signals' FAIL-vs-PASS group means on one standardized axis "
-                   "(one row per signal — replaces a panel per signal).")
-        st.plotly_chart(viz.failrate_percentile(matrix, sigs), width="stretch", key="explore_failrate_combined")
-        st.caption("Each signal's fail-rate curve over its own percentile range, overlaid "
-                   "on one axis.")
-
-    # Remaining CSVs: per-signal group-stats / fail-rate are now folded into the
-    # combined charts above; the binary scatter is degenerate (skill §0). Show only
-    # the genuinely tabular summaries (correlations, discriminators) as tables.
+    # Remaining CSVs: per-signal group-stats / fail-rate charts, plus the
+    # genuinely tabular summaries (correlations, discriminators). This is
+    # this run's own data — always shown, never gated on the case matrix.
     folded = ("groupstats", "failrate", "class_balance")
     for path in uniq:
         name = path.name
@@ -2075,27 +2016,53 @@ def _render_explore_tables(explore_report, explore_dir, *, full: bool, root=None
         st.markdown(f"**{name}**")
         st.dataframe(d, width="stretch", height=200)
 
-    # No matrix → fall back to per-signal panels so nothing is lost.
-    if not combined:
-        for path in uniq:
-            name = path.name
-            try:
-                d = pd.read_csv(path)
-            except Exception:
-                continue
-            cols = {c.lower() for c in d.columns}
-            if name.startswith("groupstats") and {"outcome", "mean"} <= cols:
-                st.plotly_chart(
-                    _groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
-                    width="stretch",
-                    key=f"explore_groupstats_{name}",
-                )
-            elif name.startswith("failrate") and "fail_rate" in cols and len(d) > 1:
-                st.plotly_chart(
-                    _failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
-                    width="stretch",
-                    key=f"explore_failrate_{name}",
-                )
+    # Per-signal group-stats / fail-rate panels, built from THIS RUN's own CSVs —
+    # always shown, regardless of whether a case matrix also happens to exist.
+    for path in uniq:
+        name = path.name
+        try:
+            d = pd.read_csv(path)
+        except Exception:
+            continue
+        cols = {c.lower() for c in d.columns}
+        if name.startswith("groupstats") and {"outcome", "mean"} <= cols:
+            st.plotly_chart(
+                _groupstats_dumbbell(d, name.replace("groupstats_", "").replace(".csv", "")),
+                width="stretch",
+                key=f"explore_groupstats_{name}",
+            )
+        elif name.startswith("failrate") and "fail_rate" in cols and len(d) > 1:
+            st.plotly_chart(
+                _failrate_scatter(d, name.replace("failrate_by_", "").replace(".csv", "")),
+                width="stretch",
+                key=f"explore_failrate_{name}",
+            )
+
+    # Case-matrix charts (m1_state.pkl) are a SEPARATE, optional artifact from a
+    # specific attention/hallucination-probe pipeline — opt-in and clearly
+    # labeled so they are never mistaken for this run's own analysis above.
+    if matrix is not None and len(sigs) >= 1:
+        with st.expander(
+            "Attention-probe case-matrix charts (from a separate m1_state.pkl, if present)",
+            expanded=False,
+        ):
+            st.caption(
+                "Reconstructed from a frozen M1 state pickle written by a specific "
+                "attention/hallucination-probe pipeline — a different artifact from "
+                "this run's own explorer tables above. If this output directory was "
+                "reused across experiments, this may be stale or unrelated to the "
+                "run shown elsewhere on this page."
+            )
+            st.plotly_chart(
+                viz.groupstats_strip(matrix, sigs), width="stretch", key="explore_groupstats_combined"
+            )
+            st.caption("All signals' FAIL-vs-PASS group means on one standardized axis "
+                       "(one row per signal — replaces a panel per signal).")
+            st.plotly_chart(
+                viz.failrate_percentile(matrix, sigs), width="stretch", key="explore_failrate_combined"
+            )
+            st.caption("Each signal's fail-rate curve over its own percentile range, overlaid "
+                       "on one axis.")
 
 
 def _render_explore_tables_legacy(uniq: list[Path]) -> None:

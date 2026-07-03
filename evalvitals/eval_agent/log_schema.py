@@ -61,6 +61,7 @@ _HYPOTHESIS = {
         "statement": {"type": "string"},
         "failure_mode": {"type": ["string", "null"]},
         "status": {"type": ["string", "null"]},
+        "test_design": {"type": ["string", "null"]},
     },
 }
 

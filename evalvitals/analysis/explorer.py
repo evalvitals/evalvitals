@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_INPUT_FILENAME = "records.json"
+RECORDS_FILENAME = "records.json"  # also read by explore_run.py / dashboard_app.py
 _RESULT_MARKER = "EXPLORATORY_RESULT_JSON="
 
 _GENERATE_PROMPT = """\
@@ -561,13 +562,13 @@ class ExploratoryAnalysisAgent:
         return report
 
     def _write_input(self, rows: list[dict[str, Any]]) -> None:
-        path = Path(self._sandbox.workdir) / _INPUT_FILENAME
+        path = Path(self._sandbox.workdir) / RECORDS_FILENAME
         path.write_text(json.dumps(rows, default=str), encoding="utf-8")
 
     def _write_code(self, question: str, profile: dict[str, Any]) -> tuple[str, str]:
         prompt = _GENERATE_PROMPT.format(
             question=question,
-            input_filename=_INPUT_FILENAME,
+            input_filename=RECORDS_FILENAME,
             data_profile=json.dumps(profile, indent=2, default=str),
             framing=_framing_block(profile.get("outcome") or {}),
             marker=_RESULT_MARKER,
@@ -591,7 +592,7 @@ class ExploratoryAnalysisAgent:
             stdout=(result.stdout if result is not None else "")[-2000:],
             stderr=(result.stderr if result is not None else "")[-2000:],
             error=error,
-            input_filename=_INPUT_FILENAME,
+            input_filename=RECORDS_FILENAME,
             marker=_RESULT_MARKER,
             fences_hint=_fences_hint(self._cli_config),
         )
@@ -667,6 +668,7 @@ def scan_folder(
     max_files: int = 200,
     include_tool_calls: bool = False,
     max_listing: int = 60,
+    max_scan_entries: int = 200_000,
 ) -> dict[str, Any]:
     """Filesystem-level summary of what a folder actually contains.
 
@@ -676,6 +678,15 @@ def scan_folder(
     many of the discovered JSON files were actually sampled — since that
     differs from folder to folder and is useful to see before any row-level
     parsing happens.
+
+    Uses a single ``os.walk`` pass rather than ``Path.rglob`` + per-entry
+    ``is_file()``/``is_dir()`` checks: real run directories can hold tens of
+    thousands of files (one JSON per tool call), and ``rglob`` results lose
+    the cached direntry type, so each check becomes its own ``stat()`` — on
+    networked storage that made this function slower than the actual row
+    loader it's meant to summarize. ``max_scan_entries`` is a hard backstop so
+    an unexpectedly huge tree degrades (partial counts, flagged as capped)
+    instead of hanging.
     """
     root = Path(path)
     if root.is_file():
@@ -689,32 +700,59 @@ def scan_folder(
             "json_files_used": 1,
             "entries": [root.name],
             "truncated": False,
+            "scan_capped": False,
         }
 
-    all_paths = sorted(root.rglob("*"))
-    files = [p for p in all_paths if p.is_file()]
-    dirs = [p for p in all_paths if p.is_dir()]
+    n_files = 0
+    n_dirs = 0
+    n_json_found = 0
+    n_json_after_filter = 0
     ext_counts: dict[str, int] = {}
-    for p in files:
-        ext = p.suffix.lower() or "(no extension)"
-        ext_counts[ext] = ext_counts.get(ext, 0) + 1
+    entries: list[str] = []
+    scan_capped = False
+    scanned = 0
 
-    used_files, n_json_found = _discover_json_files(
-        root, max_files=max_files, include_tool_calls=include_tool_calls
-    )
-    entries = [
-        str(p.relative_to(root)) + ("/" if p.is_dir() else "") for p in all_paths[:max_listing]
-    ]
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        filenames.sort()
+        rel_dir = Path(dirpath).relative_to(root)
+
+        for name in dirnames:
+            n_dirs += 1
+            scanned += 1
+            if len(entries) < max_listing:
+                rel = name if rel_dir == Path(".") else str(rel_dir / name)
+                entries.append(rel + "/")
+
+        for name in filenames:
+            n_files += 1
+            scanned += 1
+            ext = Path(name).suffix.lower() or "(no extension)"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+            if name.endswith(".json"):
+                n_json_found += 1
+                if include_tool_calls or not name.startswith("tool_calls_"):
+                    n_json_after_filter += 1
+            if len(entries) < max_listing:
+                rel = name if rel_dir == Path(".") else str(rel_dir / name)
+                entries.append(rel)
+
+        if scanned >= max_scan_entries:
+            scan_capped = True
+            break
+
+    entries.sort()
     return {
         "root": str(root),
         "is_file": False,
-        "n_files_total": len(files),
-        "n_dirs": len(dirs),
+        "n_files_total": n_files,
+        "n_dirs": n_dirs,
         "extensions": dict(sorted(ext_counts.items(), key=lambda kv: -kv[1])),
         "json_files_found": n_json_found,
-        "json_files_used": len(used_files),
-        "entries": entries,
-        "truncated": len(all_paths) > max_listing,
+        "json_files_used": min(n_json_after_filter, max_files),
+        "entries": entries[:max_listing],
+        "truncated": (n_files + n_dirs) > max_listing,
+        "scan_capped": scan_capped,
     }
 
 

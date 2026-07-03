@@ -23,7 +23,7 @@ from typing import Any
 
 from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
-from evalvitals.analysis.explorer import ExploratoryAnalysisAgent
+from evalvitals.analysis.explorer import RECORDS_FILENAME, ExploratoryAnalysisAgent
 from evalvitals.eval_agent.cli_agent import CliAgentConfig
 from evalvitals.viz.renderer import render_chart_specs
 
@@ -191,3 +191,10 @@ def _copy_artifact_dirs(report: Any, out_dir: Path) -> None:
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(src, dest)
+    # Persist the raw loaded records alongside the report so the dashboard can
+    # offer a "browse raw data" view — otherwise they only live in the sandbox
+    # workdir, which isn't guaranteed to still exist by the time someone opens
+    # the dashboard.
+    records_src = workdir / RECORDS_FILENAME
+    if records_src.exists():
+        shutil.copy2(records_src, out_dir / RECORDS_FILENAME)
