@@ -1,3 +1,4 @@
-outputs/
+outputs*/
 data/
+data_images_all/
 __pycache__/

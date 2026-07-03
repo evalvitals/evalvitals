@@ -516,9 +516,23 @@ class ExploratoryAnalysisAgent:
         sandbox: ExperimentSandbox | None = None,
         timeout_sec: int = 60,
         max_attempts: int = 2,
+        use_bundled_skills: bool = True,
     ) -> None:
         self._judge = judge
         self._inspector = inspector
+        # Figure-styling skills are on by default for every skill-capable CLI
+        # backend: when the caller configured none, vendor the package-bundled
+        # ones (eval-chart-style, nature-figure, evalvitals-report-ui) so agent
+        # figures follow the house chart-type policy without per-caller wiring.
+        if use_bundled_skills and cli_config is not None and not cli_config.skills:
+            from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
+
+            if cli_config.provider in SKILL_BACKENDS:
+                bundled = tuple(bundled_skill_paths())
+                if bundled:
+                    from dataclasses import replace
+
+                    cli_config = replace(cli_config, skills=bundled, allow_skills=True)
         self._cli_config = cli_config
         self._sandbox = sandbox or ExperimentSandbox(cleanup=False)
         self._timeout_sec = timeout_sec
@@ -1374,22 +1388,44 @@ def _fences_hint(cli_config: "CliAgentConfig | None") -> str:
 
 
 def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
-    """Prompt addendum steering the agent to use available Agent Skills (e.g. a
-    figure-styling skill) for the plots it writes. Empty unless skills are enabled
-    on the CLI backend. Skills style the agent-authored ``figures/*.png`` only;
-    the host-rendered ``charts`` (spec+CSV) stay deterministic and unstyled."""
+    """Prompt addendum steering the agent to APPLY the available Agent Skills for
+    the plots it writes (default-on, not optional). Empty unless skills are
+    enabled on the CLI backend. Skills style the agent-authored ``figures/*.png``
+    only; the host-rendered ``charts`` (spec+CSV) stay deterministic and unstyled.
+
+    claude/agy invoke skills via the ``Skill`` tool; codex has no such tool, so
+    it is pointed at the vendored ``.claude/skills/<name>/SKILL.md`` files (also
+    listed in the workdir's ``AGENTS.md``)."""
     if cli_config is None or not getattr(cli_config, "skills_enabled", False):
         return ""
     from pathlib import Path as _P
 
     names = [_P(s).name for s in (cli_config.skills or [])]
     which = ("the " + ", ".join(f"`/{n}`" for n in names) + " skill(s)") if names else "any installed Agent Skills"
+    if getattr(cli_config, "provider", "") == "codex":
+        how = (
+            f"read the vendored guides ({', '.join(f'`.claude/skills/{n}/SKILL.md`' for n in names)}"
+            if names else "read the vendored guides under `.claude/skills/`"
+        ) + " — also listed in AGENTS.md) and apply them"
+    else:
+        how = f"invoke {which} via the Skill tool and follow them"
+    roles = []
+    if "eval-chart-style" in names:
+        roles.append(
+            "`eval-chart-style` governs chart-TYPE choice (distribution-first: "
+            "violin/ECDF/heatmap/forest/paired-slope — never a mean as a bar) and "
+            "the FAIL/PASS semantic palette"
+        )
+    if "nature-figure" in names:
+        roles.append("`nature-figure` adds publication-grade matplotlib polish")
+    role_line = ("; ".join(roles) + ". ") if roles else ""
     return (
-        "\nFIGURE STYLING: Agent Skills are available. When you write plots under "
-        f"figures/, you MAY invoke {which} to produce publication-quality, "
-        "well-labelled matplotlib figures. This is a non-interactive PYTHON "
-        "analysis: if a skill asks you to choose a plotting backend, choose "
-        "Python and proceed without pausing — never stop to ask a question. Use a "
-        "skill for styling only — it must not change the data, the analysis, the "
-        "sandbox workflow, or the final result JSON.\n"
+        "\nFIGURE STYLING: Agent Skills are available — apply them BY DEFAULT to "
+        f"every plot you write under figures/: BEFORE plotting, {how}. "
+        f"{role_line}"
+        "This is a non-interactive PYTHON analysis: if a skill asks you to choose "
+        "a plotting backend, choose Python and proceed without pausing — never "
+        "stop to ask a question. Use skills for styling only — they must not "
+        "change the data, the analysis, the sandbox workflow, or the final "
+        "result JSON.\n"
     )

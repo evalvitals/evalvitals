@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     explore.add_argument(
         "--skill", action="append", default=[], metavar="DIR",
         help="Agent-Skill directory (with SKILL.md) to style agent-authored "
-             "figures (e.g. nature-figure). Repeatable. claude/agy backends only.",
+             "figures (e.g. nature-figure). Repeatable. claude/agy/codex backends.",
     )
     explore.add_argument(
         "--allow-skills", action="store_true",

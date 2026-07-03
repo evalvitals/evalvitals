@@ -77,6 +77,7 @@ Each directory under `examples/` is a self-contained, runnable demo:
 ```bash
 cd examples/analyzer_demos/qwen_attention  && docker compose up   # attention analysis on a text LLM
 cd examples/m2_statistics/deco_hallu_explore && docker compose up # M2/M3 explore, real M1 data
+cd examples/m2_statistics/deco_hallu_explore && bash run_attn.sh  # ... attention-enriched: FAIL/PASS distributions + cross-checkpoint geometry (no GPU; data ships with the repo)
 cd examples/diagnosis_loops/qwen_loop_agy  && docker compose up   # VLDiagnoseLoop M1→M5 (VLM)
 ```
 
