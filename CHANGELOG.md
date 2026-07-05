@@ -6,6 +6,28 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — outcome-driver-analysis: statistical-method skill for the analysis stage
+
+- **`outcome-driver-analysis` bundled skill** (`agent_assets/skills/…`, MIT,
+  vendored from the user's project skill): a disciplined 8-step protocol for
+  explaining a binary outcome — explanatory-variable EDA, per-variable tests
+  WITH effect sizes, conditioning/Simpson's checks, marginal screening, a
+  *justified* regression model (GLM vs mixed-effects reasoned from the actual
+  clustering), fit diagnostics (VIF, ROC/AUC, calibration), and result
+  visualization. Fills the standalone explore pipeline's biggest gap: marginal
+  descriptive contrasts were never adjusted for confounders or the
+  checkpoint-clustering structure.
+- **Staged skill hint** (`explorer._skills_hint`): the prompt now stages skills
+  by function — ANALYSIS METHOD (invoke outcome-driver-analysis BEFORE writing
+  any analysis code) then FIGURE STYLING (eval-chart-style/nature-figure BEFORE
+  plotting). Guards keep the sandbox contract intact: adopt the methodology,
+  not the skill's file layout; infer intake from the data profile (never ask);
+  takeaways stay DESCRIPTIVE (effect sizes + CIs; test statistics live in
+  tables/artifacts, never phrased as significance verdicts — validity remains
+  the confirm phase's job); with very few clusters prefer a fixed effect.
+- Env: `statsmodels` + `scikit-learn` added to the venv (the protocol's Python
+  path needs real inference; the repo previously had numpy-only stats).
+
 ### Added — figure skills on by default across claude/agy/codex
 
 - **`eval-chart-style` bundled skill** (`agent_assets/skills/eval-chart-style/`):

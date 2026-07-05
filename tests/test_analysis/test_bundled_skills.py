@@ -21,6 +21,12 @@ def test_bundled_skill_set():
     assert "evalvitals-report-ui" in names
     # The eval_viz_theme chart-type policy, codified as a skill for agents.
     assert "eval-chart-style" in names
+    # The statistical-method protocol consulted BEFORE analysis code is written.
+    assert "outcome-driver-analysis" in names
+    oda = next(Path(p) for p in paths if Path(p).name == "outcome-driver-analysis")
+    assert (oda / "SKILL.md").is_file()
+    assert (oda / "references" / "model_selection.md").is_file()
+    assert not (oda / ".DS_Store").exists()  # vendored clean
     nf = next(Path(p) for p in paths if Path(p).name == "nature-figure")
     assert (nf / "SKILL.md").is_file()
     assert (nf / "LICENSE").is_file()  # Apache-2.0 attribution preserved

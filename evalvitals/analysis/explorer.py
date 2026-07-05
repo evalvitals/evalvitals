@@ -1388,10 +1388,16 @@ def _fences_hint(cli_config: "CliAgentConfig | None") -> str:
 
 
 def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
-    """Prompt addendum steering the agent to APPLY the available Agent Skills for
-    the plots it writes (default-on, not optional). Empty unless skills are
-    enabled on the CLI backend. Skills style the agent-authored ``figures/*.png``
-    only; the host-rendered ``charts`` (spec+CSV) stay deterministic and unstyled.
+    """Prompt addendum steering the agent to APPLY the available Agent Skills
+    (default-on, not optional). Empty unless skills are enabled on the backend.
+
+    Two staged blocks, matching the skills' functional division of labor:
+    an ANALYSIS METHOD block (outcome-driver-analysis — consulted BEFORE any
+    analysis code is written, to pick justified statistical methods) and a
+    FIGURE STYLING block (eval-chart-style / nature-figure — consulted BEFORE
+    plotting). Skills style/inform the agent-authored analysis and
+    ``figures/*.png`` only; the host-rendered ``charts`` (spec+CSV) stay
+    deterministic and unstyled.
 
     claude/agy invoke skills via the ``Skill`` tool; codex has no such tool, so
     it is pointed at the vendored ``.claude/skills/<name>/SKILL.md`` files (also
@@ -1401,31 +1407,60 @@ def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
     from pathlib import Path as _P
 
     names = [_P(s).name for s in (cli_config.skills or [])]
-    which = ("the " + ", ".join(f"`/{n}`" for n in names) + " skill(s)") if names else "any installed Agent Skills"
-    if getattr(cli_config, "provider", "") == "codex":
-        how = (
-            f"read the vendored guides ({', '.join(f'`.claude/skills/{n}/SKILL.md`' for n in names)}"
-            if names else "read the vendored guides under `.claude/skills/`"
-        ) + " — also listed in AGENTS.md) and apply them"
-    else:
-        how = f"invoke {which} via the Skill tool and follow them"
+    is_codex = getattr(cli_config, "provider", "") == "codex"
+
+    def _use(nlist: list[str]) -> str:
+        if not nlist:
+            return ("read the vendored guides under `.claude/skills/` (also listed "
+                    "in AGENTS.md) and apply them" if is_codex
+                    else "invoke any installed Agent Skills via the Skill tool and follow them")
+        if is_codex:
+            refs = ", ".join(f"`.claude/skills/{n}/SKILL.md`" for n in nlist)
+            return f"read the vendored guides ({refs} — also listed in AGENTS.md) and apply them"
+        listed = ", ".join(f"`/{n}`" for n in nlist)
+        return f"invoke the {listed} skill(s) via the Skill tool and follow them"
+
+    parts: list[str] = []
+
+    if "outcome-driver-analysis" in names:
+        parts.append(
+            "ANALYSIS METHOD: BEFORE writing any analysis code, "
+            + _use(["outcome-driver-analysis"])
+            + " to choose justified statistical methods for the outcome analysis: "
+            "explanatory-variable EDA, per-variable tests WITH effect sizes, "
+            "conditioning/confounding (Simpson's) checks, marginal screening, a "
+            "justified regression model (state the GLM-vs-mixed-effects reasoning "
+            "from the ACTUAL clustering structure — with very few clusters prefer "
+            "a fixed effect over a random effect), and fit diagnostics "
+            "(collinearity/VIF, discrimination, calibration). Adopt its "
+            "METHODOLOGY, not its file layout or report template — every output "
+            "still flows into the required result-JSON contract, and intake "
+            "answers are inferred from the data profile and the question (never "
+            "stop to ask). Keep all wording DESCRIPTIVE: takeaways carry effect "
+            "sizes + confidence intervals + direction; test statistics/p-values "
+            "belong in tables/artifacts and must NOT be phrased as significance "
+            "or confirmation verdicts — validity is adjudicated downstream."
+        )
+
+    style = [n for n in names if n != "outcome-driver-analysis"]
     roles = []
-    if "eval-chart-style" in names:
+    if "eval-chart-style" in style:
         roles.append(
             "`eval-chart-style` governs chart-TYPE choice (distribution-first: "
             "violin/ECDF/heatmap/forest/paired-slope — never a mean as a bar) and "
             "the FAIL/PASS semantic palette"
         )
-    if "nature-figure" in names:
+    if "nature-figure" in style:
         roles.append("`nature-figure` adds publication-grade matplotlib polish")
     role_line = ("; ".join(roles) + ". ") if roles else ""
-    return (
-        "\nFIGURE STYLING: Agent Skills are available — apply them BY DEFAULT to "
-        f"every plot you write under figures/: BEFORE plotting, {how}. "
+    parts.append(
+        "FIGURE STYLING: Agent Skills are available — apply them BY DEFAULT to "
+        f"every plot you write under figures/: BEFORE plotting, {_use(style)}. "
         f"{role_line}"
         "This is a non-interactive PYTHON analysis: if a skill asks you to choose "
         "a plotting backend, choose Python and proceed without pausing — never "
         "stop to ask a question. Use skills for styling only — they must not "
         "change the data, the analysis, the sandbox workflow, or the final "
-        "result JSON.\n"
+        "result JSON."
     )
+    return "\n" + "\n\n".join(parts) + "\n"

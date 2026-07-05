@@ -51,6 +51,12 @@ data = [
     "pillow>=9.0",
 ]
 viz = ["matplotlib>=3.7"]
+# Inferential stats for the outcome-driver-analysis agent skill's Python path
+# (logistic/GLM fits with real inference, VIF, calibration, ROC).
+stats = [
+    "statsmodels>=0.14",
+    "scikit-learn>=1.3",
+]
 dashboard = [
     "streamlit>=1.30",
     "pandas>=2.0",
@@ -65,6 +71,8 @@ all = [
     "inseq>=0.6",
     "nnsight>=0.3",
     "matplotlib>=3.7",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.3",
     "streamlit>=1.30",
     "pandas>=2.0",
 ]
