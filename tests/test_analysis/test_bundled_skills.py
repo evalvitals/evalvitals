@@ -34,6 +34,10 @@ def test_bundled_skill_set():
     body = (ecs / "SKILL.md").read_text(encoding="utf-8")
     assert "never" in body.lower() and "bar" in body.lower()  # the anti-mean-bar policy
     assert "#C0413B" in body  # FAIL palette locked to eval_viz_theme's
+    # Non-outcome dimensions get real color range, not endless red/blue/grey:
+    assert "#0F4D92" in body           # categorical series order present
+    assert "ramp" in body.lower()      # ordered-dimension single-hue ramp rule
+    assert "Nothing else" not in body  # the old two-colors-only lockdown is gone
 
 
 def test_skill_backends_cover_claude_agy_codex():

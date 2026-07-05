@@ -57,6 +57,25 @@ Lock these and reuse in every figure — the reader must never re-learn who is w
   `#B8BCC2`. Unknown significance defaults to grey, never green.
 - Leakage/sanity signals → muted grey `#9AA0A6`, never a "winner" color.
 
+Non-outcome dimensions get their own color logic — do NOT squeeze every panel
+into the FAIL/PASS pair plus grey:
+
+- **Categorical series** (checkpoint/model lines, object classes, several
+  signals overlaid on one axis): use this series order, in order —
+  `#0F4D92` deep blue, `#8BCF8B` green, `#B64342` red\*, `#42949E` teal,
+  `#9A4D8E` violet, `#CFCECE` neutral grey. (\*Skip the red slot whenever
+  FAIL-red already appears on the same panel — the outcome hue must stay
+  unambiguous.)
+- **Ordered dimensions** (model size 2B→4B→8B, ordered bins, dose/strength
+  ladders): ONE hue with a luminance/alpha ramp (light → dark = small →
+  large), not distinct hues — the ordering should be readable from the ramp
+  alone. E.g. three blues `#B4C0E4 → #7884B4 → #0F4D92`.
+- Precedence: semantic role colors always win — wherever the outcome appears,
+  FAIL/PASS keep their hues; the series/ramp colors are for panels sliced by
+  something other than the outcome. Heatmaps: diverging data (signed effects)
+  → Red-Blue diverging around 0; magnitude-only data → a single-hue
+  sequential ramp.
+
 Never print a raw column id (`generated_probe1_false_detection`) on an axis,
 tick, or title — use a short human alias (≤ ~12 chars) and keep the raw name in
 a caption/hover/table only.

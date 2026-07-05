@@ -1448,7 +1448,9 @@ def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
         roles.append(
             "`eval-chart-style` governs chart-TYPE choice (distribution-first: "
             "violin/ECDF/heatmap/forest/paired-slope — never a mean as a bar) and "
-            "the FAIL/PASS semantic palette"
+            "the palette: FAIL/PASS semantic hues, a categorical series order for "
+            "non-outcome dimensions, and single-hue ramps for ordered dimensions "
+            "(e.g. model sizes)"
         )
     if "nature-figure" in style:
         roles.append("`nature-figure` adds publication-grade matplotlib polish")

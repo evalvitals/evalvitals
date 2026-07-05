@@ -6,6 +6,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — eval-chart-style: color range for non-outcome dimensions
+
+- The semantic FAIL/PASS lockdown made every figure red/slate/grey, even panels
+  sliced by something other than the outcome. §1 now adds: a 6-color
+  categorical series order (from nature-figure's palette; the red slot is
+  skipped whenever FAIL-red shares the panel) for checkpoint/object/multi-signal
+  series, a single-hue luminance ramp rule for ORDERED dimensions (model size
+  2B→4B→8B, ordered bins), and heatmap guidance (diverging Red-Blue around 0
+  vs single-hue sequential). Semantic role colors still win wherever the
+  outcome appears. `_skills_hint` describes the extended palette accordingly.
+
 ### Added — outcome-driver-analysis: statistical-method skill for the analysis stage
 
 - **`outcome-driver-analysis` bundled skill** (`agent_assets/skills/…`, MIT,
