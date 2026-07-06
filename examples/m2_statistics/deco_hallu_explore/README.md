@@ -79,14 +79,47 @@ The enriched data ships with the repo, so exploring it needs no GPU:
 bash run_attn.sh        # same env overrides as run.sh (CODER_PROVIDER/CODER_MODEL/...)
 ```
 
+A real run found: within adversarial probes, focus_share is the strongest
+separator (Cohen's d≈1.3, FAIL more peaked/off-center); the same signals
+separate FAIL/PASS at every checkpoint (direction is scale-invariant, magnitude
+uneven: 2B ≫ 8B > 4B); after collinearity pruning only focus_share,
+center_offset, mean_relative_weight and edge_mass carry independent signal.
+`data_2b_attn/` is the smaller 2B-only variant whose attention scalars were
+transplanted from the diagnosis-loop's frozen M1 state (32/201 coverage —
+useful mainly as an informative-missingness case study).
+
 ## Held-out hypothesis pipeline (propose → test → fix → one report)
 
-`run_attn.sh` analyses everything in-sample. The pipeline variant splits the
-data by its `split` column and walks the full arc:
+`run_attn.sh` analyses everything in-sample. The pipeline variant is the
+**complete example**: it splits the data by its `split` column and walks the
+full propose → held-out-test → repair arc, ending in one four-tab web report.
+
+**Prerequisites**
+
+- `pip install -e ".[dashboard,viz,stats]"` (`stats` powers the
+  outcome-driver-analysis skill's regression path);
+- a local `claude` CLI on PATH (phase 1 explorer, phase 2 judge, phase 3
+  codegen all run through it);
+- phases 0-2 need **no GPU** (the enriched data ships with the repo);
+- phase 3 (surgery/fix) needs a **GPU** plus the loop example's frozen M1
+  state at
+  [`../../diagnosis_loops/deco_hallu/outputs/m1_state.pkl`](../../diagnosis_loops/deco_hallu)
+  (produce it once with that example's `python run_m1.py --device cuda`).
+
+**Run**
 
 ```bash
-bash run_attn_pipeline.sh          # SKIP_FIX=1 to stop after phase 2 (no GPU)
+cd examples/m2_statistics/deco_hallu_explore
+bash run_attn_pipeline.sh                      # full arc (phase 3 on GPU)
+SKIP_FIX=1 bash run_attn_pipeline.sh           # stop after held-out testing (no GPU)
 ```
+
+Env overrides: `CODER_MODEL` / `JUDGE_MODEL` (e.g. `claude-opus-4-8`),
+`CODER_PROVIDER` (`claude_code`/`antigravity`/`codex`), `OUT_ROOT`
+(default `outputs_pipeline`), `DEVICE` (default `cuda`), `TIMEOUT_SEC`,
+`SKIP_FIX=1`, `PY` (python interpreter for the host phases).
+
+**Phases**
 
 1. `prepare_splits.py` — explore half (365) / validate half (241);
 2. `evalvitals explore` on the explore half only — hypotheses + frozen,
@@ -106,14 +139,17 @@ each hypothesis card:
 evalvitals dashboard outputs_pipeline/1_explore
 ```
 
-A real run found: within adversarial probes, focus_share is the strongest
-separator (Cohen's d≈1.3, FAIL more peaked/off-center); the same signals
-separate FAIL/PASS at every checkpoint (direction is scale-invariant, magnitude
-uneven: 2B ≫ 8B > 4B); after collinearity pruning only focus_share,
-center_offset, mean_relative_weight and edge_mass carry independent signal.
-`data_2b_attn/` is the smaller 2B-only variant whose attention scalars were
-transplanted from the diagnosis-loop's frozen M1 state (32/201 coverage —
-useful mainly as an informative-missingness case study).
+**What a real pipeline run found** (opus-4.8 end to end): all 6 frozen
+attention-peakedness recipes replicated on the held-out half (6/6 REJECT H0);
+the judge graded the scale-moderation hypothesis *partial* (its correlational
+part held, the mechanism claim overreached) and the object-priors hypothesis
+*not_testable*; in phase 3 M5 supported the surviving hypothesis
+observationally but the M4 intervention experiment **refuted** its mechanistic
+form — and the tiered fix swept 10 candidates to find that a plain L1 prompt
+(`scan_then_decide`: scan the image region-by-region before answering) repaired
+12 hallucinations and broke 0 (paired McNemar, e=315 → REJECT H0), beating
+every L3b internals-write intervention. Correlation survived held-out;
+mechanism died under intervention; the cheapest repair won.
 
 See [`docs/m2_analysis.md`](../../../docs/m2_analysis.md) for the general
 standalone M2/M3 workflow, and
