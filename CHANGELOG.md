@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — held-out hypothesis pipeline for the explore path (deco_hallu_explore)
+
+- **Four-phase pipeline** (`run_attn_pipeline.sh`): the standalone explore
+  path gains the loop's propose→confirm→fix arc with a REAL held-out design.
+  Phase 0 `prepare_splits.py` carves the enriched data by its `split` column
+  (explore=365 / validate=241). Phase 1 runs `evalvitals explore` on the
+  explore half only (the prompt tells the agent a validate half exists and
+  demands frozen, threshold-explicit recipes). Phase 2 `test_hypotheses.py`
+  re-evaluates each candidate recipe VERBATIM on the validate half
+  (`operationalize.compile_recipe`, thresholds frozen — no re-fitting),
+  rebuilds two-group sufficient statistics, adjudicates with
+  `adjudicate_signals(split_label="held_out")` (a REJECT here is a real
+  held-out verdict, unlike phase 1's in-sample screen), then an LLM judge
+  grades each M3 hypothesis against the held-out table
+  (supported/partial/refuted/not_testable + needs_surgery routing). Phase 3
+  `run_surgery.py` hands the surviving hypotheses to the diagnosis loop's
+  repair machinery — M5 confirm → M4 surgery → tiered fix (L1→L3b) on the
+  loop example's frozen M1 batch (GPU) — and distills `fix_report.json`.
+  Artifacts (`confirm_report.json`, `fix_report.json`) land next to the
+  exploratory report for the dashboard to render.
+
 ### Changed — eval-chart-style: color range for non-outcome dimensions
 
 - The semantic FAIL/PASS lockdown made every figure red/slate/grey, even panels
