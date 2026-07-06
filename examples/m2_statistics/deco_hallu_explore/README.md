@@ -79,6 +79,33 @@ The enriched data ships with the repo, so exploring it needs no GPU:
 bash run_attn.sh        # same env overrides as run.sh (CODER_PROVIDER/CODER_MODEL/...)
 ```
 
+## Held-out hypothesis pipeline (propose → test → fix → one report)
+
+`run_attn.sh` analyses everything in-sample. The pipeline variant splits the
+data by its `split` column and walks the full arc:
+
+```bash
+bash run_attn_pipeline.sh          # SKIP_FIX=1 to stop after phase 2 (no GPU)
+```
+
+1. `prepare_splits.py` — explore half (365) / validate half (241);
+2. `evalvitals explore` on the explore half only — hypotheses + frozen,
+   threshold-explicit recipes;
+3. `test_hypotheses.py` — each recipe re-evaluated VERBATIM on the validate
+   half (`adjudicate_signals(split_label="held_out")`: a REJECT here is a real
+   held-out verdict), then an LLM judge grades every hypothesis
+   (supported / partial / refuted / not_testable + surgery routing);
+4. `run_surgery.py` — survivors go to the diagnosis loop's M5 confirm → M4 →
+   tiered fix (L1→L3b) on the loop example's frozen M1 batch (GPU).
+
+`confirm_report.json` / `fix_report.json` land next to the exploratory report;
+the dashboard then shows a fourth tab (**Held-out Verdicts & Fix**) and badges
+each hypothesis card:
+
+```bash
+evalvitals dashboard outputs_pipeline/1_explore
+```
+
 A real run found: within adversarial probes, focus_share is the strongest
 separator (Cohen's d≈1.3, FAIL more peaked/off-center); the same signals
 separate FAIL/PASS at every checkpoint (direction is scale-invariant, magnitude

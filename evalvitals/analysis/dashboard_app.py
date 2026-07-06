@@ -66,17 +66,25 @@ def main() -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    setting, analysis, hypotheses = st.tabs([
-        "1 Problem Setting",
-        "2 Exploratory Analysis",
-        "3 Hypotheses",
-    ])
-    with setting:
+    # Held-out pipeline artifacts (written by a downstream confirm/fix phase
+    # next to the exploratory report). When present, the run graduates from
+    # "proposal only" to a full propose -> held-out-test -> fix story.
+    confirm = _load_sibling_json(turn_dir, "confirm_report.json")
+    fix_report = _load_sibling_json(turn_dir, "fix_report.json")
+
+    tab_labels = ["1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses"]
+    if confirm or fix_report:
+        tab_labels.append("4 Held-out Verdicts & Fix")
+    tabs = st.tabs(tab_labels)
+    with tabs[0]:
         _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
-    with analysis:
+    with tabs[1]:
         _render_standalone_analysis(report, turn_dir, root)
-    with hypotheses:
-        _render_standalone_hypotheses(report, turn_dir)
+    with tabs[2]:
+        _render_standalone_hypotheses(report, turn_dir, confirm=confirm)
+    if confirm or fix_report:
+        with tabs[3]:
+            _render_confirm_fix_panel(confirm, fix_report)
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -978,25 +986,71 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
         _render_visual_plan(report)
 
 
-def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
-    """Panel 3: M3 hypotheses proposed from M2's takeaways — proposal only, no
-    validation (there is no confirm/test phase wired up for the standalone
-    tool). Candidate signals / suggested next steps / raw artifacts are
-    demoted into an expander below, since they're optional inputs for a
-    separate downstream pipeline, not the primary content of this tab."""
+def _load_sibling_json(turn_dir: Path, name: str) -> dict[str, Any] | None:
+    """Read a pipeline artifact JSON living next to the exploratory report;
+    None when absent or unreadable (the tab simply doesn't appear)."""
+    import json
+
+    path = Path(turn_dir) / name
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+_VERDICT_COLORS = {
+    "supported": "#0f8a5f",
+    "partial": "#b8860b",
+    "refuted": "#b42318",
+    "not_testable": "#667085",
+    "not_judged": "#667085",
+}
+
+
+def _hypothesis_verdict_lookup(confirm: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Map a hypothesis statement -> its held-out verdict record."""
+    out: dict[str, dict[str, Any]] = {}
+    for v in (confirm or {}).get("hypothesis_verdicts") or []:
+        if isinstance(v, dict) and v.get("statement"):
+            out[str(v["statement"]).strip()] = v
+    return out
+
+
+def _render_standalone_hypotheses(
+    report: dict[str, Any], turn_dir: Path, confirm: dict[str, Any] | None = None
+) -> None:
+    """Panel 3: M3 hypotheses proposed from M2's takeaways. Proposal only —
+    unless a held-out confirm phase ran (confirm_report.json), in which case
+    each card carries its held-out verdict badge. Candidate signals /
+    suggested next steps / raw artifacts are demoted into an expander below,
+    since they're optional inputs for a separate downstream pipeline, not the
+    primary content of this tab."""
+    verdicts = _hypothesis_verdict_lookup(confirm)
+    sub = (
+        "M3 — falsifiable candidate explanations proposed from the M2 takeaways "
+        "above. Each was graded against the HELD-OUT split — see the verdict "
+        "badges and tab 4 for the evidence."
+        if verdicts else
+        "M3 — falsifiable candidate explanations proposed from the "
+        "M2 takeaways above. Proposed only, not validated — there is no confirm/test "
+        "phase wired up here."
+    )
     st.markdown(
         '<div class="ev-section-head">'
         '<div class="ev-section-title">Hypotheses</div>'
-        '<div class="ev-section-sub">M3 — falsifiable candidate explanations proposed from the '
-        "M2 takeaways above. Proposed only, not validated — there is no confirm/test "
-        "phase wired up here.</div>"
+        f'<div class="ev-section-sub">{sub}</div>'
         "</div>",
         unsafe_allow_html=True,
     )
     hypotheses = [h for h in report.get("hypotheses") or [] if isinstance(h, dict) and h.get("statement")]
     if hypotheses:
         for h in hypotheses:
-            _render_standalone_hypothesis_card(h)
+            _render_standalone_hypothesis_card(
+                h, verdict=verdicts.get(str(h.get("statement", "")).strip())
+            )
     else:
         st.info(
             "No hypotheses were recorded for this report. Re-run with the CLI's M3 step "
@@ -1019,7 +1073,9 @@ def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> Non
         _render_artifacts(report, turn_dir)
 
 
-def _render_standalone_hypothesis_card(h: dict[str, Any]) -> None:
+def _render_standalone_hypothesis_card(
+    h: dict[str, Any], verdict: dict[str, Any] | None = None
+) -> None:
     basis = str(h.get("basis") or "").strip()
     test_design = str(h.get("test_design") or "").strip()
     basis_line = f'<div class="ev-signal-body">based on: {_html_escape(basis)}</div>' if basis else ""
@@ -1027,16 +1083,133 @@ def _render_standalone_hypothesis_card(h: dict[str, Any]) -> None:
         f'<div class="ev-signal-test">How this could be checked: {_html_escape(test_design)}</div>'
         if test_design else ""
     )
+    badge = reasoning_line = ""
+    if verdict:
+        v = str(verdict.get("verdict") or "not_judged")
+        color = _VERDICT_COLORS.get(v, "#667085")
+        surgery = " · routed to surgery" if verdict.get("needs_surgery") else ""
+        badge = (
+            f'<span class="ev-pill" style="border-color:{color};color:{color};">'
+            f"held-out: {_html_escape(v)}</span>"
+        )
+        reasoning = str(verdict.get("reasoning") or "").strip()
+        if reasoning:
+            reasoning_line = (
+                f'<div class="ev-signal-test">Judge: {_html_escape(reasoning)}'
+                f"{_html_escape(surgery)}</div>"
+            )
     st.markdown(
         f"""
         <div class="ev-signal">
-          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
+          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))} {badge}</div>
           {basis_line}
           {test_line}
+          {reasoning_line}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_confirm_fix_panel(
+    confirm: dict[str, Any] | None, fix_report: dict[str, Any] | None
+) -> None:
+    """Tab 4: the held-out half of the pipeline. Phase 2's frozen-recipe
+    re-adjudication + per-hypothesis judge verdicts, and phase 3's
+    M5/M4/tiered-fix outcome. Unlike the in-sample screen in tab 2, verdicts
+    here are legitimate: thresholds were frozen before this data was touched."""
+    st.markdown(
+        '<div class="ev-section-head">'
+        '<div class="ev-section-title">Held-out Verdicts &amp; Fix</div>'
+        '<div class="ev-section-sub">Recipes re-evaluated VERBATIM (thresholds frozen from the '
+        "exploration half) on a validate split the explorer never saw; hypotheses graded "
+        "against that evidence; surviving ones handed to the surgery/fix machinery.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if confirm:
+        adj = confirm.get("adjudication") or {}
+        cols = st.columns(4)
+        cols[0].metric("Validate cases", _format_int(confirm.get("n_validate_rows")))
+        cols[1].metric("FAIL in validate", _format_int(confirm.get("n_validate_fail")))
+        cols[2].metric("Signals adjudicated", _format_int(adj.get("n_host_adjudicated")))
+        cols[3].metric("Held-out rejections", _format_int(adj.get("n_rejected")))
+        st.caption(
+            f"Adjudication: {adj.get('method', 'e-BH')} at alpha={adj.get('alpha', '?')}, "
+            f"split={adj.get('split', 'held_out')} — a REJECT here is a real held-out "
+            "verdict, not the exploration half's in-sample screen."
+        )
+
+        rows = []
+        for s in confirm.get("signal_verdicts") or []:
+            if not isinstance(s, dict):
+                continue
+            rows.append({
+                "signal": display_name(s.get("display_name") or s.get("name")),
+                "status": s.get("status"),
+                "held-out verdict": ("REJECT H0" if s.get("reject") else "not rejected")
+                if s.get("status") == "adjudicated" else (s.get("reason") or "—"),
+                "fail rate (flagged)": s.get("fail_rate_flagged"),
+                "fail rate (unflagged)": s.get("fail_rate_unflagged"),
+                "effect": s.get("effect"),
+                "CI": str(s.get("ci")) if s.get("ci") is not None else "—",
+                "n": s.get("n_holdout"),
+            })
+        if rows:
+            st.markdown("#### Signal recipes on the held-out split")
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+        hyps = [v for v in confirm.get("hypothesis_verdicts") or [] if isinstance(v, dict)]
+        if hyps:
+            st.markdown("#### Hypothesis verdicts")
+            judge = confirm.get("judge") or {}
+            if judge:
+                st.caption(f"Graded by {judge.get('model', 'LLM judge')} against the held-out table.")
+            for v in hyps:
+                _render_standalone_hypothesis_card(
+                    {k: v.get(k) for k in ("statement", "basis", "test_design")}, verdict=v
+                )
+    else:
+        st.info("No confirm_report.json found — run the pipeline's phase 2 (test_hypotheses.py).")
+
+    st.markdown("---")
+    if fix_report:
+        st.markdown("#### Surgery & tiered fix (phase 3)")
+        st.caption(
+            f"Model {fix_report.get('model', '?')} · {_format_int(fix_report.get('n_cases'))} "
+            f"loop cases · full logs: {fix_report.get('logs', '—')}"
+        )
+        m5 = [m for m in fix_report.get("m5_results") or [] if isinstance(m, dict)]
+        if m5:
+            st.markdown("**M5 confirmation on the loop's evidence**")
+            st.dataframe(pd.DataFrame([{
+                "hypothesis": _truncate(str(m.get("statement", "")), 110),
+                "M5 status": m.get("status"),
+                "confidence": m.get("confidence"),
+                "grade": m.get("evidence_grade"),
+                "held-out verdict": m.get("holdout_verdict"),
+            } for m in m5]), width="stretch", hide_index=True)
+        fix = fix_report.get("fix") or {}
+        if fix.get("recommendation"):
+            st.markdown(
+                f"""
+                <div class="ev-report-answer">
+                  <div class="ev-brief-label">Fix recommendation</div>
+                  <div class="ev-report-answer-text">{_html_escape(str(fix['recommendation']))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with st.expander("Raw M4 / fix records", expanded=False):
+            if fix_report.get("m4"):
+                st.markdown("**M4 surgery**")
+                st.code(str(fix_report["m4"])[:2000])
+            if fix:
+                st.json(fix)
+    else:
+        st.info("No fix_report.json found — run the pipeline's phase 3 (run_surgery.py), "
+                "or SKIP_FIX=1 was set.")
 
 
 def _render_stat_panel(root) -> None:

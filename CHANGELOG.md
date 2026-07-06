@@ -27,6 +27,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Artifacts (`confirm_report.json`, `fix_report.json`) land next to the
   exploratory report for the dashboard to render.
 
+### Added — dashboard renders the held-out pipeline (verdicts + fix)
+
+- **Explore dashboard, tab 4** (`analysis/dashboard_app.py`): when
+  `confirm_report.json` / `fix_report.json` sit next to the exploratory
+  report, the view grows a "Held-out Verdicts & Fix" tab — validate-split
+  metrics, the frozen-recipe re-adjudication table (REJECT here is a real
+  held-out verdict, distinguished from tab 2's in-sample screen), per-
+  hypothesis judge verdict cards, the M5/M4 confirmation table, and the fix
+  recommendation. Tab 3's hypothesis cards gain held-out verdict badges
+  (supported/partial/refuted/not_testable + surgery routing); without the
+  artifacts the view is unchanged (three tabs, proposal-only wording).
+
 ### Changed — eval-chart-style: color range for non-outcome dimensions
 
 - The semantic FAIL/PASS lockdown made every figure red/slate/grey, even panels

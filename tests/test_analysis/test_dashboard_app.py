@@ -550,6 +550,93 @@ def test_analysis_phase_dashboard_recovers_proposed_hypotheses_file(tmp_path):
     assert "fallback_mode" in blob
 
 
+def _build_explore_run_with_pipeline(root, *, with_confirm=True, with_fix=True):
+    """A standalone explore output plus the held-out pipeline artifacts
+    (confirm_report.json / fix_report.json) next to the exploratory report."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "exploratory_report.json").write_text(json.dumps({
+        "ok": True,
+        "question": "what drives FAIL?",
+        "observations": ["all failures adversarial"],
+        "takeaways": [{"title": "Peaked attention rides with FAIL (d=1.3).",
+                       "chart_names": [], "table_names": [],
+                       "analysis": "focus share separates.", "caveat": ""}],
+        "hypotheses": [
+            {"statement": "Peaked attention marks hallucinations.",
+             "basis": "d=1.3 on explore half", "test_design": "re-test recipe on holdout"},
+            {"statement": "Peakedness is a downstream effect, not a cause.",
+             "basis": "cannot tell from observational data", "test_design": "surgery"},
+        ],
+        "candidate_signals": [{"name": "risky_top_signal",
+                               "recipe": {"name": "r", "kind": "expr", "expr": "focus_share >= 0.29"}}],
+        "charts": [], "plots": [], "tables": {},
+    }), encoding="utf-8")
+    if with_confirm:
+        (root / "confirm_report.json").write_text(json.dumps({
+            "phase": "holdout_confirm", "split": "held_out",
+            "n_validate_rows": 241, "n_validate_fail": 49, "alpha": 0.05,
+            "adjudication": {"method": "e-BH", "alpha": 0.05, "split": "held_out",
+                             "n_host_adjudicated": 1, "n_rejected": 1},
+            "signal_verdicts": [{"name": "risky_top_signal", "status": "adjudicated",
+                                 "reject": True, "effect": 0.45, "ci": [0.3, 0.6],
+                                 "fail_rate_flagged": 0.62, "fail_rate_unflagged": 0.17,
+                                 "n_holdout": 146}],
+            "hypothesis_verdicts": [
+                {"statement": "Peaked attention marks hallucinations.",
+                 "verdict": "supported", "reasoning": "held-out fail rate 62% vs 17%.",
+                 "needs_surgery": False},
+                {"statement": "Peakedness is a downstream effect, not a cause.",
+                 "verdict": "not_testable", "reasoning": "needs an intervention.",
+                 "needs_surgery": True},
+            ],
+            "judge": {"model": "claude-opus-4-8", "effort": "low"},
+        }), encoding="utf-8")
+    if with_fix:
+        (root / "fix_report.json").write_text(json.dumps({
+            "phase": "surgery_fix", "model": "qwen3-vl-2b-instruct", "n_cases": 201,
+            "hypotheses_in": ["Peaked attention marks hallucinations."],
+            "m5_results": [{"statement": "Peaked attention marks hallucinations.",
+                            "status": "supported", "confidence": 0.8,
+                            "evidence_grade": "B", "holdout_verdict": "supported"}],
+            "m4": "surgery summary text",
+            "fix": {"recommendation": "L2 reprompt guard reduced FP 34%->21% with no "
+                                       "present-probe regressions."},
+            "logs": "outputs_pipeline/3_surgery/logs",
+        }), encoding="utf-8")
+    return root
+
+
+def test_explore_dashboard_renders_holdout_verdicts_and_fix(tmp_path):
+    _build_explore_run_with_pipeline(tmp_path)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+        "4 Held-out Verdicts & Fix",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    # hypothesis cards carry held-out verdict badges (tab 3 and tab 4)
+    assert "held-out: supported" in blob
+    assert "held-out: not_testable" in blob
+    assert "routed to surgery" in blob
+    # the fix outcome surfaces
+    assert "Fix recommendation" in blob
+    assert "L2 reprompt guard" in blob
+    # signal table rendered
+    assert any("Signal recipes on the held-out split" in str(m.value) for m in at.markdown)
+
+
+def test_explore_dashboard_without_pipeline_artifacts_keeps_three_tabs(tmp_path):
+    _build_explore_run_with_pipeline(tmp_path, with_confirm=False, with_fix=False)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "held-out: supported" not in blob  # no badges without a confirm phase
+
+
 def test_resolve_scatter_axes_handles_real_named_and_legacy_columns():
     import pandas as pd
 
