@@ -81,10 +81,9 @@ from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
 from evalvitals.eval_agent.cli_agent import (
     AgyModel,
     ClaudeModel,
-    CliAgentConfig,
-    CliAgentResult,
     create_cli_agent,
 )
+from evalvitals.eval_agent.cli_types import CliAgentConfig, CliAgentResult
 from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
 from evalvitals.eval_agent.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
 from evalvitals.eval_agent.git_manager import ExperimentGitManager

@@ -26,19 +26,19 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import shutil
-import signal
 import subprocess
-import sys
 import tempfile
-import time
 import warnings
-from dataclasses import dataclass
 from pathlib import Path
+
+from evalvitals.eval_agent.cli_runtime import ProcessRun, SubprocessRunner, collect_py_files
+from evalvitals.eval_agent.cli_skills import CodexSkillInstaller, SkillInstaller
+from evalvitals.eval_agent.cli_transcript import RAW_OUTPUT_CAP, render_claude_stream
+from evalvitals.eval_agent.cli_types import BINARY_DEFAULTS, CliAgentConfig, CliAgentResult
 
 logger = logging.getLogger(__name__)
 
@@ -73,280 +73,6 @@ def _scan_agy_log(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-_VALID_PROVIDERS = frozenset(
-    {"llm", "claude_code", "codex", "opencode", "gemini_cli", "kimi_cli", "antigravity"}
-)
-
-_BINARY_DEFAULTS: dict[str, str] = {
-    "claude_code": "claude",
-    "codex":       "codex",
-    "opencode":    "opencode",
-    "gemini_cli":  "gemini",
-    "kimi_cli":    "kimi",
-    "antigravity": "agy",
-}
-
-
-@dataclass(frozen=True)
-class CliAgentConfig:
-    """Configuration for a CLI-based coding-agent backend.
-
-    Args:
-        provider:        Which CLI agent to use.  ``"llm"`` (default) means no
-                         CLI agent — ``ExperimentWriter`` falls back to its
-                         single-pass LLM path.
-        binary_path:     Explicit path to the CLI binary.  Auto-detected via
-                         :func:`shutil.which` when empty.
-        model:           Model-override flag forwarded to the binary (e.g.
-                         ``"sonnet"`` for Claude Code, ``"gpt-4o"`` for Codex).
-        max_budget_usd:  Spend cap forwarded to ``--max-budget-usd`` (Claude Code).
-        timeout_sec:     Hard wall-clock limit for the agent subprocess.
-        extra_args:      Additional flags appended verbatim to the CLI command.
-        skills:          Paths to Agent-Skill directories (each containing a
-                         ``SKILL.md``) to vendor into the sandbox per run, under
-                         ``<workdir>/.claude/skills/<name>/``. Claude Code / agy
-                         auto-discover skills inside an ``--add-dir`` directory.
-                         A non-empty value implies ``allow_skills=True``.
-        allow_skills:    Enable the ``Skill`` tool so the agent may invoke skills
-                         (vendored here OR installed globally in ``~/.claude/skills``).
-                         Off by default to preserve deterministic behavior.
-    """
-
-    provider: str = "llm"
-    binary_path: str = ""
-    model: str = ""
-    max_budget_usd: float = 5.0
-    timeout_sec: int = 600
-    extra_args: tuple[str, ...] = ()
-    skills: tuple[str, ...] = ()
-    allow_skills: bool = False
-
-    @property
-    def skills_enabled(self) -> bool:
-        return self.allow_skills or bool(self.skills)
-
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-
-@dataclass
-class CliAgentResult:
-    """Output of one CLI agent invocation.
-
-    Attributes:
-        files:         ``{filename: source_code}`` collected from the workdir
-                       after the agent exits.
-        provider_name: Short identifier of the provider that ran (e.g.
-                       ``"claude_code"``).
-        elapsed_sec:   Wall-clock seconds for the subprocess.
-        raw_output:    The agent's narration for the coding log.  For providers
-                       that emit a structured event stream (Claude Code's
-                       ``stream-json``) this is the **rendered coding
-                       trajectory** — assistant text, every Bash/Edit/Write/Read
-                       tool call + result, and a token/cost footer.  For the
-                       others it is the first ``_RAW_OUTPUT_CAP`` chars of stdout.
-        usage:         Token/cost usage parsed from the stream (``cost_usd``,
-                       ``num_turns``, in/out/cache tokens), or ``None`` when the
-                       provider does not report it.
-        error:         Non-``None`` when the agent timed out or exited non-zero
-                       **and** produced no files.
-    """
-
-    files: dict[str, str]
-    provider_name: str
-    elapsed_sec: float
-    raw_output: str = ""
-    usage: dict | None = None
-    error: str | None = None
-
-    @property
-    def ok(self) -> bool:
-        return self.error is None and bool(self.files)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _to_text(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
-
-
-def _collect_py_files(workdir: Path) -> dict[str, str]:
-    """Read all ``.py`` files from *workdir* (flat, non-recursive).
-
-    Skips files whose names start with ``_codex_`` or ``_agent_`` (provider-
-    internal temp files).  Mirrors the ARC pattern exactly.
-    """
-    files: dict[str, str] = {}
-    for pyfile in sorted(workdir.glob("*.py")):
-        if pyfile.name.startswith(("_codex_", "_agent_")):
-            continue
-        try:
-            files[pyfile.name] = pyfile.read_text(encoding="utf-8")
-        except OSError:
-            pass
-    return files
-
-
-# ---------------------------------------------------------------------------
-# Coding-trajectory rendering (Claude Code stream-json)
-# ---------------------------------------------------------------------------
-
-# Bounds so a single huge tool body (e.g. a Write of a 10k-line file, whose
-# content is echoed in the tool_use input) can't blow the transcript up.  The
-# file itself is still captured verbatim from the workdir; the transcript only
-# needs the *action*, not a second copy of the payload.
-_RAW_OUTPUT_CAP = 3000          # base providers: first N chars of stdout
-_STREAM_TEXT_CAP = 4000         # per assistant-text / final-result block
-_STREAM_TOOL_INPUT_CAP = 2000   # per tool_use input render
-_STREAM_TOOL_RESULT_CAP = 2000  # per tool_result render
-_STREAM_FALLBACK_CAP = 8000     # non-JSON stdout (degraded)
-
-
-def _trunc(text: str, cap: int) -> str:
-    text = text or ""
-    if len(text) <= cap:
-        return text
-    return text[:cap] + f"\n… [truncated {len(text) - cap} chars]"
-
-
-def _blocks_text(content: object) -> str:
-    """Flatten a message ``content`` (str, or list of content blocks) to text."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        out: list[str] = []
-        for b in content:
-            if isinstance(b, dict) and b.get("type") == "text":
-                out.append(str(b.get("text", "")))
-            elif isinstance(b, str):
-                out.append(b)
-        return "\n".join(out)
-    return ""
-
-
-def _summarise_tool_use(name: str, inp: object) -> str:
-    """One-line summary of a tool_use input (no huge file bodies inline)."""
-    if not isinstance(inp, dict):
-        return _trunc(str(inp), _STREAM_TOOL_INPUT_CAP)
-    if name == "Bash":
-        return _trunc("$ " + str(inp.get("command", "")), _STREAM_TOOL_INPUT_CAP)
-    if name == "Write":
-        return f"write {inp.get('file_path', '?')} ({len(str(inp.get('content', '')))} chars)"
-    if name == "Edit":
-        return f"edit {inp.get('file_path', '?')}"
-    if name == "Read":
-        span = ""
-        if inp.get("offset") is not None or inp.get("limit") is not None:
-            span = f" [offset={inp.get('offset')}, limit={inp.get('limit')}]"
-        return f"read {inp.get('file_path', '?')}{span}"
-    try:
-        return _trunc(json.dumps(inp, default=str), _STREAM_TOOL_INPUT_CAP)
-    except (TypeError, ValueError):
-        return _trunc(str(inp), _STREAM_TOOL_INPUT_CAP)
-
-
-def _render_claude_stream(stdout: str) -> tuple[str, dict | None]:
-    """Render ``claude -p --output-format stream-json`` into a readable
-    coding trajectory and pull out token/cost usage.
-
-    Each stream line is one JSON event: ``system/init`` (session header),
-    ``assistant`` (text + ``tool_use`` calls), ``user`` (``tool_result``), and a
-    final ``result`` (usage + cost).  Returns ``(transcript, usage)``.  When the
-    output is not the expected JSON stream (older CLI, error before the stream
-    starts, …) it falls back to the raw stdout so output is never lost.
-    """
-    events: list[dict] = []
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except (ValueError, TypeError):
-            continue
-        if isinstance(ev, dict):
-            events.append(ev)
-    if not events:
-        return _trunc(stdout, _STREAM_FALLBACK_CAP), None
-
-    out: list[str] = []
-    usage: dict | None = None
-    tool_seq: dict[str, int] = {}   # tool_use_id -> step number
-    step = 0
-
-    for ev in events:
-        etype = ev.get("type")
-        if etype == "system" and ev.get("subtype") == "init":
-            tools = ev.get("tools") or []
-            out.append(
-                f"=== session start | model={ev.get('model', '?')} | "
-                f"tools={','.join(map(str, tools)) if tools else '-'} ==="
-            )
-        elif etype == "assistant":
-            for b in (ev.get("message") or {}).get("content") or []:
-                if not isinstance(b, dict):
-                    continue
-                if b.get("type") == "text":
-                    txt = str(b.get("text", "")).strip()
-                    if txt:
-                        out.append(f"[assistant] {_trunc(txt, _STREAM_TEXT_CAP)}")
-                elif b.get("type") == "tool_use":
-                    step += 1
-                    if b.get("id"):
-                        tool_seq[b["id"]] = step
-                    name = str(b.get("name", "tool"))
-                    out.append(f"[#{step} {name}] {_summarise_tool_use(name, b.get('input'))}")
-        elif etype == "user":
-            for b in (ev.get("message") or {}).get("content") or []:
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    n = tool_seq.get(b.get("tool_use_id"), "?")
-                    err = " ERROR" if b.get("is_error") else ""
-                    out.append(
-                        f"[#{n} result{err}] "
-                        f"{_trunc(_blocks_text(b.get('content')), _STREAM_TOOL_RESULT_CAP)}"
-                    )
-        elif etype == "result":
-            u = ev.get("usage") or {}
-            usage = {
-                "cost_usd": ev.get("total_cost_usd"),
-                "num_turns": ev.get("num_turns"),
-                "duration_ms": ev.get("duration_ms"),
-                "input_tokens": u.get("input_tokens"),
-                "output_tokens": u.get("output_tokens"),
-                "cache_read_input_tokens": u.get("cache_read_input_tokens"),
-                "cache_creation_input_tokens": u.get("cache_creation_input_tokens"),
-            }
-            final = str(ev.get("result", "")).strip()
-            if final:
-                out.append(f"[final] {_trunc(final, _STREAM_TEXT_CAP)}")
-            cost = usage["cost_usd"]
-            dur = ev.get("duration_ms")
-            out.append(
-                "=== result: {sub} | turns={t} | cost={c} | "
-                "tokens in={i} out={o} (cache_read={cr}) | wall={w} ===".format(
-                    sub=ev.get("subtype", "?"),
-                    t=usage["num_turns"],
-                    c=(f"${cost:.4f}" if isinstance(cost, (int, float)) else "n/a"),
-                    i=usage["input_tokens"], o=usage["output_tokens"],
-                    cr=usage["cache_read_input_tokens"],
-                    w=(f"{dur / 1000:.1f}s" if isinstance(dur, (int, float)) else "?"),
-                )
-            )
-
-    return "\n".join(out), usage
-
-
-# ---------------------------------------------------------------------------
 # Base class
 # ---------------------------------------------------------------------------
 
@@ -376,25 +102,17 @@ class _CliAgentBase:
         self._skills: list[str] = list(skills or [])
         # A vendored skill is useless unless the Skill tool is permitted.
         self._allow_skills: bool = bool(allow_skills or self._skills)
+        self._runner = SubprocessRunner()
+        self._skill_installer = self._make_skill_installer(self._skills)
+
+    def _make_skill_installer(self, skills: list[str]) -> SkillInstaller:
+        return SkillInstaller(skills)
 
     def _install_skills(self, workdir: Path) -> None:
         """Vendor each configured skill dir into ``<workdir>/.claude/skills/<name>/``
         so an ``--add-dir <workdir>`` agent auto-discovers it. Best-effort; a
         missing or unreadable skill is skipped, never fatal."""
-        if not self._skills:
-            return
-        import shutil
-
-        dest_root = workdir / ".claude" / "skills"
-        for src in self._skills:
-            src_path = Path(src)
-            if not src_path.exists() or not src_path.is_dir():
-                logger.warning("skill dir not found, skipping: %s", src)
-                continue
-            try:
-                shutil.copytree(src_path, dest_root / src_path.name, dirs_exist_ok=True)
-            except OSError as exc:
-                logger.warning("could not vendor skill %s: %s", src, exc)
+        self._skill_installer.install(workdir)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -420,10 +138,8 @@ class _CliAgentBase:
         cmd = self._build_cmd(prompt, workdir)
         logger.debug("%s: running %s", self._provider_name, cmd[0])
 
-        rc, stdout, stderr, elapsed, timed_out = self._run_subprocess(
-            cmd, workdir, timeout
-        )
-        return self._build_result(workdir, rc, stdout, stderr, elapsed, timed_out)
+        run = self._run_subprocess(cmd, workdir, timeout)
+        return self._build_result(workdir, run)
 
     # ------------------------------------------------------------------
     # Overridden by each provider
@@ -435,98 +151,42 @@ class _CliAgentBase:
     def _postprocess_output(self, stdout: str) -> tuple[str, dict | None]:
         """Render stdout for the coding log and extract usage if available.
 
-        Base implementation keeps the historical behaviour — the first
-        ``_RAW_OUTPUT_CAP`` chars of stdout, no usage.  Providers that emit a
+        Base implementation keeps the historical behaviour: the first
+        ``RAW_OUTPUT_CAP`` chars of stdout, no usage. Providers that emit a
         structured event stream (Claude Code's ``stream-json``) override this to
         render the full tool-call trajectory and pull out token/cost usage.
         """
-        return stdout[:_RAW_OUTPUT_CAP], None
+        return stdout[:RAW_OUTPUT_CAP], None
 
     # ------------------------------------------------------------------
     # Core subprocess runner  (mirrors ARC's _run_subprocess)
     # ------------------------------------------------------------------
 
-    def _run_subprocess(
-        self,
-        cmd: list[str],
-        workdir: Path,
-        timeout_sec: int,
-    ) -> tuple[int, str, str, float, bool]:
+    def _run_subprocess(self, cmd: list[str], workdir: Path, timeout_sec: int) -> ProcessRun:
         """Run *cmd* in *workdir*; return ``(rc, stdout, stderr, elapsed, timed_out)``."""
-        workdir.mkdir(parents=True, exist_ok=True)
-        start = time.monotonic()
-        timed_out = False
-
-        # The agent writes + runs scripts that `import evalvitals`; its bash
-        # `python`/`python3` must be the SAME interpreter running this loop (the
-        # project venv), not whatever base `python` is on PATH. The loop is
-        # often started as `/path/.venv/bin/python run.py` WITHOUT activating
-        # the venv, so prepend the running interpreter's bin dir to PATH.
-        agent_env = {**os.environ}
-        bindir = os.path.dirname(sys.executable)
-        if bindir:
-            agent_env["PATH"] = bindir + os.pathsep + agent_env.get("PATH", "")
-
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=workdir,
-            env=agent_env,
-            start_new_session=True,  # own process group for clean kill
-        )
-
-        try:
-            stdout_bytes, stderr_bytes = proc.communicate(timeout=timeout_sec)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            # SIGTERM first; give it 5 s; then SIGKILL
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except OSError:
-                pass
-            try:
-                stdout_bytes, stderr_bytes = proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except OSError:
-                    pass
-                stdout_bytes, stderr_bytes = b"", b""
-                try:
-                    proc.communicate(timeout=5)
-                except Exception:  # noqa: BLE001
-                    pass
-
-        elapsed = time.monotonic() - start
-        rc = proc.returncode if proc.returncode is not None else -1
-        return rc, _to_text(stdout_bytes), _to_text(stderr_bytes), elapsed, timed_out
+        return self._runner.run(cmd, workdir, timeout_sec)
 
     def _build_result(
         self,
         workdir: Path,
-        rc: int,
-        stdout: str,
-        stderr: str,
-        elapsed: float,
-        timed_out: bool,
+        run: ProcessRun,
     ) -> CliAgentResult:
-        files = _collect_py_files(workdir)
+        files = collect_py_files(workdir)
         error: str | None = None
-        if timed_out:
-            error = f"[TIMEOUT] agent killed after {elapsed:.0f}s"
-        elif rc != 0 and not files:
-            error = f"Exited {rc}: {stderr[:500]}"
+        if run.timed_out:
+            error = f"[TIMEOUT] agent killed after {run.elapsed_sec:.0f}s"
+        elif run.returncode != 0 and not files:
+            error = f"Exited {run.returncode}: {run.stderr[:500]}"
 
-        raw_output, usage = self._postprocess_output(stdout)
+        raw_output, usage = self._postprocess_output(run.stdout)
         logger.debug(
             "%s: rc=%d files=%s elapsed=%.1fs timed_out=%s",
-            self._provider_name, rc, list(files), elapsed, timed_out,
+            self._provider_name, run.returncode, list(files), run.elapsed_sec, run.timed_out,
         )
         return CliAgentResult(
             files=files,
             provider_name=self._provider_name,
-            elapsed_sec=elapsed,
+            elapsed_sec=run.elapsed_sec,
             raw_output=raw_output,
             usage=usage,
             error=error,
@@ -570,7 +230,7 @@ class ClaudeCodeAgent(_CliAgentBase):
         return cmd
 
     def _postprocess_output(self, stdout: str) -> tuple[str, dict | None]:
-        return _render_claude_stream(stdout)
+        return render_claude_stream(stdout)
 
 
 class CodexAgent(_CliAgentBase):
@@ -581,36 +241,8 @@ class CodexAgent(_CliAgentBase):
 
     _provider_name = "codex"
 
-    def _install_skills(self, workdir: Path) -> None:
-        """Vendor skill dirs, then surface them via the workdir's ``AGENTS.md``.
-
-        Codex has no ``Skill`` tool and does not scan ``.claude/skills/``, but it
-        does read ``AGENTS.md`` in its working directory — so the same vendored
-        ``SKILL.md`` files are exposed as read-and-apply guides."""
-        super()._install_skills(workdir)
-        names = [Path(s).name for s in self._skills if Path(s).is_dir()]
-        if not names:
-            return
-        section = "\n".join([
-            "# Agent Skills (vendored)",
-            "",
-            "Before writing any figure/plot, read and APPLY these style guides:",
-            "",
-            *[f"- `.claude/skills/{n}/SKILL.md`" for n in names],
-            "",
-            "They govern chart-type choice and styling only — never change the "
-            "data, the analysis, or the required output format.",
-            "",
-        ])
-        agents_md = workdir / "AGENTS.md"
-        try:
-            existing = (
-                agents_md.read_text(encoding="utf-8").rstrip() + "\n\n"
-                if agents_md.exists() else ""
-            )
-            agents_md.write_text(existing + section, encoding="utf-8")
-        except OSError as exc:
-            logger.warning("could not write AGENTS.md for codex skills: %s", exc)
+    def _make_skill_installer(self, skills: list[str]) -> SkillInstaller:
+        return CodexSkillInstaller(skills)
 
     def _build_cmd(self, prompt: str, workdir: Path) -> list[str]:
         cmd = [
@@ -1014,12 +646,12 @@ def create_cli_agent(config: CliAgentConfig) -> _CliAgentBase:
             f"Valid: {sorted(_PROVIDER_CLASSES)}"
         )
 
-    binary = config.binary_path or shutil.which(_BINARY_DEFAULTS[provider]) or ""
+    binary = config.binary_path or shutil.which(BINARY_DEFAULTS[provider]) or ""
     if not binary:
         raise RuntimeError(
             f"CLI agent binary for {provider!r} not found in PATH. "
-            f"Install '{_BINARY_DEFAULTS[provider]}' or pass "
-            f"CliAgentConfig(binary_path='/path/to/{_BINARY_DEFAULTS[provider]}')."
+            f"Install '{BINARY_DEFAULTS[provider]}' or pass "
+            f"CliAgentConfig(binary_path='/path/to/{BINARY_DEFAULTS[provider]}')."
         )
 
     return cls(
