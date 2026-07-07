@@ -6,6 +6,88 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — held-out hypothesis pipeline for the explore path (deco_hallu_explore)
+
+- **Four-phase pipeline** (`run_attn_pipeline.sh`): the standalone explore
+  path gains the loop's propose→confirm→fix arc with a REAL held-out design.
+  Phase 0 `prepare_splits.py` carves the enriched data by its `split` column
+  (explore=365 / validate=241). Phase 1 runs `evalvitals explore` on the
+  explore half only (the prompt tells the agent a validate half exists and
+  demands frozen, threshold-explicit recipes). Phase 2 `test_hypotheses.py`
+  re-evaluates each candidate recipe VERBATIM on the validate half
+  (`operationalize.compile_recipe`, thresholds frozen — no re-fitting),
+  rebuilds two-group sufficient statistics, adjudicates with
+  `adjudicate_signals(split_label="held_out")` (a REJECT here is a real
+  held-out verdict, unlike phase 1's in-sample screen), then an LLM judge
+  grades each M3 hypothesis against the held-out table
+  (supported/partial/refuted/not_testable + needs_surgery routing). Phase 3
+  `run_surgery.py` hands the surviving hypotheses to the diagnosis loop's
+  repair machinery — M5 confirm → M4 surgery → tiered fix (L1→L3b) on the
+  loop example's frozen M1 batch (GPU) — and distills `fix_report.json`.
+  Artifacts (`confirm_report.json`, `fix_report.json`) land next to the
+  exploratory report for the dashboard to render.
+
+### Changed — pipeline report: separate tabs + reader-facing repair digest
+
+- **Tab layout** (`analysis/dashboard_app.py`): tab 3 is back to the PURE
+  proposal view (identical to a plain explore run — verdict badges no longer
+  bleed into it); held-out verdicts get their own tab 4 and the fix its own
+  tab 5 (numbering adapts when only one artifact exists).
+- **Fix tab digest**: `run_surgery.py` now distills the run logger's fix event
+  (the single source of truth) into structured `fix_report.json` fields —
+  per-candidate tier/name/repaired/broke/coverage/e-value/verdict, `best`,
+  `ebh_survivors`, `refine_signal` — plus a `--distill-only` mode to rebuild
+  the report from existing logs without a GPU rerun. The dashboard renders a
+  deterministic narrative ("What was repaired, and how well": 🏆 winner with
+  paired-flip counts and e-value, family-corrected survivors, a prompt-level
+  vs internals-write contrast when the data shows one, and the refine signal)
+  above the full candidates table.
+
+### Added — dashboard renders the held-out pipeline (verdicts + fix)
+
+- **Explore dashboard, tab 4** (`analysis/dashboard_app.py`): when
+  `confirm_report.json` / `fix_report.json` sit next to the exploratory
+  report, the view grows a "Held-out Verdicts & Fix" tab — validate-split
+  metrics, the frozen-recipe re-adjudication table (REJECT here is a real
+  held-out verdict, distinguished from tab 2's in-sample screen), per-
+  hypothesis judge verdict cards, the M5/M4 confirmation table, and the fix
+  recommendation. Tab 3's hypothesis cards gain held-out verdict badges
+  (supported/partial/refuted/not_testable + surgery routing); without the
+  artifacts the view is unchanged (three tabs, proposal-only wording).
+
+### Changed — eval-chart-style: color range for non-outcome dimensions
+
+- The semantic FAIL/PASS lockdown made every figure red/slate/grey, even panels
+  sliced by something other than the outcome. §1 now adds: a 6-color
+  categorical series order (from nature-figure's palette; the red slot is
+  skipped whenever FAIL-red shares the panel) for checkpoint/object/multi-signal
+  series, a single-hue luminance ramp rule for ORDERED dimensions (model size
+  2B→4B→8B, ordered bins), and heatmap guidance (diverging Red-Blue around 0
+  vs single-hue sequential). Semantic role colors still win wherever the
+  outcome appears. `_skills_hint` describes the extended palette accordingly.
+
+### Added — outcome-driver-analysis: statistical-method skill for the analysis stage
+
+- **`outcome-driver-analysis` bundled skill** (`agent_assets/skills/…`, MIT,
+  vendored from the user's project skill): a disciplined 8-step protocol for
+  explaining a binary outcome — explanatory-variable EDA, per-variable tests
+  WITH effect sizes, conditioning/Simpson's checks, marginal screening, a
+  *justified* regression model (GLM vs mixed-effects reasoned from the actual
+  clustering), fit diagnostics (VIF, ROC/AUC, calibration), and result
+  visualization. Fills the standalone explore pipeline's biggest gap: marginal
+  descriptive contrasts were never adjusted for confounders or the
+  checkpoint-clustering structure.
+- **Staged skill hint** (`explorer._skills_hint`): the prompt now stages skills
+  by function — ANALYSIS METHOD (invoke outcome-driver-analysis BEFORE writing
+  any analysis code) then FIGURE STYLING (eval-chart-style/nature-figure BEFORE
+  plotting). Guards keep the sandbox contract intact: adopt the methodology,
+  not the skill's file layout; infer intake from the data profile (never ask);
+  takeaways stay DESCRIPTIVE (effect sizes + CIs; test statistics live in
+  tables/artifacts, never phrased as significance verdicts — validity remains
+  the confirm phase's job); with very few clusters prefer a fixed effect.
+- Env: `statsmodels` + `scikit-learn` added to the venv (the protocol's Python
+  path needs real inference; the repo previously had numpy-only stats).
+
 ### Added — figure skills on by default across claude/agy/codex
 
 - **`eval-chart-style` bundled skill** (`agent_assets/skills/eval-chart-style/`):

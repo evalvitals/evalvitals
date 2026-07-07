@@ -15,15 +15,18 @@ Run each example from its own directory, for example:
 cd examples/analyzer_demos/qwen_attention && docker compose up
 cd examples/m2_statistics/synthetic_yield_explore && docker compose up
 cd examples/m2_statistics/deco_hallu_explore && docker compose up
-cd examples/m2_statistics/deco_hallu_explore && bash run_attn.sh   # attention-enriched variant (no GPU)
+cd examples/m2_statistics/deco_hallu_explore && bash run_attn.sh          # attention-enriched variant (no GPU)
+cd examples/m2_statistics/deco_hallu_explore && bash run_attn_pipeline.sh # full held-out pipeline (SKIP_FIX=1 → no GPU)
 cd examples/diagnosis_loops/qwen_loop_agy && docker compose up
 ```
 
-The `deco_hallu_explore` example has two runnable variants: the raw probe data
-(categorical signals only), and `run_attn.sh` on `data_attn_full/` — the same
+The `deco_hallu_explore` example has three runnable variants: the raw probe
+data (categorical signals only); `run_attn.sh` on `data_attn_full/` — the same
 606 cases enriched with per-case attention-geometry scalars for all three
 checkpoints (committed with the repo), which unlocks FAIL/PASS distribution
-views and cross-checkpoint attention comparisons. See its
+views and cross-checkpoint attention comparisons; and `run_attn_pipeline.sh` —
+the complete propose → held-out test (frozen recipes + LLM judge) →
+surgery/tiered-fix arc ending in one four-tab web report. See its
 [README](m2_statistics/deco_hallu_explore/README.md).
 
 For the general standalone exploratory analysis workflow, see
