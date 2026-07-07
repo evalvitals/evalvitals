@@ -27,6 +27,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Artifacts (`confirm_report.json`, `fix_report.json`) land next to the
   exploratory report for the dashboard to render.
 
+### Changed — pipeline report: separate tabs + reader-facing repair digest
+
+- **Tab layout** (`analysis/dashboard_app.py`): tab 3 is back to the PURE
+  proposal view (identical to a plain explore run — verdict badges no longer
+  bleed into it); held-out verdicts get their own tab 4 and the fix its own
+  tab 5 (numbering adapts when only one artifact exists).
+- **Fix tab digest**: `run_surgery.py` now distills the run logger's fix event
+  (the single source of truth) into structured `fix_report.json` fields —
+  per-candidate tier/name/repaired/broke/coverage/e-value/verdict, `best`,
+  `ebh_survivors`, `refine_signal` — plus a `--distill-only` mode to rebuild
+  the report from existing logs without a GPU rerun. The dashboard renders a
+  deterministic narrative ("What was repaired, and how well": 🏆 winner with
+  paired-flip counts and e-value, family-corrected survivors, a prompt-level
+  vs internals-write contrast when the data shows one, and the refine signal)
+  above the full candidates table.
+
 ### Added — dashboard renders the held-out pipeline (verdicts + fix)
 
 - **Explore dashboard, tab 4** (`analysis/dashboard_app.py`): when

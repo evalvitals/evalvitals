@@ -31,6 +31,52 @@ LOOP_DIR = HERE.parent.parent / "diagnosis_loops" / "deco_hallu"
 sys.path.insert(0, str(LOOP_DIR))  # reuse the loop example's setup helpers
 
 
+_ATTEMPT_FIELDS = ("tier", "name", "kind", "source", "n_pairs", "n_fixed",
+                   "n_broken", "coverage", "e_value", "effect", "reject",
+                   "verdict", "summary")
+
+
+def _lean_fix(event: dict) -> dict:
+    """Distill the logged fix event into the dashboard-facing structure:
+    keep the per-candidate outcome numbers, drop payloads/case-id lists."""
+    refine = event.get("refine_signal")
+    if isinstance(refine, dict):
+        refine = {"kind": refine.get("kind"),
+                  "candidate": refine.get("candidate"),
+                  "n_helped": len(refine.get("helped_cases") or []),
+                  "n_hurt": len(refine.get("hurt_cases") or []),
+                  "message": refine.get("message")}
+    return {
+        "max_tier": event.get("max_tier"),
+        "fixed": event.get("fixed"),
+        "best": event.get("best"),
+        "ebh_survivors": event.get("ebh_survivors") or [],
+        "repair_rounds": event.get("repair_rounds"),
+        "recommendation": event.get("recommendation"),
+        "refine_signal": refine,
+        "routed": event.get("routed") or [],
+        "attempted": [
+            {k: a.get(k) for k in _ATTEMPT_FIELDS}
+            for a in event.get("attempted") or [] if isinstance(a, dict)
+        ],
+    }
+
+
+def _fix_event_from_logs(run_dir: Path) -> dict | None:
+    log = Path(run_dir) / "run_log.jsonl"
+    if not log.exists():
+        return None
+    event = None
+    for line in log.read_text(encoding="utf-8").splitlines():
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if o.get("event") == "fix":
+            event = o  # keep the last fix event
+    return event
+
+
 def _to_loop_hypotheses(verdicts: list[dict], *, model_key: str,
                         include_refuted: bool = False) -> list:
     from evalvitals.eval_agent.hypothesis import hypothesis_from_dict
@@ -66,9 +112,24 @@ def main() -> None:
     ap.add_argument("--include-refuted", action="store_true")
     ap.add_argument("--max-validation-cases", type=int, default=0,
                     help="cap fix-validation cases (0 = full batch)")
+    ap.add_argument("--distill-only", action="store_true",
+                    help="no GPU run: rebuild fix_report.json's fix section from "
+                         "an existing 3_surgery/logs/run_log.jsonl")
     args = ap.parse_args()
 
     root = Path(args.pipeline_root)
+
+    if args.distill_only:
+        report_path = root / "1_explore" / "fix_report.json"
+        prior = json.loads(report_path.read_text()) if report_path.exists() else {}
+        event = _fix_event_from_logs(root / "3_surgery" / "logs")
+        if event is None:
+            raise SystemExit("no fix event found in 3_surgery/logs/run_log.jsonl")
+        prior["fix"] = _lean_fix(event)
+        report_path.write_text(json.dumps(prior, indent=1))
+        print(f"re-distilled fix section -> {report_path}")
+        return
+
     confirm_path = root / "1_explore" / "confirm_report.json"
     if not confirm_path.exists():
         raise SystemExit(f"{confirm_path} missing — run test_hypotheses.py first")
@@ -153,18 +214,15 @@ def main() -> None:
         m4_summary = str(m4)
         print("m4:", m4_summary[:300])
         outcome = loop.run_fix(report, cases)
-        fix_summary = {
-            "recommendation": str(getattr(outcome, "recommendation", "") or ""),
-            "raw": str(outcome)[:2000],
-        }
-        for attr in ("tier", "fixed", "n_fixed", "n_broken", "validated"):
-            if hasattr(outcome, attr):
-                try:
-                    fix_summary[attr] = json.loads(json.dumps(getattr(outcome, attr), default=str))
-                except Exception:
-                    fix_summary[attr] = str(getattr(outcome, attr))
-        print("fix outcome:", fix_summary.get("recommendation") or fix_summary["raw"][:200])
+        print("fix outcome: best=", getattr(outcome, "best", None), "fixed=",
+              getattr(outcome, "fixed", None))
     run_logger.close()
+
+    if not args.skip_m4:
+        # The run logger's fix event is the single source of truth for the
+        # per-candidate outcomes; distill the dashboard-facing structure from it.
+        event = _fix_event_from_logs(run_logger.run_dir)
+        fix_summary = _lean_fix(event) if event else {"note": "no fix event logged"}
 
     out = {
         "phase": "surgery_fix",
