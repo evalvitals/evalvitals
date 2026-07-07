@@ -88,6 +88,69 @@ center_offset, mean_relative_weight and edge_mass carry independent signal.
 transplanted from the diagnosis-loop's frozen M1 state (32/201 coverage —
 useful mainly as an informative-missingness case study).
 
+## Held-out hypothesis pipeline (propose → test → fix → one report)
+
+`run_attn.sh` analyses everything in-sample. The pipeline variant is the
+**complete example**: it splits the data by its `split` column and walks the
+full propose → held-out-test → repair arc, ending in one four-tab web report.
+
+**Prerequisites**
+
+- `pip install -e ".[dashboard,viz,stats]"` (`stats` powers the
+  outcome-driver-analysis skill's regression path);
+- a local `claude` CLI on PATH (phase 1 explorer, phase 2 judge, phase 3
+  codegen all run through it);
+- phases 0-2 need **no GPU** (the enriched data ships with the repo);
+- phase 3 (surgery/fix) needs a **GPU** plus the loop example's frozen M1
+  state at
+  [`../../diagnosis_loops/deco_hallu/outputs/m1_state.pkl`](../../diagnosis_loops/deco_hallu)
+  (produce it once with that example's `python run_m1.py --device cuda`).
+
+**Run**
+
+```bash
+cd examples/m2_statistics/deco_hallu_explore
+bash run_attn_pipeline.sh                      # full arc (phase 3 on GPU)
+SKIP_FIX=1 bash run_attn_pipeline.sh           # stop after held-out testing (no GPU)
+```
+
+Env overrides: `CODER_MODEL` / `JUDGE_MODEL` (e.g. `claude-opus-4-8`),
+`CODER_PROVIDER` (`claude_code`/`antigravity`/`codex`), `OUT_ROOT`
+(default `outputs_pipeline`), `DEVICE` (default `cuda`), `TIMEOUT_SEC`,
+`SKIP_FIX=1`, `PY` (python interpreter for the host phases).
+
+**Phases**
+
+1. `prepare_splits.py` — explore half (365) / validate half (241);
+2. `evalvitals explore` on the explore half only — hypotheses + frozen,
+   threshold-explicit recipes;
+3. `test_hypotheses.py` — each recipe re-evaluated VERBATIM on the validate
+   half (`adjudicate_signals(split_label="held_out")`: a REJECT here is a real
+   held-out verdict), then an LLM judge grades every hypothesis
+   (supported / partial / refuted / not_testable + surgery routing);
+4. `run_surgery.py` — survivors go to the diagnosis loop's M5 confirm → M4 →
+   tiered fix (L1→L3b) on the loop example's frozen M1 batch (GPU).
+
+`confirm_report.json` / `fix_report.json` land next to the exploratory report;
+the dashboard then shows a fourth tab (**Held-out Verdicts & Fix**) and badges
+each hypothesis card:
+
+```bash
+evalvitals dashboard outputs_pipeline/1_explore
+```
+
+**What a real pipeline run found** (opus-4.8 end to end): all 6 frozen
+attention-peakedness recipes replicated on the held-out half (6/6 REJECT H0);
+the judge graded the scale-moderation hypothesis *partial* (its correlational
+part held, the mechanism claim overreached) and the object-priors hypothesis
+*not_testable*; in phase 3 M5 supported the surviving hypothesis
+observationally but the M4 intervention experiment **refuted** its mechanistic
+form — and the tiered fix swept 10 candidates to find that a plain L1 prompt
+(`scan_then_decide`: scan the image region-by-region before answering) repaired
+12 hallucinations and broke 0 (paired McNemar, e=315 → REJECT H0), beating
+every L3b internals-write intervention. Correlation survived held-out;
+mechanism died under intervention; the cheapest repair won.
+
 See [`docs/m2_analysis.md`](../../../docs/m2_analysis.md) for the general
 standalone M2/M3 workflow, and
 [`examples/diagnosis_loops/deco_hallu/README.md`](../../diagnosis_loops/deco_hallu/README.md)

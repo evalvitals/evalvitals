@@ -127,6 +127,38 @@ def test_skills_hint_codex_points_at_vendored_files():
     assert "Skill tool and follow" not in hint
 
 
+def test_skills_hint_stages_analysis_before_figures():
+    """outcome-driver-analysis is a methodology skill: the hint must direct it
+    at the pre-code analysis stage, keep the descriptive contract, and still
+    carry the figure-styling stage for the styling skills."""
+    cfg = CliAgentConfig(
+        provider="claude_code",
+        skills=("/x/outcome-driver-analysis", "/x/eval-chart-style", "/x/nature-figure"),
+    )
+    hint = _skills_hint(cfg)
+    # staged: analysis method first, figure styling after
+    assert "ANALYSIS METHOD" in hint and "FIGURE STYLING" in hint
+    assert hint.index("ANALYSIS METHOD") < hint.index("FIGURE STYLING")
+    assert "BEFORE writing any analysis code" in hint
+    # descriptive-contract + non-interactive + layout guards
+    assert "must NOT be phrased as significance" in hint
+    assert "never stop to ask" in hint or "never\nstop to ask" in hint
+    assert "not its file layout" in hint
+    # few-clusters guidance (3 checkpoints -> fixed effect, not random)
+    assert "fixed effect" in hint
+    # the styling stage names only the styling skills
+    styling = hint[hint.index("FIGURE STYLING"):]
+    assert "/eval-chart-style" in styling and "/nature-figure" in styling
+    assert "/outcome-driver-analysis" not in styling
+
+
+def test_skills_hint_without_analysis_skill_has_no_analysis_stage():
+    cfg = CliAgentConfig(provider="claude_code", skills=("/x/nature-figure",))
+    hint = _skills_hint(cfg)
+    assert "ANALYSIS METHOD" not in hint
+    assert "FIGURE STYLING" in hint
+
+
 # ---------------------------------------------------------------------------
 # codex delivery: vendored skills surfaced through the workdir's AGENTS.md
 # ---------------------------------------------------------------------------

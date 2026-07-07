@@ -1,4 +1,6 @@
 outputs*/
 data/
 data_images_all/
+data_attn_explore/
+data_attn_validate/
 __pycache__/

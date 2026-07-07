@@ -66,17 +66,34 @@ def main() -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    setting, analysis, hypotheses = st.tabs([
-        "1 Problem Setting",
-        "2 Exploratory Analysis",
-        "3 Hypotheses",
-    ])
-    with setting:
+    # Held-out pipeline artifacts (written by a downstream confirm/fix phase
+    # next to the exploratory report). When present, the run graduates from
+    # "proposal only" to a full propose -> held-out-test -> fix story.
+    confirm = _load_sibling_json(turn_dir, "confirm_report.json")
+    fix_report = _load_sibling_json(turn_dir, "fix_report.json")
+
+    tab_labels = ["1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses"]
+    if confirm:
+        tab_labels.append(f"{len(tab_labels) + 1} Held-out Verdicts")
+    if fix_report:
+        tab_labels.append(f"{len(tab_labels) + 1} Fix")
+    tabs = st.tabs(tab_labels)
+    with tabs[0]:
         _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
-    with analysis:
+    with tabs[1]:
         _render_standalone_analysis(report, turn_dir, root)
-    with hypotheses:
+    with tabs[2]:
+        # Tab 3 stays the PURE proposal view (same as a plain explore run);
+        # verdicts live in their own tab so proposal and validation never blur.
         _render_standalone_hypotheses(report, turn_dir)
+    next_tab = 3
+    if confirm:
+        with tabs[next_tab]:
+            _render_holdout_panel(confirm)
+        next_tab += 1
+    if fix_report:
+        with tabs[next_tab]:
+            _render_fix_panel(fix_report)
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -978,18 +995,43 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
         _render_visual_plan(report)
 
 
+def _load_sibling_json(turn_dir: Path, name: str) -> dict[str, Any] | None:
+    """Read a pipeline artifact JSON living next to the exploratory report;
+    None when absent or unreadable (the tab simply doesn't appear)."""
+    import json
+
+    path = Path(turn_dir) / name
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+_VERDICT_COLORS = {
+    "supported": "#0f8a5f",
+    "partial": "#b8860b",
+    "refuted": "#b42318",
+    "not_testable": "#667085",
+    "not_judged": "#667085",
+}
+
+
 def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> None:
-    """Panel 3: M3 hypotheses proposed from M2's takeaways — proposal only, no
-    validation (there is no confirm/test phase wired up for the standalone
-    tool). Candidate signals / suggested next steps / raw artifacts are
-    demoted into an expander below, since they're optional inputs for a
-    separate downstream pipeline, not the primary content of this tab."""
+    """Panel 3: M3 hypotheses proposed from M2's takeaways — the PURE proposal
+    view (identical whether or not a downstream confirm phase ran; held-out
+    verdicts get their own tab). Candidate signals / suggested next steps /
+    raw artifacts are demoted into an expander below, since they're optional
+    inputs for a separate downstream pipeline, not the primary content of
+    this tab."""
     st.markdown(
         '<div class="ev-section-head">'
         '<div class="ev-section-title">Hypotheses</div>'
         '<div class="ev-section-sub">M3 — falsifiable candidate explanations proposed from the '
-        "M2 takeaways above. Proposed only, not validated — there is no confirm/test "
-        "phase wired up here.</div>"
+        "M2 takeaways above. Proposed only, not validated here — held-out "
+        "verdicts, if any, live in their own tab.</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1019,7 +1061,9 @@ def _render_standalone_hypotheses(report: dict[str, Any], turn_dir: Path) -> Non
         _render_artifacts(report, turn_dir)
 
 
-def _render_standalone_hypothesis_card(h: dict[str, Any]) -> None:
+def _render_standalone_hypothesis_card(
+    h: dict[str, Any], verdict: dict[str, Any] | None = None
+) -> None:
     basis = str(h.get("basis") or "").strip()
     test_design = str(h.get("test_design") or "").strip()
     basis_line = f'<div class="ev-signal-body">based on: {_html_escape(basis)}</div>' if basis else ""
@@ -1027,16 +1071,239 @@ def _render_standalone_hypothesis_card(h: dict[str, Any]) -> None:
         f'<div class="ev-signal-test">How this could be checked: {_html_escape(test_design)}</div>'
         if test_design else ""
     )
+    badge = reasoning_line = ""
+    if verdict:
+        v = str(verdict.get("verdict") or "not_judged")
+        color = _VERDICT_COLORS.get(v, "#667085")
+        surgery = " · routed to surgery" if verdict.get("needs_surgery") else ""
+        badge = (
+            f'<span class="ev-pill" style="border-color:{color};color:{color};">'
+            f"held-out: {_html_escape(v)}</span>"
+        )
+        reasoning = str(verdict.get("reasoning") or "").strip()
+        if reasoning:
+            reasoning_line = (
+                f'<div class="ev-signal-test">Judge: {_html_escape(reasoning)}'
+                f"{_html_escape(surgery)}</div>"
+            )
     st.markdown(
         f"""
         <div class="ev-signal">
-          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
+          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))} {badge}</div>
           {basis_line}
           {test_line}
+          {reasoning_line}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_holdout_panel(confirm: dict[str, Any]) -> None:
+    """Held-out Verdicts tab: phase 2's frozen-recipe re-adjudication + the
+    per-hypothesis judge verdicts. Unlike the in-sample screen in tab 2,
+    verdicts here are legitimate: thresholds were frozen before this data was
+    touched."""
+    st.markdown(
+        '<div class="ev-section-head">'
+        '<div class="ev-section-title">Held-out Verdicts</div>'
+        '<div class="ev-section-sub">Recipes re-evaluated VERBATIM (thresholds frozen from the '
+        "exploration half) on a validate split the explorer never saw; hypotheses graded "
+        "against that evidence.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    adj = confirm.get("adjudication") or {}
+    cols = st.columns(4)
+    cols[0].metric("Validate cases", _format_int(confirm.get("n_validate_rows")))
+    cols[1].metric("FAIL in validate", _format_int(confirm.get("n_validate_fail")))
+    cols[2].metric("Signals adjudicated", _format_int(adj.get("n_host_adjudicated")))
+    cols[3].metric("Held-out rejections", _format_int(adj.get("n_rejected")))
+    st.caption(
+        f"Adjudication: {adj.get('method', 'e-BH')} at alpha={adj.get('alpha', '?')}, "
+        f"split={adj.get('split', 'held_out')} — a REJECT here is a real held-out "
+        "verdict, not the exploration half's in-sample screen."
+    )
+
+    rows = []
+    for s in confirm.get("signal_verdicts") or []:
+        if not isinstance(s, dict):
+            continue
+        rows.append({
+            "signal": display_name(s.get("display_name") or s.get("name")),
+            "status": s.get("status"),
+            "held-out verdict": ("REJECT H0" if s.get("reject") else "not rejected")
+            if s.get("status") == "adjudicated" else (s.get("reason") or "—"),
+            "fail rate (flagged)": s.get("fail_rate_flagged"),
+            "fail rate (unflagged)": s.get("fail_rate_unflagged"),
+            "effect": s.get("effect"),
+            "CI": str(s.get("ci")) if s.get("ci") is not None else "—",
+            "n": s.get("n_holdout"),
+        })
+    if rows:
+        st.markdown("#### Signal recipes on the held-out split")
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    hyps = [v for v in confirm.get("hypothesis_verdicts") or [] if isinstance(v, dict)]
+    if hyps:
+        st.markdown("#### Hypothesis verdicts")
+        judge = confirm.get("judge") or {}
+        if judge:
+            st.caption(f"Graded by {judge.get('model', 'LLM judge')} against the held-out table.")
+        for v in hyps:
+            _render_standalone_hypothesis_card(
+                {k: v.get(k) for k in ("statement", "basis", "test_design")}, verdict=v
+            )
+
+
+def _fmt_e(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fix_narrative(fix: dict[str, Any]) -> list[str]:
+    """Deterministic reader-facing digest of the repair sweep: the winner, the
+    family-corrected survivors, a prompt-level vs internals-write contrast when
+    the data shows one, and the refine signal. Built from the structured
+    `attempted` list so it stays faithful to the paired-statistics record."""
+    attempted = [a for a in fix.get("attempted") or [] if isinstance(a, dict)]
+    if not attempted:
+        return []
+    lines: list[str] = []
+    by_name = {str(a.get("name")): a for a in attempted}
+
+    best = by_name.get(str(fix.get("best")))
+    if best:
+        outcome = "REJECT H0 [fixed]" if best.get("reject") else str(best.get("verdict"))
+        lines.append(
+            f"🏆 **Winner — {best.get('tier')} `{best.get('name')}`**: repaired "
+            f"{best.get('n_fixed')} case(s), broke {best.get('n_broken')}, "
+            f"e-value {_fmt_e(best.get('e_value'))} → {outcome}."
+        )
+
+    survivors = [str(n) for n in fix.get("ebh_survivors") or []]
+    if survivors:
+        parts = []
+        for name in survivors:
+            a = by_name.get(name)
+            parts.append(
+                f"`{name}` ({a.get('tier')}: {a.get('n_fixed')} fixed / "
+                f"{a.get('n_broken')} broken, e={_fmt_e(a.get('e_value'))})"
+                if a else f"`{name}`"
+            )
+        lines.append("Survived e-BH across the whole candidate family: " + "; ".join(parts) + ".")
+
+    def _group_best(prefixes: tuple[str, ...]):
+        group = [a for a in attempted if str(a.get("tier", "")).startswith(prefixes)]
+        return max(group, key=lambda a: float(a.get("e_value") or 0.0), default=None)
+
+    prompt_best = _group_best(("L1", "L2"))
+    internals_best = _group_best(("L3",))
+    if prompt_best and internals_best:
+        if prompt_best.get("reject") and not internals_best.get("reject"):
+            lines.append(
+                f"Prompt/input-level repairs (L1/L2) beat internals-write interventions: the "
+                f"best L3 candidate `{internals_best.get('name')}` reached only "
+                f"e={_fmt_e(internals_best.get('e_value'))} ({internals_best.get('verdict')}) vs "
+                f"e={_fmt_e(prompt_best.get('e_value'))} for `{prompt_best.get('name')}`."
+            )
+        elif internals_best.get("reject") and not prompt_best.get("reject"):
+            lines.append(
+                f"Internals-write interventions beat prompt-level repairs: "
+                f"`{internals_best.get('name')}` e={_fmt_e(internals_best.get('e_value'))} vs best "
+                f"prompt candidate e={_fmt_e(prompt_best.get('e_value'))}."
+            )
+
+    refine = fix.get("refine_signal")
+    if isinstance(refine, dict) and refine.get("message"):
+        lines.append(f"Refine signal: {refine['message']}")
+    return lines
+
+
+def _render_fix_panel(fix_report: dict[str, Any]) -> None:
+    """Fix tab: phase 3's surgery context (M5/M4) and the tiered repair sweep —
+    what was attempted at each tier, with the paired McNemar / e-value verdict
+    per candidate, summarized for the reader before the full table."""
+    st.markdown(
+        '<div class="ev-section-head">'
+        '<div class="ev-section-title">Fix — surgery &amp; tiered repair</div>'
+        '<div class="ev-section-sub">Repair candidates from prompt templates (L1) through '
+        "input specs (L2) to internals writes (L3a/L3b), each validated pairwise against "
+        "the unmodified baseline (McNemar + e-value; e-BH across the family; no-free-lunch "
+        "on present-object probes).</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Model {fix_report.get('model', '?')} · {_format_int(fix_report.get('n_cases'))} "
+        f"loop cases · full logs: {fix_report.get('logs', '—')}"
+    )
+
+    m5 = [m for m in fix_report.get("m5_results") or [] if isinstance(m, dict)]
+    if m5:
+        st.markdown("#### Surgery context — M5 confirmation")
+        st.dataframe(pd.DataFrame([{
+            "hypothesis": _truncate(str(m.get("statement", "")), 110),
+            "M5 status": m.get("status"),
+            "confidence": m.get("confidence"),
+            "grade": m.get("evidence_grade"),
+            "held-out verdict": m.get("holdout_verdict"),
+        } for m in m5]), width="stretch", hide_index=True)
+
+    fix = fix_report.get("fix") or {}
+    narrative = _fix_narrative(fix)
+    if narrative:
+        st.markdown("#### What was repaired, and how well")
+        for line in narrative:
+            st.markdown(f"- {line}")
+
+    attempted = [a for a in fix.get("attempted") or [] if isinstance(a, dict)]
+    if attempted:
+        best_name = str(fix.get("best"))
+        rows = [{
+            "": "🏆" if str(a.get("name")) == best_name else "",
+            "tier": a.get("tier"),
+            "candidate": a.get("name"),
+            "kind": a.get("kind"),
+            "repaired": a.get("n_fixed"),
+            "broke": a.get("n_broken"),
+            "coverage": a.get("coverage"),
+            "e-value": a.get("e_value"),
+            "verdict": a.get("verdict"),
+        } for a in attempted]
+        rows.sort(key=lambda r: (str(r["tier"]), -float(r["e-value"] or 0.0)))
+        st.markdown("#### All repair candidates")
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.caption(
+            '"repaired/broke" are paired flips vs the unmodified baseline over the same '
+            "cases; a candidate is `fixed` only when its e-value survives e-BH across "
+            "every candidate tried (the correction for best-of-N selection)."
+        )
+
+    rec = fix.get("recommendation")
+    if rec:
+        rec_text = (
+            f"escalate to {rec.get('recommend_tier')}: {rec.get('reason', '')}"
+            if isinstance(rec, dict) else str(rec)
+        )
+        st.markdown(
+            f"""
+            <div class="ev-report-answer">
+              <div class="ev-brief-label">Recommendation</div>
+              <div class="ev-report-answer-text">{_html_escape(rec_text)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("Raw M4 / fix records", expanded=False):
+        if fix_report.get("m4"):
+            st.markdown("**M4 surgery**")
+            st.code(str(fix_report["m4"])[:2000])
+        if fix:
+            st.json(fix)
 
 
 def _render_stat_panel(root) -> None:
