@@ -42,7 +42,7 @@ from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
 

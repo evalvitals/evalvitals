@@ -67,7 +67,7 @@ if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
     from evalvitals.eval_agent.stages.stats_tool_generator import (
         GeneratedStatsTool,

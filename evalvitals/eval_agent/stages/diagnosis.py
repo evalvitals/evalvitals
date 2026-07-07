@@ -433,7 +433,7 @@ def _default_judge() -> "Model":
     import shutil
 
     if shutil.which("agy"):
-        from evalvitals.eval_agent.cli_agent import AgyModel
+        from evalvitals.eval_agent.models import AgyModel
         return AgyModel()
 
     if os.getenv("GEMINI_API_KEY"):

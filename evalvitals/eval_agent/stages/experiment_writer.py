@@ -68,7 +68,7 @@ class ExperimentWriterConfig:
 
     To use a CLI coding agent for M4 instead of the single-pass LLM::
 
-        from evalvitals.eval_agent.cli_agent import CliAgentConfig
+        from evalvitals.eval_agent.cli_types import CliAgentConfig
         cfg = ExperimentWriterConfig(
             cli_agent=CliAgentConfig(provider="claude_code", model="sonnet"),
         )
@@ -513,7 +513,7 @@ class ExperimentWriter:
         # CLI agent dispatch (unchanged from previous implementation)
         cli_cfg = self._cfg.cli_agent
         if cli_cfg is None:
-            from evalvitals.eval_agent.cli_agent import CliAgentConfig
+            from evalvitals.eval_agent.cli_types import CliAgentConfig
             cli_cfg = CliAgentConfig()
         if cli_cfg.provider != "llm":
             return self._cli_write_and_run(

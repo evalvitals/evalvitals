@@ -78,11 +78,6 @@ from evalvitals.analysis.profile import (
     profile_stats_input,
 )
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
-from evalvitals.eval_agent.cli_agent import (
-    AgyModel,
-    ClaudeModel,
-    create_cli_agent,
-)
 from evalvitals.eval_agent.cli_types import CliAgentConfig, CliAgentResult
 from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
 from evalvitals.eval_agent.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
@@ -109,6 +104,7 @@ from evalvitals.eval_agent.loop import (
     VLDiagnoseLoop,
     VLDiagnoseReport,
 )
+from evalvitals.eval_agent.models import AgyModel, ClaudeModel
 from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
@@ -117,6 +113,7 @@ from evalvitals.eval_agent.preregister import (
     PreregistrationLog,
     Split,
 )
+from evalvitals.eval_agent.providers import create_cli_agent
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_context import RunContext
 from evalvitals.eval_agent.run_logger import RUN_LOG_SCHEMA_VERSION, RunLogger

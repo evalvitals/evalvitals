@@ -81,7 +81,7 @@ from evalvitals.stats.evalue import evalue_bernoulli
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch, FailureCase
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
     from evalvitals.eval_agent.hypothesis import Hypothesis
     from evalvitals.eval_agent.run_context import Trial
 

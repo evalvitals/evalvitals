@@ -374,7 +374,8 @@ def _write_run_py_via_agent(
     model: str,
     timeout: int,
 ) -> None:
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig, create_cli_agent
+    from evalvitals.eval_agent.cli_agent import create_cli_agent
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
     prompt = _AGENT_PROMPT_TEMPLATE.format(
         description=description,

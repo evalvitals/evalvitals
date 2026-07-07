@@ -26,7 +26,7 @@ from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
 from evalvitals.analysis.explorer import RECORDS_FILENAME, ExploratoryAnalysisAgent
 from evalvitals.analysis.hypothesis_agent import HypothesisAgent
-from evalvitals.eval_agent.cli_agent import CliAgentConfig
+from evalvitals.eval_agent.cli_types import CliAgentConfig
 from evalvitals.viz.renderer import render_chart_specs
 
 
