@@ -70,3 +70,37 @@ def test_skill_policy_is_not_embedded_in_explorer_or_provider_adapters():
     assert "def skills_hint" in (EVAL_AGENT / "skills" / "prompt_policy.py").read_text(
         encoding="utf-8"
     )
+
+
+def test_stage_prompt_templates_live_in_prompt_modules():
+    prompt_modules = {
+        "case_discovery.py",
+        "diagnosis.py",
+        "experiment_writer.py",
+        "fix_agent.py",
+        "hypothesis_tester.py",
+        "nl_runner.py",
+        "probe_agent.py",
+        "probe_generator.py",
+        "stats_agent.py",
+        "stats_tool_generator.py",
+        "whitebox_probe_generator.py",
+    }
+    assert prompt_modules <= {p.name for p in (EVAL_AGENT / "prompts").glob("*.py")}
+
+    offenders: list[str] = []
+    for path in (EVAL_AGENT / "stages").glob("*.py"):
+        tree = _tree(path)
+        for node in tree.body:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                text = value.value
+                if len(text) > 250 and any(
+                    marker in text
+                    for marker in ("You are", "Return ONLY", "Reply with ONLY")
+                ):
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+
+    assert offenders == []
