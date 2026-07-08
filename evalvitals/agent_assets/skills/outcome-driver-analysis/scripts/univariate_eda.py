@@ -18,12 +18,11 @@ Usage:
 import argparse
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from scipy import stats
-import statsmodels.api as sm
 import statsmodels.formula.api as smf
+from scipy import stats
 
 
 def infer_variable_types(df: pd.DataFrame, variables: list[str]) -> dict[str, str]:

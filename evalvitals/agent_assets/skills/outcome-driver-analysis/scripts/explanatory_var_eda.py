@@ -18,9 +18,9 @@ import argparse
 import itertools
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
 def infer_variable_types(df: pd.DataFrame, variables: list[str]) -> dict[str, str]:
