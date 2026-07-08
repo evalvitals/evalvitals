@@ -13,8 +13,11 @@ Top-level (shared / orchestration):
   loop.py              AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
   run_logger.py        RunLogger — per-cycle JSONL log + artifact sink
   hypothesis.py        Hypothesis, HypothesisStatus, serialization helpers
-  cli_agent.py         CliAgentConfig, create_cli_agent — shared CLI coding agent
-                         (agy / codex); any stage can use this to launch experiments
+  cli_agent.py         compatibility facade for historical CLI imports
+  providers/           CLI coding-provider adapters and registry
+  models/              CLI-backed judge model wrappers (agy / Claude Code)
+  codegen/             shared code-generation runner used by stages
+  skills/              skill resolution, installation, and prompt policy
   store.py             Store / InMemoryStore / JsonlStore — persistent memory
   orchestrator.py      thin facade over the loop (pre-registered A/B)
   ab_runner.py         A/B execution across prompting strategies

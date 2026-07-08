@@ -43,5 +43,7 @@ M5 — Hypothesis testing (statistical + protocol consistency gate)
 
 Cross-stage shared types (top level, not in this package):
   hypothesis.py   Hypothesis, HypothesisStatus   used by M3, M4, M5
-  cli_agent.py    CliAgentConfig, create_cli_agent  shared CLI coding agent (agy/codex)
+  codegen/        CodegenRunner   shared CLI code-generation orchestration
+  providers/      CLI coding-provider adapters (agy/codex/claude/etc.)
+  models/         CLI-backed judge model wrappers
 """
