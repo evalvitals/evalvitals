@@ -374,8 +374,8 @@ def _write_run_py_via_agent(
     model: str,
     timeout: int,
 ) -> None:
-    from evalvitals.eval_agent.cli_agent import create_cli_agent
     from evalvitals.eval_agent.cli_types import CliAgentConfig
+    from evalvitals.eval_agent.codegen import CodegenRunner
 
     prompt = _AGENT_PROMPT_TEMPLATE.format(
         description=description,
@@ -387,15 +387,18 @@ def _write_run_py_via_agent(
         model=model,
         timeout_sec=timeout,
     )
-    agent = create_cli_agent(cfg)
-    result = agent.run(prompt, workdir=path.parent)
+    result = CodegenRunner(cfg).write_code(
+        prompt,
+        workdir=path.parent,
+        preferred_filenames=("run.py",),
+    )
 
     if not result.ok:
         raise RuntimeError(
             f"CLI agent ({provider}) failed to generate run.py: {result.error}"
         )
 
-    generated = result.files.get("run.py") or next(iter(result.files.values()), None)
+    generated = result.code
     if generated is None:
         raise RuntimeError(
             f"CLI agent ({provider}) produced no .py files in {path.parent}"

@@ -1374,8 +1374,6 @@ class ExperimentWriter:
         sandbox: Any,
         cli_cfg: Any,
     ) -> ExperimentWriterResult:
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
-
         self._log_event(f"CLI path: provider={cli_cfg.provider!r}")
         workdir = getattr(sandbox, "workdir", Path(tempfile.mkdtemp(prefix="evalvitals_cli_")))
 
@@ -1400,9 +1398,14 @@ class ExperimentWriter:
             hypothesis, model_context, self._cfg.exec_fix_timeout_sec,
             n_images=_n_images,
         )
-        cli = create_cli_agent(cli_cfg)
-        self._log_event(f"  invoking {cli._provider_name!r}")
-        cli_result = cli.run(prompt=prompt, workdir=workdir, timeout_sec=cli_cfg.timeout_sec)
+        from evalvitals.eval_agent.codegen import CodegenRunner
+
+        self._log_event(f"  invoking {cli_cfg.provider!r}")
+        cli_result = CodegenRunner(cli_cfg).run(
+            prompt=prompt,
+            workdir=workdir,
+            timeout_sec=cli_cfg.timeout_sec,
+        )
         # The agent's stdout is its narration / coding trajectory while it
         # writes and self-repairs the script — keep it for the coding log.
         cli_raw_output = cli_result.raw_output

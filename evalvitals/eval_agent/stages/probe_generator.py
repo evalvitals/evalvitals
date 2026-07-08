@@ -236,22 +236,19 @@ class ProbeGenerator:
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str) -> str:
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
+        from evalvitals.eval_agent.codegen import CodegenRunner
 
         prompt = self._build_prompt(need, fenced=False)
         self._last_prompt = prompt
-        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
-        res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
-        self._last_raw = res.raw_output
-        self._last_usage = res.usage
-        if not res.ok:
-            return ""
-        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
-        if not py_files:
-            return ""
-        if "probe.py" in py_files:
-            return py_files["probe.py"]
-        return max(py_files.values(), key=len)
+        result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
+            prompt,
+            workdir=Path(self._sandbox.workdir),
+            timeout_sec=self._timeout_sec,
+            preferred_filenames=("probe.py",),
+        )
+        self._last_raw = result.raw_output
+        self._last_usage = result.usage
+        return result.code
 
     def _build_prompt(self, need: str, *, fenced: bool) -> str:
         return _GENERATE_PROMPT.format(

@@ -269,24 +269,21 @@ class StatsToolGenerator:
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str, inp: StatsInput) -> str:
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
+        from evalvitals.eval_agent.codegen import CodegenRunner
 
         prompt = self._build_prompt(need, inp, fenced=False)
         self._last_prompt = prompt
-        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
-        res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
-        self._last_raw = res.raw_output
-        self._last_usage = res.usage
-        if not res.ok:
-            logger.debug("CLI codegen produced no files (%s)", res.error)
-            return ""
-        # Prefer a stats_tool.py; otherwise the largest .py the agent wrote.
-        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
-        if not py_files:
-            return ""
-        if "stats_tool.py" in py_files:
-            return py_files["stats_tool.py"]
-        return max(py_files.values(), key=len)
+        result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
+            prompt,
+            workdir=Path(self._sandbox.workdir),
+            timeout_sec=self._timeout_sec,
+            preferred_filenames=("stats_tool.py",),
+        )
+        self._last_raw = result.raw_output
+        self._last_usage = result.usage
+        if not result.code:
+            logger.debug("CLI codegen produced no files (%s)", result.error)
+        return result.code
 
     def _build_prompt(self, need: str, inp: StatsInput, *, fenced: bool) -> str:
         return _GENERATE_PROMPT.format(

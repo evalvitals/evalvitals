@@ -134,11 +134,14 @@ class HypothesisAgent:
 
     def _generate(self, prompt: str) -> str:
         if self._cli_config is not None and self._cli_config.provider != "llm":
-            from evalvitals.eval_agent.cli_agent import create_cli_agent
+            from evalvitals.eval_agent.codegen import CodegenRunner
 
-            agent = create_cli_agent(self._cli_config)
             with tempfile.TemporaryDirectory(prefix="evalvitals_m3_") as tmp:
-                res = agent.run(prompt, workdir=Path(tmp), timeout_sec=self._timeout_sec)
+                res = CodegenRunner(self._cli_config).run(
+                    prompt,
+                    workdir=Path(tmp),
+                    timeout_sec=self._timeout_sec,
+                )
                 return res.raw_output or ""
         return str(self._judge.generate(prompt))  # type: ignore[union-attr]
 

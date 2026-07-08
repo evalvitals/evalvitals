@@ -943,19 +943,17 @@ class FixAgent:
     ) -> "tuple[str, str]":
         from pathlib import Path
 
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
+        from evalvitals.eval_agent.codegen import CodegenRunner
 
         workdir = Path(self._workdir(trial))
-        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
-        res = agent.run(prompt, workdir=workdir,
-                        timeout_sec=self._cli_config.timeout_sec)  # type: ignore[union-attr]
-        self._last_usage = res.usage
-        if not res.ok:
-            return "", res.raw_output
-        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
-        if "pipeline.py" in py_files:
-            return py_files["pipeline.py"], res.raw_output
-        return (max(py_files.values(), key=len) if py_files else ""), res.raw_output
+        result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
+            prompt,
+            workdir=workdir,
+            timeout_sec=self._cli_config.timeout_sec,  # type: ignore[union-attr]
+            preferred_filenames=("pipeline.py",),
+        )
+        self._last_usage = result.usage
+        return result.code, result.raw_output
 
     def _workdir(self, trial: "Trial | None" = None) -> str:
         """Sandbox workdir for a coded run.

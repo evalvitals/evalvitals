@@ -792,18 +792,16 @@ class ExploratoryAnalysisAgent:
         return _extract_code(raw_text), raw_text
 
     def _run_cli_writer(self, prompt: str) -> tuple[str, str]:
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
+        from evalvitals.eval_agent.codegen import CodegenRunner
 
-        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
-        res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
-        if not res.ok:
-            return "", res.raw_output or (res.error or "")
-        if "analysis.py" in res.files:
-            return res.files["analysis.py"], res.raw_output
-        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
-        if not py_files:
-            return "", res.raw_output
-        return max(py_files.values(), key=len), res.raw_output
+        result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
+            prompt,
+            workdir=Path(self._sandbox.workdir),
+            timeout_sec=self._timeout_sec,
+            preferred_filenames=("analysis.py",),
+            include_error_in_raw=True,
+        )
+        return result.code, result.raw_output
 
 
 def _records_to_rows(records: Any) -> list[dict[str, Any]]:
