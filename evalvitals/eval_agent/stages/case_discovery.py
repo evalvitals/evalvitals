@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from evalvitals.core.case import CaseBatch, FailureCase, Label
+from evalvitals.eval_agent.prompts.case_discovery import _JUDGE_PROMPT
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
@@ -19,31 +20,6 @@ if TYPE_CHECKING:
 
 
 ScoreFn = Callable[[FailureCase, str], Label | bool | str]
-
-
-_JUDGE_PROMPT = """\
-You are scoring one model answer for an evaluation case.
-
-Experiment protocol:
-{protocol}
-
-Success criteria:
-{success_criteria}
-
-Prompt:
-{prompt}
-
-Expected answer or rubric:
-{expected}
-
-Observed model answer:
-{observed}
-
-Return a JSON object:
-{{"label": "PASS|FAIL|UNKNOWN", "reason": "one concise sentence"}}
-
-Use PASS only when the observed answer satisfies the expected answer/rubric under
-the success criteria."""
 
 
 @dataclass
