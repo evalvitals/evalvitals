@@ -244,14 +244,17 @@ class ExploratoryAnalysisAgent:
         # ones (eval-chart-style, nature-figure, evalvitals-report-ui) so agent
         # figures follow the house chart-type policy without per-caller wiring.
         if use_bundled_skills and cli_config is not None and not cli_config.skills:
-            from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
+            from evalvitals.eval_agent.skills.resolver import resolve_skill_paths
 
-            if cli_config.provider in SKILL_BACKENDS:
-                bundled = tuple(bundled_skill_paths())
-                if bundled:
-                    from dataclasses import replace
+            bundled = resolve_skill_paths(
+                provider=cli_config.provider,
+                explicit=(),
+                use_bundled=True,
+            )
+            if bundled:
+                from dataclasses import replace
 
-                    cli_config = replace(cli_config, skills=bundled, allow_skills=True)
+                cli_config = replace(cli_config, skills=bundled, allow_skills=True)
         self._cli_config = cli_config
         self._sandbox = sandbox or ExperimentSandbox(cleanup=False)
         self._timeout_sec = timeout_sec

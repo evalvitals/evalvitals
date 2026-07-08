@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
+from evalvitals.eval_agent.skills.prompt_policy import fences_hint, skills_hint
 
 RECORDS_FILENAME = "records.json"  # also read by explore_run.py / dashboard_app.py
 _RESULT_MARKER = "EXPLORATORY_RESULT_JSON="
@@ -318,92 +315,5 @@ GENERATE_PROMPT_RECORDS = _GENERATE_PROMPT_RECORDS
 GENERATE_PROMPT_RAW_FOLDER = _GENERATE_PROMPT_RAW_FOLDER
 REPAIR_PROMPT = _REPAIR_PROMPT
 
-def _fences_hint(cli_config: "CliAgentConfig | None") -> str:
-    if cli_config is not None and cli_config.provider != "llm":
-        return ", written to a file named analysis.py"
-    return " inside a ```python code block"
-
-
-def _skills_hint(cli_config: "CliAgentConfig | None") -> str:
-    """Prompt addendum steering the agent to APPLY the available Agent Skills
-    (default-on, not optional). Empty unless skills are enabled on the backend.
-
-    Two staged blocks, matching the skills' functional division of labor:
-    an ANALYSIS METHOD block (outcome-driver-analysis — consulted BEFORE any
-    analysis code is written, to pick justified statistical methods) and a
-    FIGURE STYLING block (eval-chart-style / nature-figure — consulted BEFORE
-    plotting). Skills style/inform the agent-authored analysis and
-    ``figures/*.png`` only; the host-rendered ``charts`` (spec+CSV) stay
-    deterministic and unstyled.
-
-    claude/agy invoke skills via the ``Skill`` tool; codex has no such tool, so
-    it is pointed at the vendored ``.claude/skills/<name>/SKILL.md`` files (also
-    listed in the workdir's ``AGENTS.md``)."""
-    if cli_config is None or not getattr(cli_config, "skills_enabled", False):
-        return ""
-    from pathlib import Path as _P
-
-    names = [_P(s).name for s in (cli_config.skills or [])]
-    is_codex = getattr(cli_config, "provider", "") == "codex"
-
-    def _use(nlist: list[str]) -> str:
-        if not nlist:
-            return ("read the vendored guides under `.claude/skills/` (also listed "
-                    "in AGENTS.md) and apply them" if is_codex
-                    else "invoke any installed Agent Skills via the Skill tool and follow them")
-        if is_codex:
-            refs = ", ".join(f"`.claude/skills/{n}/SKILL.md`" for n in nlist)
-            return f"read the vendored guides ({refs} — also listed in AGENTS.md) and apply them"
-        listed = ", ".join(f"`/{n}`" for n in nlist)
-        return f"invoke the {listed} skill(s) via the Skill tool and follow them"
-
-    parts: list[str] = []
-
-    if "outcome-driver-analysis" in names:
-        parts.append(
-            "ANALYSIS METHOD: BEFORE writing any analysis code, "
-            + _use(["outcome-driver-analysis"])
-            + " to choose justified statistical methods for the outcome analysis: "
-            "explanatory-variable EDA, per-variable tests WITH effect sizes, "
-            "conditioning/confounding (Simpson's) checks, marginal screening, a "
-            "justified regression model (state the GLM-vs-mixed-effects reasoning "
-            "from the ACTUAL clustering structure — with very few clusters prefer "
-            "a fixed effect over a random effect), and fit diagnostics "
-            "(collinearity/VIF, discrimination, calibration). Adopt its "
-            "METHODOLOGY, not its file layout or report template — every output "
-            "still flows into the required result-JSON contract, and intake "
-            "answers are inferred from the data profile and the question (never "
-            "stop to ask). Keep all wording DESCRIPTIVE: takeaways carry effect "
-            "sizes + confidence intervals + direction; test statistics/p-values "
-            "belong in tables/artifacts and must NOT be phrased as significance "
-            "or confirmation verdicts — validity is adjudicated downstream."
-        )
-
-    style = [n for n in names if n != "outcome-driver-analysis"]
-    roles = []
-    if "eval-chart-style" in style:
-        roles.append(
-            "`eval-chart-style` governs chart-TYPE choice (distribution-first: "
-            "violin/ECDF/heatmap/forest/paired-slope — never a mean as a bar) and "
-            "the palette: FAIL/PASS semantic hues, a categorical series order for "
-            "non-outcome dimensions, and single-hue ramps for ordered dimensions "
-            "(e.g. model sizes)"
-        )
-    if "nature-figure" in style:
-        roles.append("`nature-figure` adds publication-grade matplotlib polish")
-    role_line = ("; ".join(roles) + ". ") if roles else ""
-    parts.append(
-        "FIGURE STYLING: Agent Skills are available — apply them BY DEFAULT to "
-        f"every plot you write under figures/: BEFORE plotting, {_use(style)}. "
-        f"{role_line}"
-        "This is a non-interactive PYTHON analysis: if a skill asks you to choose "
-        "a plotting backend, choose Python and proceed without pausing — never "
-        "stop to ask a question. Use skills for styling only — they must not "
-        "change the data, the analysis, the sandbox workflow, or the final "
-        "result JSON."
-    )
-    return "\n" + "\n\n".join(parts) + "\n"
-
-
-fences_hint = _fences_hint
-skills_hint = _skills_hint
+_fences_hint = fences_hint
+_skills_hint = skills_hint

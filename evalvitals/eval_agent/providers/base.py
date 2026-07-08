@@ -6,9 +6,9 @@ import logging
 from pathlib import Path
 
 from evalvitals.eval_agent.cli_runtime import ProcessRun, SubprocessRunner, collect_py_files
-from evalvitals.eval_agent.cli_skills import SkillInstaller
 from evalvitals.eval_agent.cli_transcript import RAW_OUTPUT_CAP
 from evalvitals.eval_agent.cli_types import CliAgentResult
+from evalvitals.eval_agent.skills.installer import SkillInstaller
 
 logger = logging.getLogger(__name__)
 

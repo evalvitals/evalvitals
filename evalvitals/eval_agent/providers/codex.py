@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evalvitals.eval_agent.cli_skills import CodexSkillInstaller, SkillInstaller
 from evalvitals.eval_agent.providers.base import CliAgentBase
+from evalvitals.eval_agent.skills.installer import CodexSkillInstaller, SkillInstaller
 
 
 class CodexAgent(CliAgentBase):
