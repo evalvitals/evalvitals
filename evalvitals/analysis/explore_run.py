@@ -22,11 +22,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
 from evalvitals.analysis.adjudicate import adjudicate_report
 from evalvitals.analysis.explorer import RECORDS_FILENAME, ExploratoryAnalysisAgent
 from evalvitals.analysis.hypothesis_agent import HypothesisAgent
-from evalvitals.eval_agent.cli_agent import CliAgentConfig
+from evalvitals.eval_agent.cli_types import CliAgentConfig
+from evalvitals.eval_agent.skills.resolver import resolve_skill_paths
 from evalvitals.viz.renderer import render_chart_specs
 
 
@@ -73,18 +73,18 @@ def run_explore(
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    skill_dirs = list(skills or [])
-    if use_bundled_skills and coder_provider in SKILL_BACKENDS:
-        # Vendored skills first so the agent sees them; de-dup explicit repeats.
-        bundled = [p for p in bundled_skill_paths() if p not in skill_dirs]
-        skill_dirs = bundled + skill_dirs
+    skill_dirs = resolve_skill_paths(
+        provider=coder_provider,
+        explicit=skills or (),
+        use_bundled=use_bundled_skills,
+    )
 
     cli_config = CliAgentConfig(
         provider=coder_provider,
         binary_path=coder_binary,
         model=coder_model,
         timeout_sec=timeout_sec,
-        skills=tuple(skill_dirs),
+        skills=skill_dirs,
         allow_skills=allow_skills or bool(skill_dirs),
     )
     agent = ExploratoryAnalysisAgent(

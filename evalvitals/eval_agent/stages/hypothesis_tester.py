@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from evalvitals.core.case import CaseBatch, Label
 from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
+from evalvitals.eval_agent.prompts.hypothesis_tester import _CONSISTENCY_PROMPT
 from evalvitals.eval_agent.stages.surgery import _extract_per_case_signals
 from evalvitals.stats import compare
 
@@ -69,25 +70,6 @@ _GLOBAL_TOOLS = frozenset({"single_rate_evalue", "friedman_nemenyi", "rank_corr"
 # "best: FAIL rate 7% vs p0=0.50 → reject", which sounds like a finding and is
 # meaningless once the batch is not a representative sample.
 _DESCRIPTIVE_TOOLS = frozenset({"single_rate_evalue"})
-
-
-# ---------------------------------------------------------------------------
-# Prompt template (LLM consistency check)
-# ---------------------------------------------------------------------------
-
-_CONSISTENCY_PROMPT = """\
-Experiment protocol:
-{protocol_text}
-
-Hypothesis under review:
-Statement: {statement}
-Predicted failure mode: {failure_mode}
-
-Does this hypothesis address a failure mode that is relevant to the experiment protocol above?
-Answer YES or NO on the first line, then give a one-sentence reason.
-
-Answer YES if the hypothesis explains a failure that the protocol would care about.
-Answer NO if the hypothesis is about something the protocol does not mention or test."""
 
 
 # ---------------------------------------------------------------------------

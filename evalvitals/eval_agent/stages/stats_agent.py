@@ -47,6 +47,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.eval_agent.prompts.stats_agent import _ANALYSIS_PROMPT, _TOOL_SELECT_PROMPT
 from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
 from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolAgent as LegacyStatsToolAgent
 from evalvitals.eval_agent.stages.stats_tools import (
@@ -67,7 +68,7 @@ if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
     from evalvitals.eval_agent.stages.stats_tool_generator import (
         GeneratedStatsTool,
@@ -75,59 +76,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Prompt template (LLM-guided path)
-# ---------------------------------------------------------------------------
-
-_ANALYSIS_PROMPT = """\
-You are an expert in ML failure analysis for vision-language models and agentic systems.
-
-Experiment protocol:
-{protocol_text}
-
-Task domain: {task_domain}
-
-Analyzer summary:
-{narrative}
-
-Raw per-analyzer findings (JSON):
-{findings_json}
-
-Based on the protocol and the findings above, write:
-
-CONCLUSION: <one paragraph — what is the root cause of failures, given what was tested>
-EVIDENCE_CHAIN:
-- <step 1: which analyzer and metric first caught your attention, and why>
-- <step 2: how it connects to the protocol's stated failure patterns>
-- <step 3: any corroborating or contradicting signals from other analyzers>
-QUALITATIVE:
-- <observation 1: a pattern not captured by numbers alone>
-- <observation 2: anything unexpected or surprising>
-
-Keep each bullet to one sentence. If the model looks healthy given the protocol, say so clearly."""
-
-
-# ---------------------------------------------------------------------------
-# Prompt template (stats-tool selection)
-# ---------------------------------------------------------------------------
-
-_TOOL_SELECT_PROMPT = """\
-You are selecting statistical tools to test why a model fails, given the data on hand.
-
-Experiment protocol:
-{protocol_text}
-
-Available statistical tools:
-{tool_catalog}
-
-Data shape available for testing:
-{data_shape}
-
-Pick the tools whose data requirements are satisfied and that best test the \
-protocol's question. Return ONLY a JSON object, no other text:
-{{"tools": ["name1", "name2", ...], "rationale": "one sentence"}}"""
 
 
 def _select_tools_via_llm(

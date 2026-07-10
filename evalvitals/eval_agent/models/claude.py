@@ -1,0 +1,114 @@
+"""Claude Code CLI wrapped as a text-generation judge model."""
+
+from __future__ import annotations
+
+import os
+import pathlib
+import shutil
+import subprocess
+import tempfile
+import warnings
+from pathlib import Path
+
+
+class ClaudeModel:
+    """Claude Code CLI wrapped as a judge model."""
+
+    key = "claude"
+
+    def __init__(
+        self,
+        binary_path: str = "",
+        timeout_sec: int = 240,
+        model: str = "",
+        effort: str = "",
+    ) -> None:
+        from evalvitals.core.capability import Capability
+
+        binary = binary_path or shutil.which("claude") or ""
+        if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+            raise RuntimeError(
+                "ClaudeModel: 'claude' binary not found or not executable. "
+                "Set CLAUDE_PATH=$(which claude) and re-run, or pass "
+                "binary_path= explicitly."
+            )
+        self._binary = binary
+        self._timeout_sec = timeout_sec
+        self._model = model
+        self._effort = effort
+        self.capabilities = frozenset({Capability.GENERATE})
+        self.modalities = frozenset({"text"})
+
+    def generate(
+        self,
+        inputs: object,
+        *,
+        images: "list[Path] | None" = None,
+        **kwargs: object,
+    ) -> str:
+        """Run ``claude -p <inputs>`` and return the text response."""
+        img_dir: str | None = None
+        try:
+            prompt_text = str(inputs)
+            if images:
+                valid = [p for p in images if isinstance(p, pathlib.Path) and p.exists()]
+                if valid:
+                    img_dir = tempfile.mkdtemp(prefix="claude_imgs_")
+                    for path in valid:
+                        shutil.copy2(path, pathlib.Path(img_dir) / path.name)
+                    names = ", ".join(path.name for path in valid)
+                    prompt_text = f"Images available in workspace: {names}\n\n{prompt_text}"
+
+            cmd = [
+                self._binary,
+                "-p",
+                prompt_text,
+                "--dangerously-skip-permissions",
+                "--output-format",
+                "text",
+            ]
+            if img_dir:
+                cmd += ["--add-dir", img_dir]
+            if self._model:
+                cmd += ["--model", self._model]
+            if self._effort:
+                cmd += ["--effort", self._effort]
+
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=self._timeout_sec,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env={**os.environ},
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"ClaudeModel: claude timed out after {self._timeout_sec}s"
+                ) from exc
+
+            output = (proc.stdout or "").strip()
+            if proc.returncode != 0 and not output:
+                reason = (proc.stderr or "").strip()[:240]
+                raise RuntimeError(
+                    f"ClaudeModel: claude exited {proc.returncode}: {reason}"
+                )
+            if not output:
+                warnings.warn(
+                    "ClaudeModel: claude returned an empty response -- likely "
+                    "rate-limited or out of quota; the caller will fall back "
+                    "to a non-LLM path.",
+                    stacklevel=2,
+                )
+            return output
+        finally:
+            if img_dir:
+                shutil.rmtree(img_dir, ignore_errors=True)
+
+    def __repr__(self) -> str:
+        return (
+            f"ClaudeModel(binary={self._binary!r}, model={self._model!r}, "
+            f"effort={self._effort!r})"
+        )

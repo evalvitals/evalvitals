@@ -13,8 +13,11 @@ Top-level (shared / orchestration):
   loop.py              AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
   run_logger.py        RunLogger — per-cycle JSONL log + artifact sink
   hypothesis.py        Hypothesis, HypothesisStatus, serialization helpers
-  cli_agent.py         CliAgentConfig, create_cli_agent — shared CLI coding agent
-                         (agy / codex); any stage can use this to launch experiments
+  cli_agent.py         compatibility facade for historical CLI imports
+  providers/           CLI coding-provider adapters and registry
+  models/              CLI-backed judge model wrappers (agy / Claude Code)
+  codegen/             shared code-generation runner used by stages
+  skills/              skill resolution, installation, and prompt policy
   store.py             Store / InMemoryStore / JsonlStore — persistent memory
   orchestrator.py      thin facade over the loop (pre-registered A/B)
   ab_runner.py         A/B execution across prompting strategies
@@ -78,13 +81,7 @@ from evalvitals.analysis.profile import (
     profile_stats_input,
 )
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
-from evalvitals.eval_agent.cli_agent import (
-    AgyModel,
-    ClaudeModel,
-    CliAgentConfig,
-    CliAgentResult,
-    create_cli_agent,
-)
+from evalvitals.eval_agent.cli_types import CliAgentConfig, CliAgentResult
 from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
 from evalvitals.eval_agent.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
 from evalvitals.eval_agent.git_manager import ExperimentGitManager
@@ -110,6 +107,7 @@ from evalvitals.eval_agent.loop import (
     VLDiagnoseLoop,
     VLDiagnoseReport,
 )
+from evalvitals.eval_agent.models import AgyModel, ClaudeModel
 from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
@@ -118,6 +116,7 @@ from evalvitals.eval_agent.preregister import (
     PreregistrationLog,
     Split,
 )
+from evalvitals.eval_agent.providers import create_cli_agent
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_context import RunContext
 from evalvitals.eval_agent.run_logger import RUN_LOG_SCHEMA_VERSION, RunLogger

@@ -28,6 +28,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from evalvitals.eval_agent.prompts.nl_runner import _AGENT_PROMPT_TEMPLATE
+
 # ---------------------------------------------------------------------------
 # File templates
 # ---------------------------------------------------------------------------
@@ -236,44 +238,6 @@ services:
 _GITIGNORE = "outputs/\n__pycache__/\n"
 
 # ---------------------------------------------------------------------------
-# CLI agent prompt
-# ---------------------------------------------------------------------------
-
-_AGENT_PROMPT_TEMPLATE = """\
-Generate a complete `run.py` for an EvalVitals diagnosis experiment.
-
-DESCRIPTION OF FAILURE TO DIAGNOSE
-===================================
-{description}
-
-TARGET MODEL
-============
-{model_key}
-
-REQUIREMENTS
-============
-1. Import from `evalvitals` and `evalvitals.eval_agent`.
-2. Create an `ExperimentProtocol` whose `description` field captures the
-   failure described above (verbatim or paraphrased).
-3. Build a `CaseBatch` with 6-10 `FailureCase` objects that probe the
-   described failure.  Include at least two "easy" control cases that the
-   model should PASS and several "hard" cases that expose the failure.
-   Use `Inputs(prompt=..., image=...)` — image is optional for text-only failures.
-4. Load the model with `compose("{model_key}", "hf_local", ...)`.
-5. Run `VLDiagnoseLoop` with `ProbeAgent`, `StatsAnalysisAgent`,
-   `DiagnosisAgent`, and `AgyModel` as judge (with a try/except fallback
-   when the agy binary is absent).
-6. Accept CLI flags: --model, --device, --dtype, --max-cycles,
-   --max-analyzers, --smoke-test, --run-dir.
-7. Write outputs via `RunContext(args.run_dir)` (from `evalvitals.eval_agent`),
-   defaulting `--run-dir` to `Path(__file__).parent / "outputs"`.
-8. Include a `--smoke-test` path with a `_SmokeModel` stand-in so the
-   script can be verified without a GPU.
-
-Write ONLY `run.py` — nothing else.  No markdown, no explanation.
-"""
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -374,7 +338,8 @@ def _write_run_py_via_agent(
     model: str,
     timeout: int,
 ) -> None:
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig, create_cli_agent
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
+    from evalvitals.eval_agent.codegen import CodegenRunner
 
     prompt = _AGENT_PROMPT_TEMPLATE.format(
         description=description,
@@ -386,15 +351,18 @@ def _write_run_py_via_agent(
         model=model,
         timeout_sec=timeout,
     )
-    agent = create_cli_agent(cfg)
-    result = agent.run(prompt, workdir=path.parent)
+    result = CodegenRunner(cfg).write_code(
+        prompt,
+        workdir=path.parent,
+        preferred_filenames=("run.py",),
+    )
 
     if not result.ok:
         raise RuntimeError(
             f"CLI agent ({provider}) failed to generate run.py: {result.error}"
         )
 
-    generated = result.files.get("run.py") or next(iter(result.files.values()), None)
+    generated = result.code
     if generated is None:
         raise RuntimeError(
             f"CLI agent ({provider}) produced no .py files in {path.parent}"

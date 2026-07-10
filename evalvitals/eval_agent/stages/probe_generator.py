@@ -34,45 +34,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from evalvitals.core.result import Result
+from evalvitals.eval_agent.prompts.probe_generator import (
+    _GENERATE_PROMPT,
+    _INPUT_FILENAME,
+    _MAX_OUTPUT_CHARS,
+    _RESULT_MARKER,
+)
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 if TYPE_CHECKING:
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
 
-_INPUT_FILENAME = "m1_probe_input.json"
-_RESULT_MARKER = "PROBE_RESULT_JSON="
-_MAX_OUTPUT_CHARS = 4000
-
-_GENERATE_PROMPT = """\
-You are writing a self-contained Python script that probes a model's text outputs
-for a specific failure pattern.
-
-GOAL (what to probe for):
-{need}
-
-DATA: a JSON file named "{input_filename}" sits in the current working directory:
-{{
-  "cases": [
-    {{"id": "<case id>", "prompt": "<input prompt>", "expected": <expected or null>,
-     "label": "pass"|"fail"|"unknown"|null, "output": "<the model's text output>"}}
-  ]
-}}
-
-REQUIREMENTS:
-- Read "{input_filename}" from the current directory; do NOT hardcode the data.
-- Compute, per case, a numeric or boolean signal for the failure pattern above
-  (e.g. 1 if the output refuses / drifts language / breaks format, else 0).
-- Standard library + `import numpy` only. No network, no file writes, no model calls.
-- The LAST line of stdout MUST be exactly:
-  {marker}{{"findings": {{"<aggregate_metric>": <number>}}, "per_case": [{{"sample_id": "<case id>", "<signal_name>": <number_or_bool>}}, ...]}}
-- Every per_case entry MUST carry "sample_id" equal to the case "id".
-- Print NOTHING after that line. Keep the script under ~60 lines.
-
-Return ONLY the Python code{fences_hint}."""
 
 
 @dataclass
@@ -236,22 +212,19 @@ class ProbeGenerator:
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str) -> str:
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
+        from evalvitals.eval_agent.codegen import CodegenRunner
 
         prompt = self._build_prompt(need, fenced=False)
         self._last_prompt = prompt
-        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
-        res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
-        self._last_raw = res.raw_output
-        self._last_usage = res.usage
-        if not res.ok:
-            return ""
-        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
-        if not py_files:
-            return ""
-        if "probe.py" in py_files:
-            return py_files["probe.py"]
-        return max(py_files.values(), key=len)
+        result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
+            prompt,
+            workdir=Path(self._sandbox.workdir),
+            timeout_sec=self._timeout_sec,
+            preferred_filenames=("probe.py",),
+        )
+        self._last_raw = result.raw_output
+        self._last_usage = result.usage
+        return result.code
 
     def _build_prompt(self, need: str, *, fenced: bool) -> str:
         return _GENERATE_PROMPT.format(

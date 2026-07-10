@@ -23,6 +23,30 @@ the capability set changes.
 | `FailureCase` | Central data unit for prompts, labels, provenance, agent trajectories. |
 | `Result` | Uniform output: human-readable summary + structured findings. |
 
+## What's Inside
+
+EvalVitals covers three layers of the analysis workflow, usable independently
+or chained into one automated loop:
+
+1. **Analyzer toolkit** — 26 registered analyzers (attention, uncertainty,
+   hallucination, Shapley attribution, logit lens, representation geometry,
+   agent-trajectory analysis) run against any model/backend pair through the
+   same `Analyzer(**params).run(model, data) -> Result` call shape. See the
+   [Demo](#demo) below and the [Analyzer Zoo](docs/analyzers.md).
+2. **Data analysis agent (M2/M3)** — `evalvitals explore` points a coding
+   agent at a raw results directory (any JSON/JSONL shape, no host-side
+   parsing) and gets back descriptive takeaways, charts, and 1-3 falsifiable
+   hypotheses — no code required. See
+   [Exploratory Analysis (M2/M3)](docs/m2_analysis.md).
+3. **Intervention (M4/M5)** — `HypothesisTester` verifies a hypothesis
+   statistically and against the stated experiment protocol; `FixAgent` then
+   proposes and validates candidate repairs (prompt → scaffold → internals →
+   parameter space) against the unmodified baseline with paired McNemar +
+   e-value. See [Intervention & Verification (M4/M5)](docs/intervention.md).
+
+`VLDiagnoseLoop` chains all three (M1→M2→M3→M5, M4 post-loop) into one
+automated failure-attribution pipeline — see [Quickstart](docs/quickstart.md).
+
 ## Demo
 
 Relative attention on a VLM — ["MLLMs Know Where to Look"](https://arxiv.org/abs/2502.17422) ([code](https://github.com/saccharomycetes/mllms_know)):
@@ -65,6 +89,7 @@ pip install -e ".[dev]"
 - [Docs overview](docs/index.md)
 - [Quickstart](docs/quickstart.md) — runnable examples for every entry point, the diagnosis loop, and submitting a run
 - [Exploratory Analysis (M2/M3)](docs/m2_analysis.md) — standalone `evalvitals explore`
+- [Intervention & Verification (M4/M5)](docs/intervention.md) — `HypothesisTester` verification, `FixAgent` tiered repair
 - [Analyzer Zoo](docs/analyzers.md) — reference tables of analyzers and registered models
 - [Architecture](docs/architecture.md) — package structure and design contracts
 - [Extending EvalVitals](docs/extending.md) — add analyzers, specs, backends

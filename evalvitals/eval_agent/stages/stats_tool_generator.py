@@ -35,6 +35,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.eval_agent.prompts.stats_tool_generator import (
+    _GENERATE_PROMPT,
+    _INPUT_FILENAME,
+    _RESULT_MARKER,
+)
 from evalvitals.eval_agent.sandbox import ExperimentSandbox
 from evalvitals.eval_agent.stages.stats_tools import StatsInput, StatsToolResult, describe_data
 from evalvitals.stats import compare
@@ -42,48 +47,10 @@ from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_agent import CliAgentConfig
+    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
 
-_INPUT_FILENAME = "m2_stats_input.json"
-_RESULT_MARKER = "STATS_RESULT_JSON="
-
-_GENERATE_PROMPT = """\
-You are writing a self-contained Python statistics script for a model-failure analysis.
-
-GOAL (what statistic to compute):
-{need}
-
-DATA: a JSON file named "{input_filename}" sits in the current working directory with:
-{{
-  "labels":   {{case_id: is_fail_bool}},          # PASS/FAIL labels
-  "per_case": {{"analyzer.metric": {{case_id: value}}}},  # per-case signals
-  "scalars":  {{"analyzer.metric": value}},         # aggregate metrics
-  "groups":   {{strategy: {{case_id: success}}}} or null  # strategy comparison
-}}
-
-Data shape available for THIS run:
-{data_shape}
-
-REQUIREMENTS:
-- Read "{input_filename}" from the current directory. Do NOT hardcode the data.
-- You MAY `import numpy`. No network, no file writes, no other I/O.
-- You decide WHAT statistic to compute, but you do NOT adjudicate significance.
-  Do NOT emit a "reject", "e_value", or "p_value" verdict — the HOST recomputes
-  the decision from your SUFFICIENT STATISTICS with its validated,
-  multiplicity-aware core; a self-declared verdict is ignored.
-- The LAST line of stdout MUST be exactly one line of the form:
-  {marker}{{"summary": "<one sentence>", "effect": <number or null>, "ci": [lo, hi] or null, "underpowered": <true/false>, "details": {{}}, "sufficient": <a SUFFICIENT-STATISTICS object or null>}}
-- "sufficient" must be ONE of these host-adjudicable shapes:
-    {{"kind": "paired_binary", "b": <int: #cases that flipped the GOOD way>, "c": <int: #cases that flipped the BAD way>}}
-    {{"kind": "two_group", "a": [0/1, ...], "b": [0/1, ...]}}   # two independent success/indicator vectors (e.g. is_fail among signal-absent vs signal-present)
-  If your statistic cannot be expressed as one of these, set "sufficient": null —
-  your tool is then DESCRIPTIVE (it reports effect/CI but can never claim a
-  rejection). Choose the shape that captures your test; the host owns the verdict.
-- Print NOTHING after that line. Keep the script under ~60 lines.
-
-Return ONLY the Python code{fences_hint}."""
 
 
 @dataclass
@@ -269,24 +236,21 @@ class StatsToolGenerator:
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str, inp: StatsInput) -> str:
-        from evalvitals.eval_agent.cli_agent import create_cli_agent
+        from evalvitals.eval_agent.codegen import CodegenRunner
 
         prompt = self._build_prompt(need, inp, fenced=False)
         self._last_prompt = prompt
-        agent = create_cli_agent(self._cli_config)  # type: ignore[arg-type]
-        res = agent.run(prompt, workdir=Path(self._sandbox.workdir), timeout_sec=self._timeout_sec)
-        self._last_raw = res.raw_output
-        self._last_usage = res.usage
-        if not res.ok:
-            logger.debug("CLI codegen produced no files (%s)", res.error)
-            return ""
-        # Prefer a stats_tool.py; otherwise the largest .py the agent wrote.
-        py_files = {n: c for n, c in res.files.items() if n.endswith(".py")}
-        if not py_files:
-            return ""
-        if "stats_tool.py" in py_files:
-            return py_files["stats_tool.py"]
-        return max(py_files.values(), key=len)
+        result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
+            prompt,
+            workdir=Path(self._sandbox.workdir),
+            timeout_sec=self._timeout_sec,
+            preferred_filenames=("stats_tool.py",),
+        )
+        self._last_raw = result.raw_output
+        self._last_usage = result.usage
+        if not result.code:
+            logger.debug("CLI codegen produced no files (%s)", result.error)
+        return result.code
 
     def _build_prompt(self, need: str, inp: StatsInput, *, fenced: bool) -> str:
         return _GENERATE_PROMPT.format(

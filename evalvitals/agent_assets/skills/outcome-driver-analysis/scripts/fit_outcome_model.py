@@ -23,14 +23,14 @@ Usage:
 import argparse
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from statsmodels.stats.outliers_influence import variance_inflation_factor
 from scipy.stats import chi2
-from sklearn.metrics import roc_curve, roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 
 def fit_model(df: pd.DataFrame, outcome: str, predictors: list[str], cluster: str | None):
