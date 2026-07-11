@@ -26,7 +26,7 @@ For stage contracts and full data flow, see
 ```python
 from evalvitals.eval_agent import VLDiagnoseLoop, RunLogger
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
 
 loop = VLDiagnoseLoop(

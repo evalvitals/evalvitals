@@ -8,10 +8,10 @@ hypotheses.
 
 from __future__ import annotations
 
+from evalvitals.analysis.stats_agent import StatsAnalysisReport
+from evalvitals.analysis.stats_tools import StatsToolResult
 from evalvitals.core.capability import Capability
 from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
-from evalvitals.eval_agent.stages.stats_tools import StatsToolResult
 from tests.conftest import FakeModel
 
 
@@ -66,3 +66,39 @@ def test_hypothesis_generated_despite_severity_none():
     diag = DiagnosisAgent(judge=judge).diagnose(_stats_report_with_conclusion())
     assert len(diag.hypotheses) == 1
     assert diag.hypotheses[0].predicted_failure_mode == "weak_visual_grounding"
+
+
+def test_failure_modes_none_by_default_adds_nothing_to_the_prompt():
+    judge = CapturingJudge()
+    diag = DiagnosisAgent(judge=judge).diagnose(_stats_report_with_conclusion())
+    assert "FAILURE MODES" not in judge.prompts[0]
+    assert diag.failure_modes_used is False
+
+
+def test_failure_modes_report_enters_the_prompt_when_supplied():
+    from evalvitals.analysis.failure_modes import FailureMode, FailureModeReport
+
+    fm_report = FailureModeReport(
+        clusters=[FailureMode(name="small_object_miss", description="objects too small to detect", size=7)],
+        method="cosine_greedy",
+    )
+    judge = CapturingJudge()
+    diag = DiagnosisAgent(judge=judge).diagnose(
+        _stats_report_with_conclusion(), failure_modes=fm_report,
+    )
+    p = judge.prompts[0]
+    assert "FAILURE MODES" in p
+    assert "small_object_miss" in p
+    assert "objects too small to detect" in p
+    assert diag.failure_modes_used is True
+
+
+def test_failure_modes_with_zero_clusters_adds_nothing():
+    from evalvitals.analysis.failure_modes import FailureModeReport
+
+    judge = CapturingJudge()
+    diag = DiagnosisAgent(judge=judge).diagnose(
+        _stats_report_with_conclusion(), failure_modes=FailureModeReport(),
+    )
+    assert "FAILURE MODES" not in judge.prompts[0]
+    assert diag.failure_modes_used is False

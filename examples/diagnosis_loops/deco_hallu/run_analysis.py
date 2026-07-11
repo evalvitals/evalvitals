@@ -75,7 +75,7 @@ def main() -> None:
     )
     from evalvitals.eval_agent.hypothesis import hypothesis_to_dict
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 
     judge = run.build_judge(args.judge_model, args.judge_effort)
     codegen: CliAgentConfig = run.build_codegen(args.backend)

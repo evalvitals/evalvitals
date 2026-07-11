@@ -39,7 +39,7 @@ from evalvitals.analysis.operationalize import (
     SignalRecipe,
     compile_recipe,
 )
-from evalvitals.eval_agent.stages.stats_tools import build_stats_input_from_records
+from evalvitals.analysis.stats_tools import build_stats_input_from_records
 
 # ---------------------------------------------------------------------------
 # Output types
@@ -292,7 +292,7 @@ def run_fused_analysis(
     # or get reported as discriminators; record a caveat for the audit trail.
     # (build_stats_input_from_records already isolated raw leaks; this re-runs
     # over the just-injected bridged signals.)
-    from evalvitals.eval_agent.stages.stats_tools import isolate_label_leaks
+    from evalvitals.analysis.stats_tools import isolate_label_leaks
 
     leaked = isolate_label_leaks(confirm_inp)
     for key in leaked:

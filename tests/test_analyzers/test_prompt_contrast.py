@@ -99,7 +99,7 @@ def test_default_score_word_boundary():
 
 
 def test_stats_layer_runs_paired_contrasts():
-    from evalvitals.eval_agent.stages.stats_tools import (
+    from evalvitals.analysis.stats_tools import (
         build_stats_input,
         default_plan,
         run_stats_tool,
@@ -154,7 +154,7 @@ def test_prompt_robust_model_has_zero_sensitivity():
 
 
 def test_prompt_sensitivity_is_a_clean_stats_signal():
-    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+    from evalvitals.analysis.stats_tools import build_stats_input
 
     batch = _batch()
     res = PromptContrastAnalyzer().run(InterventionModel(), batch)

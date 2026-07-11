@@ -8,26 +8,35 @@ Two loops are available:
                      protocol-consistent hypothesis.
 
 Stage modules live in ``stages/``; shared infrastructure stays at the top level.
+The CLI-agent runtime (sandboxing, code generation, providers, judge models,
+skills) lives in ``evalvitals.agent_runtime`` — shared with ``evalvitals.analysis``
+so neither package depends on the other. ``cli_agent.py`` / ``cli_skills.py``
+remain here as compatibility facades over that runtime.
 
 Top-level (shared / orchestration):
   loop.py              AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
   run_logger.py        RunLogger — per-cycle JSONL log + artifact sink
   hypothesis.py        Hypothesis, HypothesisStatus, serialization helpers
-  cli_agent.py         compatibility facade for historical CLI imports
-  providers/           CLI coding-provider adapters and registry
-  models/              CLI-backed judge model wrappers (agy / Claude Code)
-  codegen/             shared code-generation runner used by stages
-  skills/              skill resolution, installation, and prompt policy
+  cli_agent.py         compatibility facade over agent_runtime CLI providers/judges
+  cli_skills.py        compatibility facade over agent_runtime.skills.installer
   store.py             Store / InMemoryStore / JsonlStore — persistent memory
   orchestrator.py      thin facade over the loop (pre-registered A/B)
   ab_runner.py         A/B execution across prompting strategies
   report.py            DiagnosticReport — final diagnostic conclusions
   evolution.py         EvolutionStore — JSONL lesson store, 30-day half-life decay
   preregister.py       pre-registration helpers (DataSplit, PreregisteredHypothesis)
-  sandbox.py           ExperimentSandbox, SandboxProtocol
-  factory.py           sandbox factory (subprocess / docker backends)
   git_manager.py       git-native experiment versioning (eval/{run_id} branches)
+
+evalvitals.agent_runtime (shared CLI-agent runtime, imports neither analysis nor eval_agent):
+  cli_types.py         CliAgentConfig / CliAgentResult
+  cli_runtime.py       SubprocessRunner, ProcessRun, collect_py_files
+  sandbox.py           ExperimentSandbox, SandboxProtocol
   experiment_harness.py immutable evaluation harness injected into projects
+  factory.py           sandbox factory (subprocess / docker backends)
+  providers/           CLI coding-provider adapters and registry
+  judges/              CLI-backed judge model wrappers (agy / Claude Code)
+  codegen/             shared code-generation runner used by stages
+  skills/              skill resolution, installation, and prompt policy
 
 stages/ (M1–M5 implementation):
   probe.py             M1 — StrategyProbe: model-kind detection + analyzer ranking
@@ -72,6 +81,19 @@ stages/ (M1–M5 implementation):
                               stopping_criteria_met() drives the VLDiagnoseLoop exit
 """
 
+from evalvitals.agent_runtime.cli_types import CliAgentConfig, CliAgentResult
+from evalvitals.agent_runtime.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
+from evalvitals.agent_runtime.judges import AgyModel, ClaudeModel
+from evalvitals.agent_runtime.providers import create_cli_agent
+from evalvitals.agent_runtime.sandbox import (
+    ExperimentSandbox,
+    SandboxProtocol,
+    SandboxResult,
+    parse_metrics,
+    validate_entry_point,
+    validate_entry_point_resolved,
+)
+from evalvitals.analysis.analysis_module import AnalysisModule, AnalysisReport
 from evalvitals.analysis.planner import AnalysisPlanItem, plan_stats_input, ranked_signal_names
 from evalvitals.analysis.profile import (
     ColumnProfile,
@@ -80,10 +102,31 @@ from evalvitals.analysis.profile import (
     profile_records,
     profile_stats_input,
 )
+from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
+from evalvitals.analysis.stats_tool_agent import StatsToolAgent
+from evalvitals.analysis.stats_tool_generator import (
+    GeneratedStatsTool,
+    StatsToolGenerator,
+)
+from evalvitals.analysis.stats_tools import (
+    STATS_TOOL_CATALOG,
+    EvidenceResult,
+    StatsInput,
+    StatsToolResult,
+    build_stats_input,
+    build_stats_input_from_records,
+    default_plan,
+    fdr_correct,
+    run_stats_tool,
+)
 from evalvitals.eval_agent.ab_runner import ABResult, ABRunner
-from evalvitals.eval_agent.cli_types import CliAgentConfig, CliAgentResult
+from evalvitals.eval_agent.agentic import (
+    AgenticDiagnoseLoop,
+    ToolOutcome,
+    ToolRegistry,
+    ToolSpec,
+)
 from evalvitals.eval_agent.evolution import EvolutionStore, LessonEntry, extract_lessons
-from evalvitals.eval_agent.factory import SandboxConfig, SandboxFactoryConfig, create_sandbox
 from evalvitals.eval_agent.git_manager import ExperimentGitManager
 from evalvitals.eval_agent.hypothesis import (
     Hypothesis,
@@ -93,6 +136,7 @@ from evalvitals.eval_agent.hypothesis import (
     hypothesis_from_dict,
     hypothesis_to_dict,
 )
+from evalvitals.eval_agent.legacy import AutoDiagnoseLoop, SelfEvolveLoop
 from evalvitals.eval_agent.log_schema import (
     SCHEMA_PATH,
     build_schema,
@@ -100,14 +144,8 @@ from evalvitals.eval_agent.log_schema import (
     load_schema,
     validate_event,
 )
-from evalvitals.eval_agent.loop import (
-    AutoDiagnoseLoop,
-    AutoDiagnoseReport,
-    SelfEvolveLoop,
-    VLDiagnoseLoop,
-    VLDiagnoseReport,
-)
-from evalvitals.eval_agent.models import AgyModel, ClaudeModel
+from evalvitals.eval_agent.loop import VLDiagnoseLoop
+from evalvitals.eval_agent.loop_reports import AutoDiagnoseReport, VLDiagnoseReport
 from evalvitals.eval_agent.nl_runner import scaffold_from_description
 from evalvitals.eval_agent.orchestrator import EvalOrchestrator
 from evalvitals.eval_agent.preregister import (
@@ -116,19 +154,9 @@ from evalvitals.eval_agent.preregister import (
     PreregistrationLog,
     Split,
 )
-from evalvitals.eval_agent.providers import create_cli_agent
 from evalvitals.eval_agent.report import DiagnosticReport
 from evalvitals.eval_agent.run_context import RunContext
 from evalvitals.eval_agent.run_logger import RUN_LOG_SCHEMA_VERSION, RunLogger
-from evalvitals.eval_agent.sandbox import (
-    ExperimentSandbox,
-    SandboxProtocol,
-    SandboxResult,
-    parse_metrics,
-    validate_entry_point,
-    validate_entry_point_resolved,
-)
-from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
 from evalvitals.eval_agent.stages.case_discovery import (
     CaseDiscoveryAgent,
     CaseDiscoveryReport,
@@ -159,23 +187,6 @@ from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
 from evalvitals.eval_agent.stages.probe_generator import GeneratedProbe, ProbeGenerator
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
-from evalvitals.eval_agent.stages.stats_tool_agent import StatsToolAgent
-from evalvitals.eval_agent.stages.stats_tool_generator import (
-    GeneratedStatsTool,
-    StatsToolGenerator,
-)
-from evalvitals.eval_agent.stages.stats_tools import (
-    STATS_TOOL_CATALOG,
-    EvidenceResult,
-    StatsInput,
-    StatsToolResult,
-    build_stats_input,
-    build_stats_input_from_records,
-    default_plan,
-    fdr_correct,
-    run_stats_tool,
-)
 from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgent
 from evalvitals.eval_agent.stages.whitebox_probe_generator import (
     GeneratedWhiteboxProbe,
@@ -226,6 +237,11 @@ __all__ = [
     "SelfEvolveLoop",
     "VLDiagnoseLoop",
     "VLDiagnoseReport",
+    # Agentic loop (judge-decided M1-M5, alternative to VLDiagnoseLoop's fixed cycle)
+    "AgenticDiagnoseLoop",
+    "ToolSpec",
+    "ToolOutcome",
+    "ToolRegistry",
     # Protocol
     "ExperimentProtocol",
     "ProbingSchema",

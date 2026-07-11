@@ -89,9 +89,31 @@ proposal-only — no verdict language).
 
 ## Python API
 
+The one-call entry point runs M2 + host adjudication + M3 in a single step,
+over a path or in-memory records:
+
+```python
+import evalvitals
+
+result = evalvitals.explore(
+    "/path/to/results",                 # or a list[dict] of in-memory records
+    question="What predicts failure?",
+    provider="claude_code",             # or antigravity/codex/...
+    out="evalvitals_explore_output",    # omit to skip persisting artifacts
+)
+print(result.ok, result.hypotheses)
+```
+
+`evalvitals.explore` is a lazy re-export of `evalvitals.analysis.explore`;
+`out=None` (the default) keeps everything in memory — pass a directory to also
+persist `exploratory_report.json`, rendered figures, and tables (the same
+artifacts the `evalvitals explore` CLI writes).
+
+For direct control over each stage:
+
 ```python
 from evalvitals.analysis import ExploratoryAnalysisAgent, HypothesisAgent
-from evalvitals.eval_agent.cli_agent import CliAgentConfig
+from evalvitals.agent_runtime import CliAgentConfig
 
 cli_config = CliAgentConfig(provider="claude_code")  # or antigravity/codex/...
 
@@ -103,6 +125,34 @@ hypotheses = m3.propose(report.to_dict())
 for h in hypotheses:
     print(h.statement, "—", h.test_design)
 ```
+
+## Failure-Mode Clustering
+
+`evalvitals.analysis.cluster_failures` groups FAIL cases into interpretable
+clusters — pattern discovery over the raw failing cases themselves, rather
+than the per-signal EDA above. No required dependency: a pure-numpy fallback
+(hashing vectorizer + cosine-greedy grouping) always works; install the
+`[cluster]` extra (`scikit-learn`, `hdbscan`) for TF-IDF + density-based
+clustering.
+
+```python
+from evalvitals.analysis import cluster_failures
+
+report = cluster_failures(records, min_cluster_size=3, max_clusters=8)
+for cluster in report.clusters:
+    print(cluster.name, cluster.size, cluster.top_terms)
+```
+
+*records* is a list of row dicts with an outcome column (`outcome_col`,
+default `"label"`) and text/signal columns (auto-detected, or pass
+`text_cols`/`signal_cols` explicitly). Pass `judge=` (any `Model` with
+`Capability.GENERATE`) to have an LLM name/describe each cluster from its
+exemplars instead of the deterministic top-terms naming. `report.method` tells
+you which clustering backend actually ran (`"hdbscan"` / `"agglomerative"` /
+`"cosine_greedy"` / `"single_cluster"`); `report.as_hypothesis_context()`
+renders a compact section for feeding into M3 hypothesis generation — this is
+exactly what `AgenticDiagnoseLoop`'s `cluster_failures` tool does
+automatically (see [quickstart](quickstart.md#agenticdiagnoseloop--judge-decided-m1-m5-alternative-to-the-fixed-cycle)).
 
 ## Backend notes
 

@@ -384,7 +384,7 @@ from evalvitals.core.capability import Capability
 from evalvitals.eval_agent import VLDiagnoseLoop, AgyModel, RunLogger
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
 
 protocol = ExperimentProtocol(
@@ -434,6 +434,39 @@ protocol = ExperimentProtocol(
     target_modalities=frozenset({"text", "image"}),
 )
 ```
+
+## AgenticDiagnoseLoop — Judge-Decided M1-M5 (Alternative to the Fixed Cycle)
+
+`VLDiagnoseLoop` above always runs M1→M2→M3→M5 in the same order every cycle.
+`AgenticDiagnoseLoop` wraps the identical stages, confirm-split, and post-loop
+`run_m4`/`run_fix` — but a CLI judge decides which tool to call next each
+turn (probe, run stats, explore the raw data, propose hypotheses, test one,
+fix, or stop), instead of a fixed sequence. The host — not the judge —
+enforces call limits, tool preconditions, and the stopping discipline: the
+judge cannot declare success (`stop(resolved=true)`) until a hypothesis has
+actually been tested and is statistically supported and protocol-consistent;
+an early attempt is rejected and fed back to the judge.
+
+```python
+from evalvitals.eval_agent import AgenticDiagnoseLoop, ClaudeModel
+
+loop = AgenticDiagnoseLoop(
+    model=model,
+    protocol=protocol,
+    judge=ClaudeModel(),        # the decision judge — any CLI-backed Model
+    max_actions=12,             # hard cap on judge decision turns
+    run_logger=RunLogger(),
+)
+report = loop.run(failure_cases)   # same VLDiagnoseReport shape as VLDiagnoseLoop
+```
+
+`report.stopped_by` is one of `agent_stop` / `max_actions` / `budget` /
+`time_budget` / `invalid_actions` (three consecutive unparseable judge
+responses, even after a repair prompt). Two new `run_log.jsonl` event types —
+`agent_decision` (the chosen tool + rationale) and `agent_tool` (the dispatch
+layer's accept/reject outcome) — sit alongside the reused
+`probe`/`analysis`/`diagnosis`/`surgery` events from the wrapped stages; see
+`evalvitals.eval_agent.log_schema` (schema version 3).
 
 ## Input Modes — Submitting a Diagnosis Run
 

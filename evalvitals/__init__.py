@@ -74,6 +74,7 @@ __all__ = [
     "get_spec",
     "list_specs",
     "run",
+    "explore",
     "AnalysisConfig",
     "Model",
     "Analyzer",
@@ -83,6 +84,16 @@ __all__ = [
     "Capability",
     "registry",
 ]
+
+
+def __getattr__(name: str):
+    # Lazy: evalvitals.analysis pulls in the CLI-agent runtime, which most
+    # `import evalvitals` callers (running an analyzer directly) don't need.
+    if name == "explore":
+        from evalvitals.analysis import explore
+
+        return explore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def run(config: AnalysisConfig, data, **kwargs):

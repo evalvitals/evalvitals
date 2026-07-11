@@ -28,36 +28,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from evalvitals.agent_runtime.sandbox import ExperimentSandbox, SandboxResult
 from evalvitals.analysis.profile import describe_outcome, profile_records
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     GENERATE_PROMPT_RAW_FOLDER as _GENERATE_PROMPT_RAW_FOLDER,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     GENERATE_PROMPT_RECORDS as _GENERATE_PROMPT_RECORDS,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     GENERIC_FRAMING as _GENERIC_FRAMING,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     RECORDS_FILENAME,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     REPAIR_PROMPT as _REPAIR_PROMPT,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     RESULT_MARKER as _RESULT_MARKER,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     fences_hint as _fences_hint,
 )
-from evalvitals.eval_agent.prompts.explorer import (
+from evalvitals.analysis.prompts.explorer import (
     skills_hint as _skills_hint,
 )
-from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult
 
 if TYPE_CHECKING:
+    from evalvitals.agent_runtime.cli_types import CliAgentConfig
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ class ExploratoryAnalysisAgent:
         # ones (eval-chart-style, nature-figure, evalvitals-report-ui) so agent
         # figures follow the house chart-type policy without per-caller wiring.
         if use_bundled_skills and cli_config is not None and not cli_config.skills:
-            from evalvitals.eval_agent.skills.resolver import resolve_skill_paths
+            from evalvitals.agent_runtime.skills.resolver import resolve_skill_paths
 
             bundled = resolve_skill_paths(
                 provider=cli_config.provider,
@@ -514,7 +514,7 @@ class ExploratoryAnalysisAgent:
         return _extract_code(raw_text), raw_text
 
     def _run_cli_writer(self, prompt: str) -> tuple[str, str]:
-        from evalvitals.eval_agent.codegen import CodegenRunner
+        from evalvitals.agent_runtime.codegen import CodegenRunner
 
         result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
             prompt,

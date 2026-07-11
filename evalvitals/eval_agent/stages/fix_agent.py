@@ -87,9 +87,9 @@ from evalvitals.stats.ebh import ebh
 from evalvitals.stats.evalue import evalue_bernoulli
 
 if TYPE_CHECKING:
+    from evalvitals.agent_runtime.cli_types import CliAgentConfig
     from evalvitals.core.case import CaseBatch, FailureCase
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
     from evalvitals.eval_agent.hypothesis import Hypothesis
     from evalvitals.eval_agent.run_context import Trial
 
@@ -827,7 +827,7 @@ class FixAgent:
     ) -> "tuple[str, str]":
         from pathlib import Path
 
-        from evalvitals.eval_agent.codegen import CodegenRunner
+        from evalvitals.agent_runtime.codegen import CodegenRunner
 
         workdir = Path(self._workdir(trial))
         result = CodegenRunner(self._cli_config).write_code(  # type: ignore[arg-type]
@@ -850,7 +850,7 @@ class FixAgent:
         if trial is not None:
             return str(trial.workspace)
         if self._sandbox is None:
-            from evalvitals.eval_agent.sandbox import ExperimentSandbox
+            from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
             workdir = (
                 self._run_context.new_workdir("fix")

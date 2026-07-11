@@ -36,7 +36,7 @@ from typing import Any
 
 from evalvitals.eval_agent.run_logger import RUN_LOG_SCHEMA_VERSION
 
-#: The ten event types emitted to ``run_log.jsonl``.
+#: The event types emitted to ``run_log.jsonl``.
 EVENT_TYPES: tuple[str, ...] = (
     "run_start",
     "probe",
@@ -48,6 +48,8 @@ EVENT_TYPES: tuple[str, ...] = (
     "loop_end",
     "tool_codegen",
     "tool_registry",
+    "agent_decision",
+    "agent_tool",
 )
 
 #: Path to the committed, rendered schema shipped as package data.
@@ -140,6 +142,9 @@ _EVENTS: dict[str, dict[str, Any]] = {
             "referenced_charts": {"type": "array", "items": {"type": "string"}},
             "explore_context_used": {"type": "boolean"},
             "explore_figures": {"type": "array", "items": {"type": "string"}},
+            # Whether a (clustered, descriptive-only) FailureModeReport was
+            # shown to M3 — additive field, no schema version bump needed.
+            "failure_modes_used": {"type": "boolean"},
             "judge_io": _JUDGE_IO,
             "duration_sec": {"type": "number"},
         },
@@ -217,6 +222,31 @@ _EVENTS: dict[str, dict[str, Any]] = {
             "module": {"type": "string"},
             "n_tools": {"type": "integer"},
             "tools": {"type": "array"},
+        },
+    },
+    "agent_decision": {
+        "required": ["step", "action", "valid"],
+        "properties": {
+            "step": {"type": "integer"},
+            "action": {"type": "string"},
+            "params": {"type": "object"},
+            "rationale": {"type": "string"},
+            "valid": {"type": "boolean"},
+            "repair_attempts": {"type": "integer"},
+            "fallback_used": {"type": "boolean"},
+            "judge_io": _JUDGE_IO,
+            "duration_sec": {"type": "number"},
+        },
+    },
+    "agent_tool": {
+        "required": ["step", "tool", "ok"],
+        "properties": {
+            "step": {"type": "integer"},
+            "tool": {"type": "string"},
+            "ok": {"type": "boolean"},
+            "summary": {"type": "string"},
+            "error": {"type": ["string", "null"]},
+            "duration_sec": {"type": "number"},
         },
     },
 }

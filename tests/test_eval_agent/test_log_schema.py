@@ -46,11 +46,11 @@ def _emit_every_event_type(run_dir) -> list[dict]:
     classes (not bespoke fakes) wherever cheap, so the lines are exactly what a
     real run produces — the whole point of the conformance check.
     """
+    from evalvitals.analysis.stats_agent import StatsAnalysisReport
     from evalvitals.core.result import Result
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
     from evalvitals.eval_agent.run_logger import RunLogger
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisResult
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
     from evalvitals.eval_agent.stages.surgery import InterventionResult
 
     logger = RunLogger(run_dir=run_dir)
@@ -92,6 +92,11 @@ def _emit_every_event_type(run_dir) -> list[dict]:
         0, "m1_probe",
         [SimpleNamespace(name="gen_probe", code="print(1)", need="x", source="llm")],
     )
+
+    logger.log_agent_decision(
+        0, action="run_probe", params={}, rationale="need M1 findings first", valid=True,
+    )
+    logger.log_agent_tool(0, tool="run_probe", ok=True, summary="1 analyzer ran")
 
     logger.log_fix(SimpleNamespace(to_dict=lambda: {"attempted": [], "recommendation": None}))
 

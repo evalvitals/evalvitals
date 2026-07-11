@@ -11,6 +11,7 @@ but callers do not need to import from ``evalvitals.eval_agent.stages``.
 """
 
 from evalvitals.analysis.adjudicate import adjudicate_report, adjudicate_signals
+from evalvitals.analysis.api import ExploreRunResult, explore
 from evalvitals.analysis.explorer import (
     CandidateSignal,
     ExploratoryAnalysisAgent,
@@ -19,6 +20,7 @@ from evalvitals.analysis.explorer import (
     load_records_from_path,
     scan_folder,
 )
+from evalvitals.analysis.failure_modes import FailureMode, FailureModeReport, cluster_failures
 from evalvitals.analysis.fused_pipeline import (
     FusedReport,
     FusedSignal,
@@ -59,6 +61,11 @@ from evalvitals.reporting.compiler import compile_diagnostic_report
 from evalvitals.reporting.model import Claim, DiagnosticReport, Evidence, ReportStep
 
 __all__ = [
+    "explore",
+    "ExploreRunResult",
+    "cluster_failures",
+    "FailureMode",
+    "FailureModeReport",
     "StatsAnalysisAgent",
     "StatsAnalysisReport",
     "ExploratoryAnalysisAgent",

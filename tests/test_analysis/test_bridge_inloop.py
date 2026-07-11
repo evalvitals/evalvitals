@@ -10,8 +10,8 @@ from evalvitals.analysis.operationalize import (
     per_case_to_records,
     safe_ident,
 )
+from evalvitals.analysis.stats_tools import build_stats_input
 from evalvitals.eval_agent.loop import VLDiagnoseLoop
-from evalvitals.eval_agent.stages.stats_tools import build_stats_input
 
 
 class _FakeResult:
@@ -146,7 +146,7 @@ def test_loop_bridge_signals_is_noop_without_recipes():
 def test_loop_bridge_raises_stats_signal_cap_so_bridged_signals_are_tested():
     """Regression: a low max_signal_tools must not silently cap the bridged signals
     (they are appended last to per_case). The bridge raises the cap to cover them."""
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 
     probe_results = _probe_results()  # saliency.obj_size + saliency.attention
     recipe = SignalRecipe(name="small", kind="expr", expr="saliency_obj_size < 40")

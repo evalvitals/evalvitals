@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from evalvitals.eval_agent.loop import AutoDiagnoseReport
+    from evalvitals.eval_agent.loop_reports import AutoDiagnoseReport
 
 logger = logging.getLogger(__name__)
 

@@ -17,7 +17,7 @@ subprocess.  So the split is:
 
 This keeps the M2-tier(b) safety model: generated code never touches the repo
 source, never sees the weights, and runs in an
-:class:`~evalvitals.eval_agent.sandbox.ExperimentSandbox` subprocess.
+:class:`~evalvitals.agent_runtime.sandbox.ExperimentSandbox` subprocess.
 
 Scope (v1): probes that are **functions over a single forward-pass output**.
 Multi-sample (self-consistency), perturbation, and white-box probes need the
@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 from evalvitals.core.result import Result
 from evalvitals.eval_agent.prompts.probe_generator import (
     _GENERATE_PROMPT,
@@ -40,12 +41,11 @@ from evalvitals.eval_agent.prompts.probe_generator import (
     _MAX_OUTPUT_CHARS,
     _RESULT_MARKER,
 )
-from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 if TYPE_CHECKING:
+    from evalvitals.agent_runtime.cli_types import CliAgentConfig
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ class ProbeGenerator:
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str) -> str:
-        from evalvitals.eval_agent.codegen import CodegenRunner
+        from evalvitals.agent_runtime.codegen import CodegenRunner
 
         prompt = self._build_prompt(need, fenced=False)
         self._last_prompt = prompt

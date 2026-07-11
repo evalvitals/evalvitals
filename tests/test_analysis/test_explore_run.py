@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from evalvitals.analysis import explore_run
+from evalvitals.analysis import api as explore_api
 from evalvitals.analysis.explore_run import _verdict_suffix, run_explore, write_report_artifacts
 from evalvitals.analysis.explorer import CandidateSignal, ExploratoryAnalysisReport
 from evalvitals.analysis.hypothesis_agent import Hypothesis
@@ -99,8 +99,8 @@ class _FakeHypothesisAgent:
 
 
 def test_run_explore_wires_m3_hypotheses_into_the_persisted_report(tmp_path, monkeypatch):
-    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeExploreAgent)
-    monkeypatch.setattr(explore_run, "HypothesisAgent", _FakeHypothesisAgent)
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeExploreAgent)
+    monkeypatch.setattr(explore_api, "HypothesisAgent", _FakeHypothesisAgent)
 
     out_dir = tmp_path / "out"
     rc = run_explore(tmp_path / "records.json", out=out_dir, coder_provider="llm")
@@ -111,12 +111,12 @@ def test_run_explore_wires_m3_hypotheses_into_the_persisted_report(tmp_path, mon
 
 
 def test_run_explore_skips_m3_when_disabled(tmp_path, monkeypatch):
-    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeExploreAgent)
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeExploreAgent)
 
     def _boom(*_args, **_kwargs):
         raise AssertionError("HypothesisAgent should not be constructed when disabled")
 
-    monkeypatch.setattr(explore_run, "HypothesisAgent", _boom)
+    monkeypatch.setattr(explore_api, "HypothesisAgent", _boom)
 
     out_dir = tmp_path / "out"
     rc = run_explore(tmp_path / "records.json", out=out_dir, coder_provider="llm", propose_hypotheses=False)

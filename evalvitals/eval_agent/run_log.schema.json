@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://evalvitals.dev/schemas/run_log.schema.json",
   "title": "EvalVitals run_log.jsonl event",
-  "description": "One event per line in run_log.jsonl. Discriminated on `event`; matches schema_version 2. Permissive: extra (additive) fields are allowed.",
+  "description": "One event per line in run_log.jsonl. Discriminated on `event`; matches schema_version 3. Permissive: extra (additive) fields are allowed.",
   "$defs": {
     "envelope": {
       "type": "object",
@@ -25,11 +25,13 @@
             "fix",
             "loop_end",
             "tool_codegen",
-            "tool_registry"
+            "tool_registry",
+            "agent_decision",
+            "agent_tool"
           ]
         },
         "schema_version": {
-          "const": 2
+          "const": 3
         },
         "ts": {
           "type": "string",
@@ -309,6 +311,9 @@
               "items": {
                 "type": "string"
               }
+            },
+            "failure_modes_used": {
+              "type": "boolean"
             },
             "judge_io": {
               "type": "object",
@@ -680,6 +685,110 @@
           ]
         }
       ]
+    },
+    "agent_decision": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "agent_decision"
+            },
+            "step": {
+              "type": "integer"
+            },
+            "action": {
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            },
+            "rationale": {
+              "type": "string"
+            },
+            "valid": {
+              "type": "boolean"
+            },
+            "repair_attempts": {
+              "type": "integer"
+            },
+            "fallback_used": {
+              "type": "boolean"
+            },
+            "judge_io": {
+              "type": "object",
+              "properties": {
+                "prompt_path": {
+                  "type": "string"
+                },
+                "prompt_chars": {
+                  "type": "integer"
+                },
+                "raw_path": {
+                  "type": "string"
+                },
+                "raw_chars": {
+                  "type": "integer"
+                }
+              }
+            },
+            "duration_sec": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "event",
+            "step",
+            "action",
+            "valid"
+          ]
+        }
+      ]
+    },
+    "agent_tool": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "agent_tool"
+            },
+            "step": {
+              "type": "integer"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "duration_sec": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "event",
+            "step",
+            "tool",
+            "ok"
+          ]
+        }
+      ]
     }
   },
   "oneOf": [
@@ -712,6 +821,12 @@
     },
     {
       "$ref": "#/$defs/tool_registry"
+    },
+    {
+      "$ref": "#/$defs/agent_decision"
+    },
+    {
+      "$ref": "#/$defs/agent_tool"
     }
   ]
 }

@@ -327,7 +327,7 @@ class TestStatsAnalysisAgent:
 
     def test_stats_report_is_analysis_report(self):
         # Backward compat: StatsAnalysisReport IS-A AnalysisReport
-        from evalvitals.eval_agent.stages.analysis import AnalysisReport
+        from evalvitals.analysis.analysis_module import AnalysisReport
         agent = StatsAnalysisAgent()
         report = agent.analyze({}, "m")
         assert isinstance(report, AnalysisReport)
@@ -750,7 +750,7 @@ class TestVLDiagnoseLoop:
             max_cycles=1,
         )
         report = loop.run(_labeled_batch())
-        from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
+        from evalvitals.analysis.stats_agent import StatsAnalysisReport
         assert isinstance(report.final_stats_report, StatsAnalysisReport)
 
     def test_stopped_by_max_cycles(self):

@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 from evalvitals.core.experiment import ExperimentRunner
 from evalvitals.eval_agent.ab_runner import ABRunner
-from evalvitals.eval_agent.loop import SelfEvolveLoop
+from evalvitals.eval_agent.legacy import SelfEvolveLoop
 from evalvitals.eval_agent.preregister import (
     DataSplit,
     PreregisteredHypothesis,

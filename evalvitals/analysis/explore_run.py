@@ -22,11 +22,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from evalvitals.analysis.adjudicate import adjudicate_report
-from evalvitals.analysis.explorer import RECORDS_FILENAME, ExploratoryAnalysisAgent
-from evalvitals.analysis.hypothesis_agent import HypothesisAgent
-from evalvitals.eval_agent.cli_types import CliAgentConfig
-from evalvitals.eval_agent.skills.resolver import resolve_skill_paths
+from evalvitals.analysis.api import explore
+from evalvitals.analysis.explorer import RECORDS_FILENAME
 from evalvitals.viz.renderer import render_chart_specs
 
 
@@ -73,51 +70,25 @@ def run_explore(
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    skill_dirs = resolve_skill_paths(
-        provider=coder_provider,
-        explicit=skills or (),
-        use_bundled=use_bundled_skills,
-    )
-
-    cli_config = CliAgentConfig(
-        provider=coder_provider,
-        binary_path=coder_binary,
-        model=coder_model,
-        timeout_sec=timeout_sec,
-        skills=skill_dirs,
-        allow_skills=allow_skills or bool(skill_dirs),
-    )
-    agent = ExploratoryAnalysisAgent(
-        cli_config=cli_config,
-        timeout_sec=timeout_sec,
-        max_attempts=max_attempts,
-        use_bundled_skills=use_bundled_skills,
-    )
-    report = agent.explore_path(
+    result = explore(
         path,
         question=question,
+        out=out_dir,
+        provider=coder_provider,
+        model=coder_model,
+        binary=coder_binary,
+        outcome_col=outcome_col,
+        propose_hypotheses=propose_hypotheses,
+        skills=skills,
+        allow_skills=allow_skills,
+        use_bundled_skills=use_bundled_skills,
         max_rows=max_rows,
         max_files=max_files,
         include_tool_calls=include_tool_calls,
-        outcome_col=outcome_col,
+        timeout_sec=timeout_sec,
+        max_attempts=max_attempts,
     )
-
-    # Host adjudication: any candidate that attached host-checkable `sufficient`
-    # stats gets a verdict recomputed by the validated core (the explorer never
-    # decides). A standalone run has no held-out split, so verdicts are IN-SAMPLE.
-    adjudicate_report(report, split_label="in_sample")
-
-    # M3: propose falsifiable hypotheses from M2's takeaways — proposal only,
-    # no validation. Only worth trying when M2 actually produced something to
-    # reason over.
-    if propose_hypotheses and report.ok and (report.takeaways or report.observations):
-        hyp_agent = HypothesisAgent(cli_config=cli_config, timeout_sec=timeout_sec)
-        try:
-            report.hypotheses = [h.to_dict() for h in hyp_agent.propose(report.to_dict())]
-        except Exception as exc:  # noqa: BLE001 — M3 is best-effort, never blocks persistence
-            print(f"hypothesis generation failed: {exc}")
-
-    write_report_artifacts(report, out_dir)
+    report = result.report
 
     print(f"ok: {report.ok}")
     print(f"attempts: {report.attempts}")

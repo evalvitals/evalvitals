@@ -25,37 +25,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.analysis.prompts.hypothesis_agent import PROPOSE_PROMPT as _PROPOSE_PROMPT
+
 if TYPE_CHECKING:
+    from evalvitals.agent_runtime.cli_types import CliAgentConfig
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
-
-_PROPOSE_PROMPT = """\
-You are an expert data analyst. Based on the exploratory analysis below,
-propose specific, falsifiable hypotheses that could explain the patterns
-found. A hypothesis is a candidate explanation or mechanism — not a
-restatement of a finding, and not a claim you are asked to prove here.
-
-Question investigated: {question}
-
-Key takeaways from the exploratory analysis (title: analysis):
-{takeaways_text}
-
-Observations:
-{observations_text}
-
-Candidate signals already noted:
-{signals_text}
-
-Propose 1-3 hypotheses. For each write exactly three lines:
-HYPOTHESIS: <one-sentence falsifiable claim explaining a pattern above>
-BASIS: <which takeaway(s)/signal(s) above this is grounded in>
-TEST: <what evidence/analysis would confirm or refute this claim>
-
-Do not repeat a takeaway verbatim — propose a CAUSE or MECHANISM behind what
-was observed. If the findings are too thin to support any falsifiable
-hypothesis, respond with exactly: NO_HYPOTHESIS"""
 
 
 @dataclass
@@ -134,7 +110,7 @@ class HypothesisAgent:
 
     def _generate(self, prompt: str) -> str:
         if self._cli_config is not None and self._cli_config.provider != "llm":
-            from evalvitals.eval_agent.codegen import CodegenRunner
+            from evalvitals.agent_runtime.codegen import CodegenRunner
 
             with tempfile.TemporaryDirectory(prefix="evalvitals_m3_") as tmp:
                 res = CodegenRunner(self._cli_config).run(
