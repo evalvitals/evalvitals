@@ -1,0 +1,5 @@
+# Either owner can approve changes anywhere in the repository.
+* @Nanboy-Ronan @jiaq-liu @evalvitals
+
+# Protect the ownership rules themselves.
+/.github/CODEOWNERS @Nanboy-Ronan @jiaq-liu @evalvitals
