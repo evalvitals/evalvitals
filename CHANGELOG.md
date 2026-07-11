@@ -6,6 +6,29 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `evalvitals web`: upload-a-.zip explore workbench
+
+- **`evalvitals web [WORKSPACE]`** (new CLI subcommand) serves a Streamlit page
+  (`analysis/upload_app.py`) where users upload a **.zip** of results
+  (JSON/JSONL/CSV; zipped folders are unwrapped, `__MACOSX`/`.DS_Store` junk
+  skipped, zip-slip rejected). Each upload becomes one run directory under the
+  workspace and is analysed by the ordinary `evalvitals explore` CLI (M2
+  exploratory analysis + M3 hypothesis proposal) as a **detached subprocess**
+  — closing the browser never kills an analysis; `job.sh`/`job.json`/
+  `exit_code` make every run observable and re-runnable by hand. Finished runs
+  render in place via the shared `dashboard_app.render_explore_report(...)`
+  (extracted from the dashboard's explore view — same tabs, including the
+  held-out verdict/fix tabs if pipeline artifacts appear later), and past runs
+  stay selectable in the sidebar with live status (🟡 running / 🟢 done /
+  🔴 failed / ⚪ stale).
+- `examples/m2_statistics/deco_hallu_explore/run_web.sh`: turnkey launcher
+  (`PORT`/`WORKSPACE`/`CODER_PROVIDER`/`CODER_MODEL`/`TIMEOUT_SEC` env
+  overrides; these only pre-fill the form — each upload can override in the UI).
+- Tests: `tests/test_analysis/test_upload_app.py` — zip staging (single-root
+  unwrap, junk skip, zip-slip/empty rejection), job argv/record/wrapper, status
+  transitions (running/done/failed/stale), and AppTest passes over the upload
+  form, a finished run (explore tabs render), and a failed run (log + hint).
+
 ### Added — agentic orchestrator, standalone data-analysis package, failure-mode clustering
 
 Four related changes make `eval_agent` more flexible/agentic and make

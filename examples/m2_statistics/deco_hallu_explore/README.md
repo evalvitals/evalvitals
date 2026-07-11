@@ -92,7 +92,7 @@ useful mainly as an informative-missingness case study).
 
 `run_attn.sh` analyses everything in-sample. The pipeline variant is the
 **complete example**: it splits the data by its `split` column and walks the
-full propose → held-out-test → repair arc, ending in one four-tab web report.
+full propose → held-out-test → repair arc, ending in one five-tab web report.
 
 **Prerequisites**
 
@@ -132,8 +132,9 @@ Env overrides: `CODER_MODEL` / `JUDGE_MODEL` (e.g. `claude-opus-4-8`),
    tiered fix (L1→L3b) on the loop example's frozen M1 batch (GPU).
 
 `confirm_report.json` / `fix_report.json` land next to the exploratory report;
-the dashboard then shows a fourth tab (**Held-out Verdicts & Fix**) and badges
-each hypothesis card:
+the dashboard keeps tab 3 as the *pure proposal* (unvalidated hypotheses, as in
+`run_attn.sh`) and adds separate **4 Held-out Verdicts** and **5 Fix** tabs —
+with `SKIP_FIX=1` only the verdicts tab appears:
 
 ```bash
 evalvitals dashboard outputs_pipeline/1_explore
@@ -150,6 +151,32 @@ form — and the tiered fix swept 10 candidates to find that a plain L1 prompt
 12 hallucinations and broke 0 (paired McNemar, e=315 → REJECT H0), beating
 every L3b internals-write intervention. Correlation survived held-out;
 mechanism died under intervention; the cheapest repair won.
+
+## Web upload workbench (`run_web.sh`)
+
+The variants above analyse the directories committed with this example. The
+workbench flips the direction: it serves a page where anyone **uploads a
+.zip** of results (JSON / JSONL / CSV — a zipped folder works too) and each
+upload becomes one `evalvitals explore` run:
+
+```bash
+bash run_web.sh                 # serves http://localhost:8500
+PORT=8600 CODER_PROVIDER=codex bash run_web.sh
+```
+
+Pick the outcome column / question / backend in the form, hit *Start
+analysis*, and watch the live log; the analysis runs as a **detached
+subprocess** (closing the tab never kills it) and the finished report renders
+in place with the same tabs as `evalvitals dashboard`. Every upload lands
+under `web_runs/<name>/` (`data/` extracted payload, `output/` report
+artifacts, `explore.log`, `job.sh` to re-run it by hand) and past runs stay
+selectable in the sidebar. Try it by zipping `data_2b_attn/` or
+`data_attn_full/` and uploading that.
+
+Env overrides: `PORT` (default 8500), `WORKSPACE` (default `web_runs`),
+`CODER_PROVIDER` / `CODER_MODEL` / `TIMEOUT_SEC` — these only set the form's
+defaults; each upload can override them in the UI. The generic entry point is
+`evalvitals web <workspace> --port N` (this script is a thin wrapper).
 
 See [`docs/m2_analysis.md`](../../../docs/m2_analysis.md) for the general
 standalone M2/M3 workflow, and
