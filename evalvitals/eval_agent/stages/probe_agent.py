@@ -181,7 +181,7 @@ class ProbeAgent:
         2. **Static fallback** — when no judge or no protocol, uses
            :class:`~evalvitals.eval_agent.probe.StrategyProbe` with the
            optional *hint_failure_modes* list for priority-boosting (used by
-           :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`).
+           :class:`~evalvitals.eval_agent.legacy.AutoDiagnoseLoop`).
 
         Analyzers are executed in parallel using a ``ThreadPoolExecutor`` so
         that independent analyzers do not wait on each other.
@@ -197,7 +197,7 @@ class ProbeAgent:
             prior_hypotheses:    Hypotheses from M3 in prior cycles.  Passed to
                                  the judge as context for focused follow-up.
             hint_failure_modes:  Failure-mode tags for the static fallback path
-                                 (e.g. from :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`).
+                                 (e.g. from :class:`~evalvitals.eval_agent.legacy.AutoDiagnoseLoop`).
         """
         rationale: str
         self._last_need_custom = None
@@ -677,7 +677,7 @@ class ProbeAgent:
             "docker", "run", "--rm", "-i",
             "--env", self.model_env_var,
             self.docker_image,
-            "python", "-m", "evalvitals.eval_agent._docker_runner",
+            "python", "-m", "evalvitals.agent_runtime._docker_runner",
         ]
         try:
             proc = subprocess.run(

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from evalvitals.analysis.stats_agent import StatsAnalysisReport
+from evalvitals.analysis.stats_tools import StatsToolResult
 from evalvitals.core.capability import Capability
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
 from evalvitals.eval_agent import HypothesisTester, ProbeAgent
@@ -26,8 +28,6 @@ from evalvitals.eval_agent.stages.hypothesis_tester import (
     _evidence_grade,
 )
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
-from evalvitals.eval_agent.stages.stats_tools import StatsToolResult
 from tests.conftest import FakeModel
 
 # ── fixtures ────────────────────────────────────────────────────────────────

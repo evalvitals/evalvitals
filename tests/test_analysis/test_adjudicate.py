@@ -7,6 +7,7 @@ applies one e-BH family, never trusts a self-declared verdict).
 
 from __future__ import annotations
 
+from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 from evalvitals.analysis import (
     CandidateSignal,
     ExploratoryAnalysisAgent,
@@ -14,7 +15,6 @@ from evalvitals.analysis import (
     adjudicate_report,
     adjudicate_signals,
 )
-from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 
 def _sig(name: str, sufficient=None) -> CandidateSignal:

@@ -12,15 +12,15 @@ Covers:
 from __future__ import annotations
 
 import evalvitals.analysis as public_analysis
-from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
-from evalvitals.core.result import Result
-from evalvitals.eval_agent import StatsAnalysisAgent, build_stats_input, fdr_correct
-from evalvitals.eval_agent.stages.stats_tools import (
+from evalvitals.analysis.stats_tools import (
     StatsInput,
     StatsToolResult,
     default_plan,
     run_stats_tool,
 )
+from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
+from evalvitals.core.result import Result
+from evalvitals.eval_agent import StatsAnalysisAgent, build_stats_input, fdr_correct
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 

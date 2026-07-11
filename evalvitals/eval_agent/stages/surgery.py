@@ -242,7 +242,7 @@ class SurgeryAgent:
             if run_context is None or sandbox_dir is not None:
                 # No RunContext (or an explicit override): one shared sandbox
                 # for the agent's lifetime, exactly as before.
-                from evalvitals.eval_agent.sandbox import ExperimentSandbox
+                from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
                 self._sandbox = ExperimentSandbox(workdir=sandbox_dir)
             # Else: each operate() call allocates its own trial + durable,
@@ -375,7 +375,7 @@ class SurgeryAgent:
         sandbox = self._sandbox
         trial = None
         if sandbox is None and self._run_context is not None:
-            from evalvitals.eval_agent.sandbox import ExperimentSandbox
+            from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
             label = getattr(hypothesis, "predicted_failure_mode", "") or "experiment"
             trial = self._run_context.new_trial("experiments", label)

@@ -290,7 +290,7 @@ def test_write_report_file_text(tmp_path):
 
 def test_write_diagnose_report_vl_style(tmp_path):
     """VLDiagnoseReport shape: all_hypotheses / all_test_results / stopped_by."""
-    from evalvitals.eval_agent.loop import VLDiagnoseReport
+    from evalvitals.eval_agent.loop_reports import VLDiagnoseReport
     from evalvitals.eval_agent.run_context import RunContext
 
     hyp = _make_hypothesis()
@@ -338,7 +338,7 @@ def test_write_diagnose_report_vl_style(tmp_path):
 
 
 def test_write_diagnose_report_without_discovery_omits_file(tmp_path):
-    from evalvitals.eval_agent.loop import VLDiagnoseReport
+    from evalvitals.eval_agent.loop_reports import VLDiagnoseReport
     from evalvitals.eval_agent.run_context import RunContext
 
     report = VLDiagnoseReport(cycles=1, stopped_by="max_cycles")

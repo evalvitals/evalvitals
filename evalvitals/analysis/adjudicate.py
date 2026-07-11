@@ -33,8 +33,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from evalvitals.eval_agent.stages.stats_tool_generator import _reconstruct_decision
-from evalvitals.eval_agent.stages.stats_tools import StatsToolResult, fdr_correct
+from evalvitals.analysis.stats_tool_generator import _reconstruct_decision
+from evalvitals.analysis.stats_tools import StatsToolResult, fdr_correct
 
 if TYPE_CHECKING:
     from evalvitals.analysis.explorer import CandidateSignal, ExploratoryAnalysisReport

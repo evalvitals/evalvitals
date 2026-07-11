@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.agent_runtime.sandbox import ExperimentSandbox, SandboxResult
 from evalvitals.eval_agent.prompts.experiment_writer import (
     _BLUEPRINT_SYSTEM,
     _BLUEPRINT_USER,
@@ -57,12 +58,11 @@ from evalvitals.eval_agent.prompts.experiment_writer import (
     _WRITE_USER,
     build_cli_prompt,
 )
-from evalvitals.eval_agent.sandbox import ExperimentSandbox, SandboxResult
 
 if TYPE_CHECKING:
+    from evalvitals.agent_runtime.sandbox import SandboxProtocol
     from evalvitals.core.model import Model
     from evalvitals.eval_agent.hypothesis import Hypothesis
-    from evalvitals.eval_agent.sandbox import SandboxProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class ExperimentWriterConfig:
 
     To use a CLI coding agent for M4 instead of the single-pass LLM::
 
-        from evalvitals.eval_agent.cli_types import CliAgentConfig
+        from evalvitals.agent_runtime.cli_types import CliAgentConfig
         cfg = ExperimentWriterConfig(
             cli_agent=CliAgentConfig(provider="claude_code", model="sonnet"),
         )
@@ -324,7 +324,7 @@ class ExperimentWriter:
         # CLI agent dispatch (unchanged from previous implementation)
         cli_cfg = self._cfg.cli_agent
         if cli_cfg is None:
-            from evalvitals.eval_agent.cli_types import CliAgentConfig
+            from evalvitals.agent_runtime.cli_types import CliAgentConfig
             cli_cfg = CliAgentConfig()
         if cli_cfg.provider != "llm":
             return self._cli_write_and_run(
@@ -1209,7 +1209,7 @@ class ExperimentWriter:
             hypothesis, model_context, self._cfg.exec_fix_timeout_sec,
             n_images=_n_images,
         )
-        from evalvitals.eval_agent.codegen import CodegenRunner
+        from evalvitals.agent_runtime.codegen import CodegenRunner
 
         self._log_event(f"  invoking {cli_cfg.provider!r}")
         cli_result = CodegenRunner(cli_cfg).run(

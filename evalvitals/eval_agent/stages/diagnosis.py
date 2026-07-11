@@ -25,13 +25,14 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from evalvitals.agent_runtime.json_shape import validate_json_shape
 from evalvitals.eval_agent.hypothesis import Hypothesis
 from evalvitals.eval_agent.prompts.diagnosis import _DIAGNOSE_PROMPT, _VALIDATE_PROMPT
 
 if TYPE_CHECKING:
+    from evalvitals.analysis.analysis_module import AnalysisReport
     from evalvitals.core.model import Model
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.stages.analysis import AnalysisReport
 
 def _format_prior_section(prior_cycles: list[dict]) -> str:
     """Render prior cycle history as a context block for the diagnosis prompt."""
@@ -138,6 +139,17 @@ def _format_explore_section(ctx: "ExploreContext | None") -> str:
     return "\n".join(lines) + "\n"
 
 
+def _format_failure_modes_section(report: "Any | None") -> str:
+    """Render a :class:`~evalvitals.analysis.failure_modes.FailureModeReport`
+    as a labelled block for the diagnosis prompt. Descriptive only — clustering
+    groups FAIL cases by similarity, it does not itself confirm a mechanism.
+    Returns ``""`` when there is nothing to add (no report, or zero clusters)."""
+    context = getattr(report, "as_hypothesis_context", lambda: "")()
+    if not context:
+        return ""
+    return "\n" + context + "\n"
+
+
 def _extract_referenced(raw: str, ctx: "ExploreContext | None") -> list[str]:
     """Best-effort, DISPLAY-ONLY list of explore artifacts M3's output referenced.
 
@@ -175,6 +187,7 @@ class DiagnosisResult:
         raw_judge_output:     Verbatim LLM response (useful for debugging).
         referenced_charts:    Explore chart titles M3 cited (provenance only).
         explore_context_used: Whether an :class:`ExploreContext` was supplied.
+        failure_modes_used:   Whether a non-empty ``FailureModeReport`` was supplied.
     """
 
     model_name: str
@@ -184,6 +197,7 @@ class DiagnosisResult:
     prompt: str = ""
     referenced_charts: list[str] = field(default_factory=list)
     explore_context_used: bool = False
+    failure_modes_used: bool = False
 
 
 _HYPOTHESIS_SCHEMA: dict = {
@@ -197,46 +211,6 @@ _HYPOTHESIS_SCHEMA: dict = {
         },
     },
 }
-
-
-def _validate_json_schema(data: object, schema: dict) -> list[str]:
-    """Minimal JSON schema validator (no external deps).
-
-    Returns a list of error strings; empty means valid.
-    Only handles type/required/minLength — enough to catch the common
-    LLM mistakes (missing field, empty string, wrong top-level type).
-    """
-    errors: list[str] = []
-
-    def _check(node: object, s: dict, path: str) -> None:
-        expected_type = s.get("type")
-        if expected_type == "array":
-            if not isinstance(node, list):
-                errors.append(f"{path}: expected array, got {type(node).__name__}")
-                return
-            item_schema = s.get("items", {})
-            for i, item in enumerate(node):
-                _check(item, item_schema, f"{path}[{i}]")
-        elif expected_type == "object":
-            if not isinstance(node, dict):
-                errors.append(f"{path}: expected object, got {type(node).__name__}")
-                return
-            for req in s.get("required", []):
-                if req not in node:
-                    errors.append(f"{path}: missing required field '{req}'")
-            for prop, prop_schema in s.get("properties", {}).items():
-                if prop in node:
-                    _check(node[prop], prop_schema, f"{path}.{prop}")
-        elif expected_type == "string":
-            if not isinstance(node, str):
-                errors.append(f"{path}: expected string, got {type(node).__name__}")
-            elif "minLength" in s and len(node) < s["minLength"]:
-                errors.append(
-                    f"{path}: string too short ({len(node)} < {s['minLength']})"
-                )
-
-    _check(data, schema, "$")
-    return errors
 
 
 def _parse_hypotheses_json(raw: str, model_name: str) -> list[Hypothesis] | None:
@@ -256,7 +230,7 @@ def _parse_hypotheses_json(raw: str, model_name: str) -> list[Hypothesis] | None
     except json.JSONDecodeError:
         return None
 
-    errors = _validate_json_schema(data, _HYPOTHESIS_SCHEMA)
+    errors = validate_json_shape(data, _HYPOTHESIS_SCHEMA)
     if errors:
         import logging as _logging
         _logging.getLogger(__name__).debug(
@@ -385,7 +359,7 @@ def _default_judge() -> "Model":
     import shutil
 
     if shutil.which("agy"):
-        from evalvitals.eval_agent.models import AgyModel
+        from evalvitals.agent_runtime.judges import AgyModel
         return AgyModel()
 
     if os.getenv("GEMINI_API_KEY"):
@@ -441,6 +415,7 @@ class DiagnosisAgent:
         model_name: str = "",
         prior_cycles: list[dict] | None = None,
         explore_context: "ExploreContext | None" = None,
+        failure_modes: "Any | None" = None,
     ) -> DiagnosisResult:
         """Synthesize *analysis* into a set of falsifiable hypotheses.
 
@@ -451,16 +426,21 @@ class DiagnosisAgent:
             model_name:   Ignored when *analysis* is an ``AnalysisReport``
                           (the name is taken from the report).
             prior_cycles: Summary of previous M1→M4 cycles produced by
-                          :class:`~evalvitals.eval_agent.loop.AutoDiagnoseLoop`.
+                          :class:`~evalvitals.eval_agent.legacy.AutoDiagnoseLoop`.
                           Each entry is ``{"cycle": int, "severity": str,
                           "hypotheses": [{"statement", "failure_mode", "status"}]}``.
                           Injected into the prompt so the judge avoids re-proposing
                           already-tested hypotheses.
+            failure_modes: Optional :class:`~evalvitals.analysis.failure_modes.FailureModeReport`
+                          (clustered FAIL cases). Descriptive only, like
+                          *explore_context* — informs which hypotheses M3
+                          proposes, never a claim itself. ``None`` (default)
+                          adds nothing to the prompt and costs no extra call.
 
         Returns:
             :class:`DiagnosisResult` with zero or more hypotheses.
         """
-        from evalvitals.eval_agent.stages.analysis import AnalysisModule, AnalysisReport
+        from evalvitals.analysis.analysis_module import AnalysisModule, AnalysisReport
 
         if not isinstance(analysis, AnalysisReport):
             # Backward compat: wrap raw results in a minimal AnalysisReport.
@@ -518,6 +498,7 @@ class DiagnosisAgent:
             evidence_section=evidence_section,
             stats_section=stats_section,
             explore_section=_format_explore_section(explore_context),
+            failure_modes_section=_format_failure_modes_section(failure_modes),
             available_signals_section=available_signals_section,
             findings_json=json.dumps(summary, indent=2, default=str),
         )
@@ -548,7 +529,7 @@ class DiagnosisAgent:
         # auto-generate one hypothesis per finding so M4 can still run.
         # This prevents self-diagnosis bias when the judge is the model under test.
         if not hypotheses and analysis.findings:
-            from evalvitals.eval_agent.stages.analysis import _SEVERITY_ORDER
+            from evalvitals.analysis.analysis_module import _SEVERITY_ORDER
             for finding in analysis.findings:
                 if _SEVERITY_ORDER.get(finding.severity, 0) >= 2:  # medium or high
                     hypotheses.append(Hypothesis(
@@ -568,4 +549,5 @@ class DiagnosisAgent:
             prompt=prompt,
             referenced_charts=_extract_referenced(str(raw), explore_context),
             explore_context_used=bool(explore_context is not None and not explore_context.is_empty),
+            failure_modes_used=bool(getattr(failure_modes, "clusters", None)),
         )

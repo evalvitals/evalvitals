@@ -61,21 +61,26 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from evalvitals.analysis.analysis_module import AnalysisReport
     from evalvitals.core.result import Result
     from evalvitals.eval_agent.hypothesis import Hypothesis
-    from evalvitals.eval_agent.loop import AutoDiagnoseReport
-    from evalvitals.eval_agent.stages.analysis import AnalysisReport
+    from evalvitals.eval_agent.loop_reports import AutoDiagnoseReport
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisResult
     from evalvitals.eval_agent.stages.surgery import InterventionResult
 
-# Bump when an existing event's fields are renamed, removed, or change meaning
-# (additive fields don't need a bump). Downstream parsers of run_log.jsonl can
-# branch on this instead of guessing from `evalvitals_version`.
+# Bump when an existing event's fields are renamed, removed, or change meaning,
+# or when a new event TYPE is added (additive fields on an existing event don't
+# need a bump). Downstream parsers of run_log.jsonl can branch on this instead
+# of guessing from `evalvitals_version`.
 # v2: `analysis`'s stats_tool_results/stats_results/stats_plan/
 #     corrected_rejections are now conditionally externalized (see
 #     _externalize_if_large) — a {path, n_items, bytes} summary instead of
 #     the raw value once it exceeds _INLINE_MAX_BYTES.
-RUN_LOG_SCHEMA_VERSION = 2
+# v3: two new event types for AgenticDiagnoseLoop — `agent_decision` (one judge
+#     decision turn: chosen tool + rationale, keyed by `step` not `cycle`) and
+#     `agent_tool` (the dispatch layer's accept/reject outcome for that tool
+#     call). VLDiagnoseLoop/AutoDiagnoseLoop's events are unchanged.
+RUN_LOG_SCHEMA_VERSION = 3
 
 
 def _artifact_to_numpy(artifact: Any) -> "Any | None":
@@ -701,6 +706,8 @@ class RunLogger:
             entry["referenced_charts"] = list(referenced)
         if getattr(diag, "explore_context_used", False):
             entry["explore_context_used"] = True
+        if getattr(diag, "failure_modes_used", False):
+            entry["failure_modes_used"] = True
         if explore_figures:
             entry["explore_figures"] = list(explore_figures)
         judge_io = self._save_judge_io(
@@ -745,6 +752,74 @@ class RunLogger:
         if duration_sec is not None:
             entry["duration_sec"] = round(duration_sec, 3)
         self._log(entry, span_id=f"c{cycle}.{span_suffix}")
+
+    def log_agent_decision(
+        self,
+        step: int,
+        *,
+        action: str,
+        params: "dict[str, Any] | None" = None,
+        rationale: str = "",
+        valid: bool = True,
+        repair_attempts: int = 0,
+        fallback_used: bool = False,
+        judge_prompt: "str | None" = None,
+        judge_raw: "str | None" = None,
+        duration_sec: "float | None" = None,
+    ) -> None:
+        """AgenticDiagnoseLoop: log one judge decision turn (chosen tool + why).
+
+        ``valid`` is False when the judge's output could not be parsed even
+        after a repair attempt and the host fell back to a deterministic
+        next-step heuristic instead (see
+        :func:`~evalvitals.eval_agent.agentic.actions.decide`).
+        """
+        entry: dict[str, Any] = {
+            "event": "agent_decision",
+            "step": step,
+            "action": action,
+            "params": params or {},
+            "rationale": rationale,
+            "valid": valid,
+            "repair_attempts": repair_attempts,
+            "fallback_used": fallback_used,
+        }
+        judge_io = self._save_judge_io(f"s{step}_agent_decision", judge_prompt, judge_raw)
+        if judge_io:
+            entry["judge_io"] = judge_io
+        if duration_sec is not None:
+            entry["duration_sec"] = round(duration_sec, 3)
+        self._log(entry, span_id=f"s{step}.decision")
+
+    def log_agent_tool(
+        self,
+        step: int,
+        *,
+        tool: str,
+        ok: bool,
+        summary: str = "",
+        error: "str | None" = None,
+        duration_sec: "float | None" = None,
+    ) -> None:
+        """AgenticDiagnoseLoop: log the outcome of dispatching one tool call.
+
+        Stage-specific events (``probe``/``analysis``/``diagnosis``/``surgery``)
+        are still emitted by the wrapped stage itself, keyed by ``cycle=step``;
+        this event records the agentic dispatch layer's own accept/reject
+        decision (call caps, unmet preconditions, the stop-gate).
+        """
+        entry: dict[str, Any] = {
+            "event": "agent_tool",
+            "step": step,
+            "tool": tool,
+            "ok": ok,
+            "summary": summary,
+        }
+        if error is not None:
+            entry["error"] = error
+        if duration_sec is not None:
+            entry["duration_sec"] = round(duration_sec, 3)
+        self._log(entry, span_id=f"s{step}.tool")
 
     def log_fix(self, outcome: "Any") -> None:
         """Post-loop fix module: log the tiered repair attempt + recommendation.

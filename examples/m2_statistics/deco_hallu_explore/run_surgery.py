@@ -166,7 +166,7 @@ def main() -> None:
         SurgeryAgent,
         VLDiagnoseLoop,
     )
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
     from evalvitals.models.backends.base import RuntimeConfig
 
     judge = loop_run.build_judge(loop_run.CFG.get("judge_model", "claude-opus-4-8"),

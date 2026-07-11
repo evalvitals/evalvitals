@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from evalvitals.analysis import StatsAnalysisAgent, profile_records
-from evalvitals.eval_agent.stages.stats_tools import StatsInput, default_plan
+from evalvitals.analysis.stats_tools import StatsInput, default_plan
 
 
 def test_profile_records_infers_roles_and_grain():

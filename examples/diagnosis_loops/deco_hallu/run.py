@@ -231,7 +231,7 @@ def main() -> None:
     )
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
     from evalvitals.models.backends.base import RuntimeConfig
 
     judge = build_judge(args.judge_model, args.judge_effort)

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from evalvitals.agent_assets.skills import SKILL_BACKENDS, bundled_skill_paths
+from evalvitals.analysis import api as explore_api
 from evalvitals.analysis import explore_run
 
 
@@ -55,7 +56,7 @@ def test_explore_applies_bundled_skills_on_claude_by_default(monkeypatch, tmp_pa
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeAgent)
     explore_run.run_explore(tmp_path, coder_provider="claude_code", out=tmp_path / "o")
 
     cfg = captured["cli_config"]
@@ -75,7 +76,7 @@ def test_explore_applies_bundled_skills_on_codex_by_default(monkeypatch, tmp_pat
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeAgent)
     # codex reaches the same vendored SKILL.md files through AGENTS.md.
     explore_run.run_explore(tmp_path, coder_provider="codex", out=tmp_path / "o")
     cfg = captured["cli_config"]
@@ -93,7 +94,7 @@ def test_no_skills_flag_disables_bundled(monkeypatch, tmp_path):
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeAgent)
     explore_run.run_explore(
         tmp_path, coder_provider="claude_code", out=tmp_path / "o", use_bundled_skills=False
     )
@@ -111,7 +112,7 @@ def test_non_skill_backend_does_not_vendor_skills(monkeypatch, tmp_path):
             from evalvitals.analysis.explorer import ExploratoryAnalysisReport
             return ExploratoryAnalysisReport(question="q", ok=True, workdir=str(tmp_path))
 
-    monkeypatch.setattr(explore_run, "ExploratoryAnalysisAgent", _FakeAgent)
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeAgent)
     # opencode has no skill discovery mechanism; we don't vendor skills there.
     explore_run.run_explore(tmp_path, coder_provider="opencode", out=tmp_path / "o")
     assert captured["cli_config"].skills == ()

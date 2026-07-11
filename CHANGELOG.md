@@ -6,6 +6,77 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — agentic orchestrator, standalone data-analysis package, failure-mode clustering
+
+Four related changes make `eval_agent` more flexible/agentic and make
+`evalvitals.analysis` genuinely usable without the diagnosis loop:
+
+- **`evalvitals.agent_runtime`** (new): the CLI-agent runtime (sandboxing, code
+  generation, providers, judge models, skills) shared by `evalvitals.analysis`
+  and `evalvitals.eval_agent` — imports neither, so either can be used standalone.
+- **`evalvitals.analysis` is now dependency-free of `eval_agent`** — a new AST-based
+  guard test locks this in permanently. The M2 stats stack (`StatsAnalysisAgent`,
+  `stats_tools`, `stats_tool_agent`, `stats_tool_generator`, `AnalysisModule`) and
+  the explorer's prompt templates moved here from `eval_agent`.
+- **`evalvitals.explore(...)`** (new): a one-call library entry point — path or
+  in-memory records in, `ExploreRunResult` out; `out=None` keeps everything in
+  memory. `evalvitals-explore` CLI behavior is unchanged (thin wrapper over the
+  same function).
+- **`AgenticDiagnoseLoop`** (new, `evalvitals.eval_agent.agentic`): a judge-decided
+  alternative to `VLDiagnoseLoop`'s fixed M1→M2→M3→M5 cycle — a CLI judge picks the
+  next tool each turn (`run_probe` / `run_stats` / `explore_data` /
+  `cluster_failures` / `propose_hypotheses` / `test_hypothesis` / `run_surgery` /
+  `run_fix` / `stop`) instead of a hardcoded sequence. The host enforces tool call
+  caps, preconditions, and the stop-gate (declaring success requires an
+  actually-tested, supported, protocol-consistent hypothesis — a premature
+  `stop(resolved=true)` is rejected and fed back to the judge). `VLDiagnoseLoop`
+  itself is unchanged. `run_log.jsonl` gains two event types, `agent_decision` and
+  `agent_tool` (schema version 2 → 3).
+- **`evalvitals.analysis.cluster_failures(...)`** (new): groups FAIL cases into
+  interpretable failure-mode clusters — pattern discovery over the raw failing
+  cases, complementing M2's per-signal EDA. No required dependency (a pure-numpy
+  fallback always works); install the new `[cluster]` extra
+  (`scikit-learn`, `hdbscan`) for TF-IDF + density-based clustering. Wired into
+  `DiagnosisAgent(failure_modes=...)` and as the agentic loop's `cluster_failures`
+  tool.
+
+### Breaking — module reorganization (no compatibility shims)
+
+Several modules moved as part of the above. Two facades are kept
+(`evalvitals.eval_agent.cli_agent` and `.cli_skills`) — everything else below
+requires updating the import path:
+
+| Old path | New path |
+|---|---|
+| `evalvitals.eval_agent.cli_types` | `evalvitals.agent_runtime.cli_types` |
+| `evalvitals.eval_agent.cli_runtime` | `evalvitals.agent_runtime.cli_runtime` |
+| `evalvitals.eval_agent.cli_transcript` | `evalvitals.agent_runtime.cli_transcript` |
+| `evalvitals.eval_agent.sandbox` | `evalvitals.agent_runtime.sandbox` |
+| `evalvitals.eval_agent.factory` | `evalvitals.agent_runtime.factory` |
+| `evalvitals.eval_agent.experiment_harness` | `evalvitals.agent_runtime.experiment_harness` |
+| `evalvitals.eval_agent.codegen` | `evalvitals.agent_runtime.codegen` |
+| `evalvitals.eval_agent.providers.*` | `evalvitals.agent_runtime.providers.*` |
+| `evalvitals.eval_agent.models.*` (`AgyModel`, `ClaudeModel`) | `evalvitals.agent_runtime.judges.*` |
+| `evalvitals.eval_agent.skills.*` | `evalvitals.agent_runtime.skills.*` |
+| `evalvitals.eval_agent.stages.stats_tools` | `evalvitals.analysis.stats_tools` |
+| `evalvitals.eval_agent.stages.stats_agent` | `evalvitals.analysis.stats_agent` |
+| `evalvitals.eval_agent.stages.stats_tool_agent` | `evalvitals.analysis.stats_tool_agent` |
+| `evalvitals.eval_agent.stages.stats_tool_generator` | `evalvitals.analysis.stats_tool_generator` |
+| `evalvitals.eval_agent.stages.analysis` (`AnalysisModule`) | `evalvitals.analysis.analysis_module` |
+| `evalvitals.eval_agent.prompts.explorer` | `evalvitals.analysis.prompts.explorer` |
+| `evalvitals.eval_agent.prompts.{stats_agent,stats_tool_generator}` | `evalvitals.analysis.prompts.*` |
+| `evalvitals.eval_agent.loop.AutoDiagnoseLoop` | `evalvitals.eval_agent.legacy.AutoDiagnoseLoop` |
+| `evalvitals.eval_agent.loop.SelfEvolveLoop` | `evalvitals.eval_agent.legacy.SelfEvolveLoop` |
+| `evalvitals.eval_agent.loop.AutoDiagnoseReport` | `evalvitals.eval_agent.loop_reports.AutoDiagnoseReport` |
+| `evalvitals.eval_agent.loop.VLDiagnoseReport` | `evalvitals.eval_agent.loop_reports.VLDiagnoseReport` |
+
+`from evalvitals.eval_agent import X` (the top-level package) is **unaffected**
+for every name above except the ones that moved to `legacy`/`loop_reports` —
+those still import the same way from `evalvitals.eval_agent`, just backed by a
+different implementation module. `evalvitals.eval_agent.loop` now contains only
+`VLDiagnoseLoop`. `pip install evalvitals[cluster]` (or `[all]`) adds
+`cluster_failures`'s optional sklearn/hdbscan backends.
+
 ### Added — held-out hypothesis pipeline for the explore path (deco_hallu_explore)
 
 - **Four-phase pipeline** (`run_attn_pipeline.sh`): the standalone explore

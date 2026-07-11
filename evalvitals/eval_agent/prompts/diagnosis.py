@@ -9,7 +9,7 @@ Overall severity (threshold rules): {severity}
 
 Analysis conclusion (the analyst's interpretation):
 {conclusion}
-{evidence_section}{stats_section}{explore_section}
+{evidence_section}{stats_section}{explore_section}{failure_modes_section}
 Raw findings (JSON):
 {findings_json}
 

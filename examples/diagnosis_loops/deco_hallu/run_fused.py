@@ -60,10 +60,10 @@ def main() -> None:
     probe_results = state["probe_results"]
     cases = state["cases"]
 
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
     from evalvitals.analysis import ExploratoryAnalysisAgent, run_fused_analysis
     from evalvitals.analysis.operationalize import per_case_to_records
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
-    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+    from evalvitals.analysis.stats_tools import build_stats_input
 
     # 1) frozen analyzer signals + labels -> records the explorer/catalog can use.
     inp = build_stats_input(probe_results, cases)

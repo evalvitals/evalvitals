@@ -210,7 +210,7 @@ def test_image_overlays_is_empty_and_does_not_raise_without_real_images():
 
 
 def test_stats_layer_picks_up_attention_signals():
-    from evalvitals.eval_agent.stages.stats_tools import build_stats_input, describe_data
+    from evalvitals.analysis.stats_tools import build_stats_input, describe_data
 
     batch = _labeled_batch()
     res = RelativeAttentionAnalyzer().run(AttnVLM(), batch)
@@ -250,7 +250,7 @@ def test_per_case_map_stack_artifact():
 
 
 def test_richer_features_are_continuous_signals_not_leaks():
-    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+    from evalvitals.analysis.stats_tools import build_stats_input
 
     batch = _labeled_batch()
     res = RelativeAttentionAnalyzer().run(AttnVLM(), batch)

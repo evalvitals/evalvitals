@@ -74,14 +74,14 @@ def test_git_manager_parse_log_line_invalid():
 
 
 def test_validate_entry_point_accepts_relative():
-    from evalvitals.eval_agent.sandbox import validate_entry_point
+    from evalvitals.agent_runtime.sandbox import validate_entry_point
 
     assert validate_entry_point("main.py") is None
     assert validate_entry_point("subdir/entry.py") is None
 
 
 def test_validate_entry_point_rejects_absolute():
-    from evalvitals.eval_agent.sandbox import validate_entry_point
+    from evalvitals.agent_runtime.sandbox import validate_entry_point
 
     err = validate_entry_point("/etc/passwd")
     assert err is not None
@@ -89,7 +89,7 @@ def test_validate_entry_point_rejects_absolute():
 
 
 def test_validate_entry_point_rejects_dotdot():
-    from evalvitals.eval_agent.sandbox import validate_entry_point
+    from evalvitals.agent_runtime.sandbox import validate_entry_point
 
     err = validate_entry_point("../escape.py")
     assert err is not None
@@ -97,13 +97,13 @@ def test_validate_entry_point_rejects_dotdot():
 
 
 def test_validate_entry_point_rejects_empty():
-    from evalvitals.eval_agent.sandbox import validate_entry_point
+    from evalvitals.agent_runtime.sandbox import validate_entry_point
 
     assert validate_entry_point("") is not None
 
 
 def test_validate_entry_point_resolved_escape(tmp_path):
-    from evalvitals.eval_agent.sandbox import validate_entry_point_resolved
+    from evalvitals.agent_runtime.sandbox import validate_entry_point_resolved
 
     # Create a symlink that escapes the staging dir
     outside = tmp_path.parent / "outside.py"
@@ -121,7 +121,7 @@ def test_validate_entry_point_resolved_escape(tmp_path):
 
 
 def test_run_project_executes_and_parses_metrics(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     project = tmp_path / "proj"
     project.mkdir()
@@ -143,7 +143,7 @@ def test_run_project_executes_and_parses_metrics(tmp_path):
 
 
 def test_run_project_injects_harness(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     project = tmp_path / "proj"
     project.mkdir()
@@ -155,16 +155,16 @@ def test_run_project_injects_harness(tmp_path):
     sandbox.run_project(project)
 
     # After a successful run the project dir is cleaned up;
-    # harness source exists in the eval_agent package
+    # harness source exists in the agent_runtime package
     harness_src = (
         Path(__file__).parent.parent.parent
-        / "evalvitals" / "eval_agent" / "experiment_harness.py"
+        / "evalvitals" / "agent_runtime" / "experiment_harness.py"
     )
-    assert harness_src.exists(), "experiment_harness.py not found in eval_agent package"
+    assert harness_src.exists(), "experiment_harness.py not found in agent_runtime package"
 
 
 def test_run_project_numbered_dirs(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     project = tmp_path / "proj"
     project.mkdir()
@@ -179,7 +179,7 @@ def test_run_project_numbered_dirs(tmp_path):
 
 
 def test_run_project_rejects_path_traversal(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     project = tmp_path / "proj"
     project.mkdir()
@@ -191,7 +191,7 @@ def test_run_project_rejects_path_traversal(tmp_path):
 
 
 def test_sandbox_cleanup_on_success(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     sandbox = ExperimentSandbox(workdir=tmp_path)
     sandbox.run("print('verdict: 1.0')")
@@ -201,7 +201,7 @@ def test_sandbox_cleanup_on_success(tmp_path):
 
 
 def test_sandbox_keeps_script_on_failure(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     sandbox = ExperimentSandbox(workdir=tmp_path)
     sandbox.run("raise RuntimeError('intentional failure')")
@@ -217,7 +217,7 @@ def test_sandbox_runs_correctly_with_relative_workdir(tmp_path, monkeypatch):
     'python: can't open file <workdir>/<workdir>/exp_0001.py'. Every coded
     fix/M4 attempt hit this in practice since example run.py scripts pass a
     relative --run-dir straight into RunContext."""
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     monkeypatch.chdir(tmp_path)
     sandbox = ExperimentSandbox(workdir=Path("nested/workdir"))
@@ -230,7 +230,7 @@ def test_sandbox_cleanup_false_keeps_script_on_success(tmp_path):
     """A durable, self-contained workdir (e.g. one fix/M4 trial's workspace/)
     must keep its code even on success — cleanup=True is the legacy/ephemeral
     default; the trial-backed path opts out."""
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     sandbox = ExperimentSandbox(workdir=tmp_path, cleanup=False)
     sandbox.run("print('verdict: 1.0')")
@@ -239,7 +239,7 @@ def test_sandbox_cleanup_false_keeps_script_on_success(tmp_path):
 
 
 def test_run_project_harness_not_overwritable(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     project = tmp_path / "proj"
     project.mkdir()
@@ -423,7 +423,7 @@ def test_evolution_build_overlay_with_lessons(tmp_path):
 def test_evolution_extract_lessons_inconclusive():
     from evalvitals.eval_agent.evolution import extract_lessons
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-    from evalvitals.eval_agent.loop import AutoDiagnoseReport
+    from evalvitals.eval_agent.loop_reports import AutoDiagnoseReport
 
     h = Hypothesis("h", "m", "f", status=HypothesisStatus.INCONCLUSIVE)
     report = AutoDiagnoseReport(
@@ -443,7 +443,7 @@ def test_evolution_extract_lessons_inconclusive():
 def test_evolution_extract_lessons_resolved_has_no_diagnosis_warning():
     from evalvitals.eval_agent.evolution import extract_lessons
     from evalvitals.eval_agent.hypothesis import Hypothesis, HypothesisStatus
-    from evalvitals.eval_agent.loop import AutoDiagnoseReport
+    from evalvitals.eval_agent.loop_reports import AutoDiagnoseReport
 
     h = Hypothesis("h", "m", "f", status=HypothesisStatus.SUPPORTED)
     report = AutoDiagnoseReport(
@@ -463,19 +463,19 @@ def test_evolution_extract_lessons_resolved_has_no_diagnosis_warning():
 
 
 def test_create_sandbox_default_returns_experiment_sandbox(tmp_path):
-    from evalvitals.eval_agent.factory import SandboxFactoryConfig, create_sandbox
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.factory import SandboxFactoryConfig, create_sandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     sandbox = create_sandbox(SandboxFactoryConfig(), tmp_path)
     assert isinstance(sandbox, ExperimentSandbox)
 
 
 def test_create_sandbox_docker_fallback_returns_subprocess(tmp_path):
-    from evalvitals.eval_agent.factory import SandboxFactoryConfig, create_sandbox
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.factory import SandboxFactoryConfig, create_sandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     # Patch Docker check to simulate unavailability
-    with patch("evalvitals.eval_agent.factory._try_create_docker_sandbox", return_value=None):
+    with patch("evalvitals.agent_runtime.factory._try_create_docker_sandbox", return_value=None):
         sandbox = create_sandbox(SandboxFactoryConfig(mode="docker"), tmp_path)
     assert isinstance(sandbox, ExperimentSandbox)
 
@@ -516,7 +516,7 @@ def test_experiment_writer_result_code_set():
 
 def _make_mock_loop(run_dir=None):
     """Build a minimal AutoDiagnoseLoop with mocked agents."""
-    from evalvitals.eval_agent.loop import AutoDiagnoseLoop
+    from evalvitals.eval_agent.legacy import AutoDiagnoseLoop
 
     mock_model = MagicMock()
     mock_probe = MagicMock()
@@ -568,7 +568,7 @@ def test_loop_creates_evolution_dir(tmp_path):
 
 def test_loop_checkpoint_written_after_cycle(tmp_path):
     """Checkpoint is written when at least one full cycle completes."""
-    from evalvitals.eval_agent.loop import AutoDiagnoseLoop
+    from evalvitals.eval_agent.legacy import AutoDiagnoseLoop
 
     mock_model = MagicMock()
     mock_probe = MagicMock()
@@ -600,7 +600,7 @@ def test_loop_checkpoint_written_after_cycle(tmp_path):
 
 
 def test_loop_heartbeat_written(tmp_path):
-    from evalvitals.eval_agent.loop import AutoDiagnoseLoop
+    from evalvitals.eval_agent.legacy import AutoDiagnoseLoop
 
     mock_model = MagicMock()
     mock_probe = MagicMock()
@@ -631,7 +631,7 @@ def test_loop_heartbeat_written(tmp_path):
 
 def test_loop_resume_skips_completed_cycles(tmp_path):
     """A checkpoint at cycle 1 should cause the loop to start at cycle 2."""
-    from evalvitals.eval_agent.loop import AutoDiagnoseLoop
+    from evalvitals.eval_agent.legacy import AutoDiagnoseLoop
 
     # Write a fake checkpoint saying cycle 1 already completed
     cp = {

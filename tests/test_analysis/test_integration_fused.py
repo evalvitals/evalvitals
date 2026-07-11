@@ -10,8 +10,8 @@ from evalvitals.analysis import ExploratoryAnalysisAgent, run_fused_analysis
 from evalvitals.analysis.adjudicate import adjudicate_signals
 from evalvitals.analysis.explorer import CandidateSignal
 from evalvitals.analysis.operationalize import SignalRecipe, bridge_recipes_to_result
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
-from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+from evalvitals.analysis.stats_agent import StatsAnalysisAgent
+from evalvitals.analysis.stats_tools import build_stats_input
 
 # A real explorer script: reads records.json, proposes a candidate that carries a
 # deterministic recipe over the existing column. The fused pipeline runs this in a
@@ -51,7 +51,7 @@ def _dataset(n_each: int = 15) -> list[dict]:
 
 
 def test_real_explorer_recipe_is_bridged_and_confirmed_on_held_out(tmp_path):
-    from evalvitals.eval_agent.sandbox import ExperimentSandbox
+    from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 
     explorer = ExploratoryAnalysisAgent(
         judge=_ScriptedJudge(_RECIPE_SCRIPT),

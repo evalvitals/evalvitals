@@ -44,7 +44,7 @@ def test_every_log_method_stamps_schema_version(tmp_path):
 
 
 def _stats_report(stats_plan):
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
+    from evalvitals.analysis.stats_agent import StatsAnalysisReport
 
     return StatsAnalysisReport(
         model_name="vlm",
@@ -151,7 +151,7 @@ def test_git_commit_falls_back_to_env(tmp_path, monkeypatch):
 def test_run_config_records_data_fingerprint_and_labels():
     """run_start must capture *which* cases ran + their label balance, not just count."""
     from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label
-    from evalvitals.eval_agent.loop import _data_provenance
+    from evalvitals.eval_agent.run_metadata import _data_provenance
 
     cases = [
         FailureCase(id="a", inputs=Inputs(prompt="p1"), label=Label.FAIL),

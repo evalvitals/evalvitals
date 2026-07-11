@@ -47,10 +47,10 @@ from evalvitals.eval_agent.stages.surgery import _extract_per_case_signals
 from evalvitals.stats import compare
 
 if TYPE_CHECKING:
+    from evalvitals.analysis.stats_agent import StatsAnalysisReport
+    from evalvitals.analysis.stats_tools import StatsToolResult
     from evalvitals.core.model import Model
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
-    from evalvitals.eval_agent.stages.stats_tools import StatsToolResult
 
 logger = logging.getLogger(__name__)
 

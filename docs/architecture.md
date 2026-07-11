@@ -174,17 +174,18 @@ The design keeps common failure modes contained:
 ## eval_agent — automated diagnosis pipeline
 
 `eval_agent/` implements a multi-stage automated diagnosis cycle on top of the
-core contracts described above.  Two loops are available:
+core contracts described above. Three loops are available — the same M1-M5
+stages, three different orchestration strategies:
 
 ```text
-AutoDiagnoseLoop  (legacy, four-stage sweep)
+AutoDiagnoseLoop  (legacy.py — four-stage sweep, kept for existing callers)
   M1 · ProbeAgent         detect model kind → run ranked analyzers
   M2 · AnalysisModule     threshold rules + derived metrics → AnalysisReport
   M3 · DiagnosisAgent     judge.generate(report) → Hypothesis list
   M4 · SurgeryAgent       correlate / param-sweep / ExperimentWriter → SUPPORTED/REFUTED
        ↑_________________________________________________________________| (refocus or stop)
 
-VLDiagnoseLoop  (Plan A — protocol-guided, stops on verified hypothesis)
+VLDiagnoseLoop  (loop.py — current, protocol-guided, stops on verified hypothesis)
   ExperimentProtocol  ← user's NL description of what to investigate
        │
   M1 · ProbeAgent         same as above; protocol.probe_hints() boosts relevant analyzers
@@ -195,6 +196,14 @@ VLDiagnoseLoop  (Plan A — protocol-guided, stops on verified hypothesis)
   loop exits when M5 finds a SUPPORTED + protocol-consistent hypothesis
        │
   M4 · SurgeryAgent       called once post-loop on the best verified hypothesis
+
+AgenticDiagnoseLoop  (agentic/loop.py — judge-decided, same M1-M5 stages)
+  A CLI judge picks the next tool (run_probe / run_stats / explore_data /
+  cluster_failures / propose_hypotheses / test_hypothesis / run_surgery /
+  run_fix / stop) each turn from an EvidenceBoard, instead of a fixed cycle.
+  The host — not the judge — enforces tool call caps, preconditions, and the
+  stop-gate (declaring success requires an actually-tested, supported,
+  protocol-consistent hypothesis). See [quickstart](quickstart.md#agenticdiagnoseloop--judge-decided-m1-m5-alternative-to-the-fixed-cycle).
 ```
 
 The agent touches models only through the `Model` protocol and stores all
@@ -204,33 +213,43 @@ evidence in a `Store`.
 
 ```text
 eval_agent/
-├── loop.py               AutoDiagnoseLoop, VLDiagnoseLoop, SelfEvolveLoop
+├── loop.py               VLDiagnoseLoop (current)
+├── legacy.py             AutoDiagnoseLoop, SelfEvolveLoop (kept for existing callers)
+├── loop_reports.py       AutoDiagnoseReport, VLDiagnoseReport
+├── checkpoint.py         write_checkpoint / write_heartbeat / read_checkpoint
+├── run_metadata.py       shared run-provenance + logging-wiring helpers
+├── agentic/              AgenticDiagnoseLoop — judge-decided M1-M5 (see below)
 ├── run_context.py        RunContext, Trial — single owner of a run's output directory
 ├── run_logger.py         RunLogger — per-cycle JSONL log + artifact sink
+├── log_schema.py         published run_log.jsonl JSON Schema
 ├── hypothesis.py         Hypothesis, HypothesisStatus — shared across M3/M4/M5
-├── cli_agent.py          CliAgentConfig, create_cli_agent — shared CLI coding agent
-│                           (agy / codex); any stage can use this to launch experiments
+├── cli_agent.py          compatibility facade over agent_runtime's CLI providers/judges
 ├── store.py              Store / InMemoryStore / JsonlStore
 ├── evolution.py          EvolutionStore — cross-run lesson accumulation
 ├── orchestrator.py       EvalOrchestrator — thin A/B facade
 ├── ab_runner.py          ABRunner — A/B execution
 ├── preregister.py        DataSplit, PreregisteredHypothesis
-├── sandbox.py            ExperimentSandbox, SandboxProtocol
-├── factory.py            create_sandbox (subprocess / docker)
 ├── git_manager.py        ExperimentGitManager
 ├── report.py             DiagnosticReport
-└── stages/               ← M1–M5 stage implementations
+└── stages/               ← M1, M3, M4, M5 stage implementations (M2 lives in evalvitals.analysis)
     ├── probe.py          M1  StrategyProbe
     ├── probe_agent.py    M1  ProbeAgent
     ├── protocol.py       M1  ExperimentProtocol, ProbingSchema
-    ├── analysis.py       M2  AnalysisModule, AnalysisReport
-    ├── stats_agent.py    M2  StatsAnalysisAgent, StatsAnalysisReport
     ├── diagnosis.py      M3  DiagnosisAgent, DiagnosisResult
     ├── surgery.py        M4  SurgeryAgent, InterventionResult
     ├── experiment_writer.py  M4  ExperimentWriter
     ├── fix_agent.py       M4 (post-loop)  FixAgent, FixCandidate, FixOutcome
     ├── fix_tiers.py       FixTier ladder (L1 prompt → L4 parameter space)
     └── hypothesis_tester.py  M5  HypothesisTester, HypothesisTestResult
+
+evalvitals.agent_runtime/  shared CLI-agent runtime (sandbox, codegen, providers,
+                            judges, skills) — used by both eval_agent and analysis;
+                            imports neither. See "Package Layout" above.
+
+evalvitals.analysis/       M2 lives here now (StatsAnalysisAgent, AnalysisModule,
+                            stats tool catalog) — usable standalone, not just from
+                            the loop. Also: ExploratoryAnalysisAgent, HypothesisAgent,
+                            cluster_failures (failure-mode clustering).
 ```
 
 ### Stage contracts
@@ -240,8 +259,8 @@ eval_agent/
 | M1 | `stages/probe.py` | `StrategyProbe` | `detect_kind(model) → ModelKind`; `select(model, hints) → list[str]` |
 | M1 | `stages/probe_agent.py` | `ProbeAgent` | `probe(model, data, hint_failure_modes) → dict[str, Result]` |
 | M1 | `stages/protocol.py` | `ExperimentProtocol` | `probe_hints() → list[str]` — maps NL description to failure-mode tags |
-| M2 | `stages/analysis.py` | `AnalysisModule` | `analyze(results, model_name) → AnalysisReport` |
-| M2 | `stages/stats_agent.py` | `StatsAnalysisAgent` | `analyze(results, model_name, protocol) → StatsAnalysisReport` |
+| M2 | `evalvitals.analysis.analysis_module` | `AnalysisModule` | `analyze(results, model_name) → AnalysisReport` |
+| M2 | `evalvitals.analysis.stats_agent` | `StatsAnalysisAgent` | `analyze(results, model_name, protocol) → StatsAnalysisReport` |
 | M3 | `stages/diagnosis.py` | `DiagnosisAgent` | `diagnose(report, prior_cycles) → DiagnosisResult` |
 | M4 | `stages/surgery.py` | `SurgeryAgent` | `operate(hypothesis, model, results, data) → InterventionResult` |
 | M5 | `stages/hypothesis_tester.py` | `HypothesisTester` | `test(hypotheses, report, data, protocol) → list[HypothesisTestResult]`; `stopping_criteria_met(results) → bool` |

@@ -114,7 +114,7 @@ def test_capture_compute_produces_per_case_signal():
 
 
 def test_signal_feeds_stats_layer_and_separates_groups():
-    from evalvitals.eval_agent.stages.stats_tools import build_stats_input, run_stats_tool
+    from evalvitals.analysis.stats_tools import build_stats_input, run_stats_tool
 
     batch = _batch()
     result, _ = WhiteboxProbeGenerator(judge=ScriptedJudge(_STRUCT_SINK_PROBE)).generate(

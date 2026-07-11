@@ -17,13 +17,18 @@ Data — Case discovery / labeling
                                          store observed outputs, and label PASS/FAIL
 
 M2 — Analysis (statistical interpretation)
-  analysis.py     AnalysisModule       threshold rules + VLM derived metrics → AnalysisReport
-  stats_agent.py  StatsAnalysisAgent   protocol-aware extension of AnalysisModule;
-                                       adds LLM-written conclusion + evidence chain
-                  StatsAnalysisReport  AnalysisReport subclass — adds conclusion,
-                                       evidence_chain, qualitative_findings, protocol
-  stats_tool_agent.py StatsToolAgent    selects/runs deterministic exploratory
-                                       stats tools and visualization specs
+  Lives in ``evalvitals.analysis`` (not this package) so it is usable standalone:
+  analysis_module.py  AnalysisModule       threshold rules + VLM derived metrics → AnalysisReport
+  stats_agent.py       StatsAnalysisAgent   protocol-aware extension of AnalysisModule;
+                                            adds LLM-written conclusion + evidence chain
+                       StatsAnalysisReport  AnalysisReport subclass — adds conclusion,
+                                            evidence_chain, qualitative_findings, protocol
+  stats_tool_agent.py  StatsToolAgent       selects/runs deterministic exploratory
+                                            stats tools and visualization specs
+  stats_tools.py       STATS_TOOL_CATALOG   signal/label association, McNemar+e-value,
+                                            Friedman, single-rate e-value, rank corr
+  stats_tool_generator.py StatsToolGenerator  LLM/CLI writes a new stats script when
+                                            no catalog tool fits
 
 M3 — Diagnosis (hypothesis generation)
   diagnosis.py    DiagnosisAgent   LLM judge reads AnalysisReport → Hypothesis list;
@@ -43,7 +48,9 @@ M5 — Hypothesis testing (statistical + protocol consistency gate)
 
 Cross-stage shared types (top level, not in this package):
   hypothesis.py   Hypothesis, HypothesisStatus   used by M3, M4, M5
+
+Shared CLI-agent runtime (evalvitals.agent_runtime, not in this package):
   codegen/        CodegenRunner   shared CLI code-generation orchestration
   providers/      CLI coding-provider adapters (agy/codex/claude/etc.)
-  models/         CLI-backed judge model wrappers
+  judges/         CLI-backed judge model wrappers
 """

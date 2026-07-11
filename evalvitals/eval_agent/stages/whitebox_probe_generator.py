@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 from evalvitals.core.capability import Capability
 from evalvitals.core.result import Result
 from evalvitals.eval_agent.prompts.whitebox_probe_generator import (
@@ -48,12 +49,11 @@ from evalvitals.eval_agent.prompts.whitebox_probe_generator import (
     _MANIFEST,
     _RESULT_MARKER,
 )
-from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 if TYPE_CHECKING:
+    from evalvitals.agent_runtime.cli_types import CliAgentConfig
     from evalvitals.core.case import CaseBatch
     from evalvitals.core.model import Model
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ class WhiteboxProbeGenerator:
         return _extract_code(str(raw)), "llm"
 
     def _write_code_cli(self, need: str) -> str:
-        from evalvitals.eval_agent.codegen import CodegenRunner
+        from evalvitals.agent_runtime.codegen import CodegenRunner
 
         prompt = self._build_prompt(need, fenced=False)
         self._last_prompt = prompt

@@ -90,7 +90,7 @@ def main() -> None:
         SurgeryAgent,
         VLDiagnoseLoop,
     )
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
     from evalvitals.models.backends.base import RuntimeConfig
 
     judge = run.build_judge(args.judge_model, args.judge_effort)

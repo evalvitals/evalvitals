@@ -11,7 +11,7 @@ from evalvitals.analysis.operationalize import (
     compile_recipes,
     per_case_finding,
 )
-from evalvitals.eval_agent.stages.stats_tools import build_stats_input
+from evalvitals.analysis.stats_tools import build_stats_input
 
 
 def _records() -> list[dict]:

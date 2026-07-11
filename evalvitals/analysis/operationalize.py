@@ -424,8 +424,8 @@ def bridge_recipes_to_result(
     Returns the synthetic ``Result`` (analyzer=*analyzer_name*), or ``None`` if no
     recipe compiled to a non-empty signal.
     """
+    from evalvitals.analysis.stats_tools import build_stats_input
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.stages.stats_tools import build_stats_input
 
     inp = build_stats_input(probe_results, data)
     # Compile over PREDICTOR signals only — never expose the label to recipe

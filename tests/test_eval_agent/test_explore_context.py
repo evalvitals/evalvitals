@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 
+from evalvitals.analysis.stats_agent import StatsAnalysisReport
 from evalvitals.core.capability import Capability
 from evalvitals.eval_agent.stages.diagnosis import (
     DiagnosisAgent,
@@ -17,7 +18,6 @@ from evalvitals.eval_agent.stages.diagnosis import (
     _extract_referenced,
     _format_explore_section,
 )
-from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisReport
 from tests.conftest import FakeModel
 
 # ---------------------------------------------------------------------------
@@ -137,9 +137,9 @@ def test_extract_referenced_only_matches_mentioned_titles():
 # ---------------------------------------------------------------------------
 
 def test_only_m3_diagnose_accepts_explore_context():
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
     from evalvitals.eval_agent.stages.fix_agent import FixAgent
     from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
 
     assert "explore_context" in inspect.signature(DiagnosisAgent.diagnose).parameters
 
@@ -155,7 +155,7 @@ def test_only_m3_diagnose_accepts_explore_context():
 # ---------------------------------------------------------------------------
 
 def test_coerce_explore_context_accepts_dict_ctx_and_none():
-    from evalvitals.eval_agent.loop import _coerce_explore_context
+    from evalvitals.eval_agent.run_metadata import _coerce_explore_context
 
     ctx = _coerce_explore_context({"observations": ["a"]})
     assert isinstance(ctx, ExploreContext)
@@ -195,7 +195,7 @@ def test_loop_init_stores_coerced_explore_context():
 
     loop = VLDiagnoseLoop.__new__(VLDiagnoseLoop)  # avoid heavy __init__ deps
     # exercise the coercion path used by __init__
-    from evalvitals.eval_agent.loop import _coerce_explore_context
+    from evalvitals.eval_agent.run_metadata import _coerce_explore_context
     loop._explore_context = _coerce_explore_context({"charts": [{"title": "C", "figure_path": "/p.png"}]})
     assert isinstance(loop._explore_context, ExploreContext)
     assert loop._explore_context.figure_paths == ["/p.png"]

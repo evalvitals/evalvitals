@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from evalvitals.analysis.analysis_module import AnalysisFinding
 from evalvitals.core.capability import Capability
 from evalvitals.core.case import CaseBatch, FailureCase, Inputs, Label, Step, StepRole, Trajectory
 from evalvitals.core.registry import registry
@@ -25,7 +26,6 @@ from evalvitals.eval_agent import (
     SurgeryAgent,
 )
 from evalvitals.eval_agent.hypothesis import Hypothesis
-from evalvitals.eval_agent.stages.analysis import AnalysisFinding
 from tests.conftest import FakeModel
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -223,8 +223,8 @@ def test_analysis_module_to_dict():
 
 
 def test_analysis_module_extra_rules():
+    from evalvitals.analysis.analysis_module import _Rule
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.stages.analysis import _Rule
 
     results = {
         "my_analyzer": Result(
@@ -239,8 +239,8 @@ def test_analysis_module_extra_rules():
 
 
 def test_analysis_module_sorts_high_severity_first():
+    from evalvitals.analysis.analysis_module import _Rule
     from evalvitals.core.result import Result
-    from evalvitals.eval_agent.stages.analysis import _Rule
 
     results = {
         "a1": Result(analyzer="a1", model="m", findings={"m1": 10.0}),

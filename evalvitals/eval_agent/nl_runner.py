@@ -124,7 +124,7 @@ def main() -> None:
     from evalvitals.eval_agent.stages.diagnosis import DiagnosisAgent
     from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
     from evalvitals.eval_agent.stages.protocol import ExperimentProtocol
-    from evalvitals.eval_agent.stages.stats_agent import StatsAnalysisAgent
+    from evalvitals.analysis.stats_agent import StatsAnalysisAgent
 
     protocol = ExperimentProtocol(
         description=(
@@ -338,8 +338,8 @@ def _write_run_py_via_agent(
     model: str,
     timeout: int,
 ) -> None:
-    from evalvitals.eval_agent.cli_types import CliAgentConfig
-    from evalvitals.eval_agent.codegen import CodegenRunner
+    from evalvitals.agent_runtime.cli_types import CliAgentConfig
+    from evalvitals.agent_runtime.codegen import CodegenRunner
 
     prompt = _AGENT_PROMPT_TEMPLATE.format(
         description=description,

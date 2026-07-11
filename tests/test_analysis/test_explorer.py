@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
+from evalvitals.agent_runtime.sandbox import ExperimentSandbox
 from evalvitals.analysis import ExploratoryAnalysisAgent, load_records_from_path, scan_folder
-from evalvitals.eval_agent.sandbox import ExperimentSandbox
 
 _GOOD_CODE = """
 import json
@@ -372,7 +372,7 @@ print("EXPLORATORY_RESULT_JSON=" + json.dumps(result))
             )
 
     monkeypatch.setattr(
-        "evalvitals.eval_agent.cli_agent.create_cli_agent", lambda config: _FakeCliAgent()
+        "evalvitals.agent_runtime.providers.registry.create_cli_agent", lambda config: _FakeCliAgent()
     )
 
     from evalvitals.eval_agent.cli_agent import CliAgentConfig
