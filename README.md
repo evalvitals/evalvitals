@@ -1,17 +1,56 @@
 # EvalVitals
 
 [![CI](https://github.com/evalvitals/evalvitals/actions/workflows/ci.yml/badge.svg)](https://github.com/evalvitals/evalvitals/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/evalvitals)](https://pypi.org/project/evalvitals/)
-[![Python](https://img.shields.io/pypi/pyversions/evalvitals)](https://pypi.org/project/evalvitals/)
+[![PyPI version](https://img.shields.io/pypi/v/evalvitals)](https://pypi.org/project/evalvitals/)
+[![Python versions](https://img.shields.io/pypi/pyversions/evalvitals)](https://pypi.org/project/evalvitals/)
 [![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://evalvitals.github.io/evalvitals/)
 [![License: CC0-1.0](https://img.shields.io/badge/license-CC0--1.0-green)](LICENSE)
 
-EvalVitals is an sklearn-like toolkit for failure-case analysis in the era of
-LLMs, VLMs, omni (text+image+audio+video) models, and agentic systems. Model
-identity (`ModelSpec`) is separate from runtime (`Backend`); analyzers
-(`Analyzer`) connect to models by capability matching (`Capability`), so the
-same spec runs through a black-box API or a white-box local backend — only
-the capability set changes.
+**EvalVitals turns failed eval runs into structured failure modes, testable
+diagnoses, and validated interventions.**
+
+It is an open-source failure-investigation toolkit for LLMs, VLMs, multimodal
+models, and agentic systems. Bring existing JSON/JSONL eval logs to the
+standalone analysis agent, run individual black-box or white-box analyzers, or
+chain probing, diagnosis, held-out verification, and intervention into one
+evidence-driven loop.
+
+```text
+eval data or target model
+          ↓
+       probe → explore → diagnose → verify → intervene
+          ↓                              ↓
+   failure cases                tested recommendations
+```
+
+## What's Inside
+
+Use each layer independently or chain them into an automated investigation:
+
+1. **Automated failure investigation** — `VLDiagnoseLoop` connects targeted
+   probes, exploratory analysis, diagnosis, held-out hypothesis testing, and
+   tiered interventions. Candidate fixes are compared with the unmodified
+   baseline rather than accepted from an LLM's explanation alone. See the
+   [Quickstart](docs/quickstart.md) and
+   [Intervention & Verification](docs/intervention.md).
+2. **EvalVitals Explore (M2/M3)** — `evalvitals explore` points a coding
+   agent at a raw results directory (any JSON/JSONL shape, no host-side
+   parsing) and gets back descriptive takeaways, charts, and 1-3 falsifiable
+   hypotheses — no code required. See
+   [Exploratory Analysis (M2/M3)](docs/m2_analysis.md).
+3. **Analyzer toolkit** — 26 registered analyzers cover attention,
+   uncertainty, hallucination, Shapley attribution, logit lens,
+   representation geometry, and agent trajectories. They share the same
+   `Analyzer(**params).run(model, data) -> Result` interface across compatible
+   API and local backends. See the [Demo](#demo) and
+   [Analyzer Zoo](docs/analyzers.md).
+
+## Core Architecture
+
+Model identity is separate from runtime, and analyzers negotiate the
+capabilities they need. The same model spec can therefore run through a
+black-box API or a white-box local backend; only the available capability set
+changes.
 
 | Contract | Role |
 |---|---|
@@ -22,30 +61,6 @@ the capability set changes.
 | `Capability` | Vocabulary matching analyzers to compatible model runtimes. |
 | `FailureCase` | Central data unit for prompts, labels, provenance, agent trajectories. |
 | `Result` | Uniform output: human-readable summary + structured findings. |
-
-## What's Inside
-
-EvalVitals covers three layers of the analysis workflow, usable independently
-or chained into one automated loop:
-
-1. **Analyzer toolkit** — 26 registered analyzers (attention, uncertainty,
-   hallucination, Shapley attribution, logit lens, representation geometry,
-   agent-trajectory analysis) run against any model/backend pair through the
-   same `Analyzer(**params).run(model, data) -> Result` call shape. See the
-   [Demo](#demo) below and the [Analyzer Zoo](docs/analyzers.md).
-2. **Data analysis agent (M2/M3)** — `evalvitals explore` points a coding
-   agent at a raw results directory (any JSON/JSONL shape, no host-side
-   parsing) and gets back descriptive takeaways, charts, and 1-3 falsifiable
-   hypotheses — no code required. See
-   [Exploratory Analysis (M2/M3)](docs/m2_analysis.md).
-3. **Intervention (M4/M5)** — `HypothesisTester` verifies a hypothesis
-   statistically and against the stated experiment protocol; `FixAgent` then
-   proposes and validates candidate repairs (prompt → scaffold → internals →
-   parameter space) against the unmodified baseline with paired McNemar +
-   e-value. See [Intervention & Verification (M4/M5)](docs/intervention.md).
-
-`VLDiagnoseLoop` chains all three (M1→M2→M3→M5, M4 post-loop) into one
-automated failure-attribution pipeline — see [Quickstart](docs/quickstart.md).
 
 ## Demo
 
@@ -78,9 +93,26 @@ exploratory analysis (`evalvitals explore`).
 
 ## Install
 
+Install the lightweight core from PyPI:
+
 ```bash
-pip install -e .
-pip install -e ".[viz]"
+pip install evalvitals
+```
+
+Add only the capabilities you need:
+
+```bash
+pip install "evalvitals[api]"        # OpenAI-compatible API models
+pip install "evalvitals[local]"      # local Hugging Face models + torch
+pip install "evalvitals[viz]"        # plots
+pip install "evalvitals[dashboard]"  # Streamlit reports
+```
+
+For development from source:
+
+```bash
+git clone https://github.com/evalvitals/evalvitals.git
+cd evalvitals
 pip install -e ".[dev]"
 ```
 
