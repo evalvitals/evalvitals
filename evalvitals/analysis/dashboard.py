@@ -43,6 +43,42 @@ def launch_dashboard(run_dir: str | Path, *, port: int | None = None) -> int:
     return subprocess.call(cmd)
 
 
+def launch_upload_app(
+    workspace: str | Path = "evalvitals_web_runs",
+    *,
+    port: int | None = None,
+    backend: str = "claude_code",
+    model: str = "",
+    timeout_sec: int = 1200,
+) -> int:
+    """Launch the upload-and-explore Streamlit workbench (``upload_app.py``).
+
+    The page accepts a .zip of results, extracts it into *workspace*, and runs
+    ``evalvitals explore`` (M2+M3) on it as a detached subprocess; finished
+    runs render with the same tabs as :func:`launch_dashboard`. *backend*,
+    *model* and *timeout_sec* are only the form's defaults — every run can
+    override them in the UI.
+    """
+    try:
+        import streamlit  # noqa: F401
+    except Exception:
+        print(
+            "Streamlit is not installed. Install dashboard extras with:\n"
+            "  pip install -e '.[dashboard]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    app_path = Path(__file__).with_name("upload_app.py")
+    cmd = [sys.executable, "-m", "streamlit", "run", str(app_path)]
+    if port is not None:
+        cmd += ["--server.port", str(port)]
+    cmd += ["--", str(workspace), "--backend", backend, "--timeout-sec", str(int(timeout_sec))]
+    if model:
+        cmd += ["--model", model]
+    return subprocess.call(cmd)
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         return json.loads(path.read_text(encoding="utf-8"))

@@ -1,0 +1,235 @@
+"""The upload workbench (`evalvitals web`): zip in, M2+M3 run out.
+
+Covers the streamlit-free helpers (zip staging with zip-slip protection, job
+launch record, status classification) and — behind the dashboard extras — an
+AppTest pass over the page itself, including rendering a finished run with the
+same explore tabs as dashboard_app.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import sys
+import zipfile
+
+import pytest
+
+from evalvitals.analysis.upload_app import (
+    build_explore_argv,
+    job_status,
+    launch_explore_job,
+    list_runs,
+    stage_zip,
+)
+
+
+def _zip_bytes(entries: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, text in entries.items():
+            zf.writestr(name, text)
+    return buf.getvalue()
+
+
+# ── stage_zip ────────────────────────────────────────────────────────────────
+
+
+def test_stage_zip_unwraps_single_root_and_skips_junk(tmp_path):
+    payload = _zip_bytes({
+        "mydata/cases.json": "[]",
+        "mydata/sub/more.csv": "a,b\n1,2\n",
+        "mydata/.DS_Store": "junk",
+        "__MACOSX/mydata/._cases.json": "resource fork",
+    })
+    data_dir = stage_zip(payload, tmp_path)
+    # single top-level folder is unwrapped: the explorer reads mydata/ directly
+    assert data_dir == tmp_path / "data" / "mydata"
+    assert (data_dir / "cases.json").read_text() == "[]"
+    assert (data_dir / "sub" / "more.csv").exists()
+    assert not (data_dir / ".DS_Store").exists()
+    assert not (tmp_path / "data" / "__MACOSX").exists()
+
+
+def test_stage_zip_flat_archive_uses_data_dir(tmp_path):
+    payload = _zip_bytes({"a.json": "{}", "b.json": "{}"})
+    assert stage_zip(payload, tmp_path) == tmp_path / "data"
+
+
+def test_stage_zip_rejects_zip_slip(tmp_path):
+    for evil in ("../evil.txt", "ok/../../evil.txt", "/abs.txt"):
+        with pytest.raises(ValueError, match="unsafe path"):
+            stage_zip(_zip_bytes({evil: "boom"}), tmp_path)
+    assert not (tmp_path.parent / "evil.txt").exists()
+
+
+def test_stage_zip_rejects_empty_archive(tmp_path):
+    with pytest.raises(ValueError, match="no files"):
+        stage_zip(_zip_bytes({"__MACOSX/only-junk": "x"}), tmp_path)
+
+
+# ── job launch + status ──────────────────────────────────────────────────────
+
+
+def test_build_explore_argv_carries_form_choices(tmp_path):
+    argv = build_explore_argv(
+        tmp_path / "data", tmp_path / "output", question="why fail?",
+        outcome_col="label", backend="claude_code", model="claude-opus-4-8",
+        timeout_sec=900,
+    )
+    assert argv[:4] == [sys.executable, "-m", "evalvitals.cli", "explore"]
+    assert "--outcome-col" in argv and argv[argv.index("--outcome-col") + 1] == "label"
+    assert argv[argv.index("--backend") + 1] == "claude_code"
+    assert argv[argv.index("--model") + 1] == "claude-opus-4-8"
+    assert argv[argv.index("-q") + 1] == "why fail?"
+
+    bare = build_explore_argv(tmp_path, tmp_path, question="q", outcome_col="",
+                              backend="codex", model="", timeout_sec=60)
+    assert "--outcome-col" not in bare and "--model" not in bare
+
+
+def test_launch_explore_job_writes_record_and_wrapper(tmp_path, monkeypatch):
+    import evalvitals.analysis.upload_app as ua
+
+    class _FakeProc:
+        pid = 4242
+
+    captured = {}
+
+    def _fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FakeProc()
+
+    monkeypatch.setattr(ua.subprocess, "Popen", _fake_popen)
+    run_dir = tmp_path / "run1"
+    run_dir.mkdir()
+    job = launch_explore_job(
+        run_dir, run_dir / "data", question='what "drives" FAIL?',
+        outcome_col="label", backend="claude_code", model="", timeout_sec=1200,
+    )
+
+    assert captured["cmd"][0] == "bash"
+    assert captured["kwargs"]["start_new_session"] is True
+    assert job["pid"] == 4242
+    saved = json.loads((run_dir / "job.json").read_text())
+    assert saved["out_dir"].endswith("output")
+    wrapper = (run_dir / "job.sh").read_text()
+    # free-text question survives shell quoting, and the exit code is persisted
+    assert 'what "drives" FAIL?' in wrapper.replace('"\'"\'"', '"')
+    assert "echo $? > exit_code" in wrapper
+
+
+def test_job_status_transitions(tmp_path):
+    run = tmp_path / "r"
+    (run / "output").mkdir(parents=True)
+
+    # no report, no exit code, dead pid -> stale
+    (run / "job.json").write_text(json.dumps({"pid": 999999999}))
+    assert job_status(run)["state"] == "stale"
+
+    # our own pid is alive -> running
+    import os
+    (run / "job.json").write_text(json.dumps({"pid": os.getpid()}))
+    assert job_status(run)["state"] == "running"
+
+    # exited without a report -> failed, exit code surfaced
+    (run / "exit_code").write_text("1\n")
+    st = job_status(run)
+    assert st["state"] == "failed" and st["exit_code"] == 1
+
+    # report present wins regardless of exit code -> done
+    (run / "output" / "exploratory_report.json").write_text("{}")
+    assert job_status(run)["state"] == "done"
+
+
+def test_list_runs_only_dirs_with_job_json(tmp_path):
+    (tmp_path / "not_a_run").mkdir()
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / "job.json").write_text("{}")
+    assert list_runs(tmp_path) == [a]
+
+
+# ── the page itself (dashboard extras) ───────────────────────────────────────
+
+pytest.importorskip("streamlit")
+pytest.importorskip("pandas")
+
+
+def _run_app(workspace):
+    from streamlit.testing.v1 import AppTest
+
+    sys.argv = ["upload_app.py", str(workspace)]
+    at = AppTest.from_file("evalvitals/analysis/upload_app.py", default_timeout=30)
+    at.run()
+    return at
+
+
+def _build_finished_run(workspace, name="demo_20260711_120000"):
+    run = workspace / name
+    out = run / "output"
+    out.mkdir(parents=True)
+    (run / "job.json").write_text(json.dumps({
+        "pid": 1, "argv": ["python", "-m", "evalvitals.cli", "explore", "data"],
+        "question": "what drives FAIL?", "outcome_col": "label",
+        "backend": "claude_code", "model": "", "timeout_sec": 1200,
+        "data_dir": str(run / "data"), "out_dir": str(out),
+        "started_at": "2026-07-11T12:00:00",
+    }))
+    (run / "exit_code").write_text("0\n")
+    (out / "exploratory_report.json").write_text(json.dumps({
+        "ok": True,
+        "question": "what drives FAIL?",
+        "observations": ["all failures adversarial"],
+        "takeaways": [{"title": "Peaked attention rides with FAIL.",
+                       "chart_names": [], "table_names": [],
+                       "analysis": "focus share separates.", "caveat": ""}],
+        "hypotheses": [{"statement": "Peaked attention marks hallucinations.",
+                        "basis": "d=1.3", "test_design": "re-test on holdout"}],
+        "candidate_signals": [], "charts": [], "plots": [], "tables": {},
+    }))
+    return run
+
+
+def test_upload_page_renders_form(tmp_path):
+    at = _run_app(tmp_path)
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Upload" in blob
+    assert at.button[0].label == "Start analysis"
+    # nothing uploaded yet -> the launch button is disabled
+    assert at.button[0].disabled
+
+
+def test_finished_run_renders_explore_tabs(tmp_path):
+    run = _build_finished_run(tmp_path)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    # the sidebar lists the run: AppTest's .options carry the format_func'd
+    # display labels, while set_value takes the raw option (the run name)
+    radio = at.sidebar.radio[0]
+    label = next(o for o in radio.options if str(o).endswith(run.name))
+    assert "🟢" in label  # exit 0 + report present -> shown as done
+    radio.set_value(run.name)
+    at.run()
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Peaked attention marks hallucinations." in blob
+
+
+def test_failed_run_shows_log_and_hint(tmp_path):
+    run = tmp_path / "boom_20260711_120000"
+    run.mkdir()
+    (run / "job.json").write_text(json.dumps({"pid": 1, "argv": [], "backend": "claude_code"}))
+    (run / "exit_code").write_text("1\n")
+    (run / "explore.log").write_text("claude: command not found\n")
+    at = _run_app(tmp_path)
+    at.sidebar.radio[0].set_value(run.name)
+    at.run()
+    assert not at.exception
+    assert any("exited with code 1" in str(e.value) for e in at.error)
+    assert any("command not found" in str(c.value) for c in at.code)
