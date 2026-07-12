@@ -109,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="Default model id pre-filled in the upload form.")
     web.add_argument("--timeout-sec", type=int, default=1200,
                      help="Default per-attempt explorer timeout in the upload form.")
+    web.add_argument(
+        "--attach", action="append", default=[], metavar="DIR",
+        help="Existing result directory (explore output or loop run) to list "
+             "in the sidebar alongside uploads. Repeatable.",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "explore":
@@ -143,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             backend=args.coder_provider,
             model=args.coder_model,
             timeout_sec=args.timeout_sec,
+            attach=args.attach,
         )
 
     parser.print_help()

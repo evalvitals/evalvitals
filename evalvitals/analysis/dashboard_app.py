@@ -69,8 +69,14 @@ def main() -> None:
 
 
 def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
-    """Render one standalone explore report — the 3 proposal tabs plus any
-    held-out pipeline artifacts (confirm/fix) sitting next to it.
+    """Render one standalone explore report with the FIXED five-tab layout.
+
+    Every explore-shaped result — a plain M2/M3 run, a held-out pipeline run,
+    an uploaded-zip run — shows the same five tabs, so the reader never has to
+    re-learn the page. Stages the run did not reach (held-out verdicts, fix)
+    render as greyed "not available" placeholders instead of disappearing;
+    they fill in the moment a downstream phase drops ``confirm_report.json`` /
+    ``fix_report.json`` next to the exploratory report.
 
     Shared entry: dashboard_app's explore view and the upload workbench
     (upload_app.py) both render finished runs through this."""
@@ -80,18 +86,10 @@ def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    # Held-out pipeline artifacts (written by a downstream confirm/fix phase
-    # next to the exploratory report). When present, the run graduates from
-    # "proposal only" to a full propose -> held-out-test -> fix story.
     confirm = _load_sibling_json(turn_dir, "confirm_report.json")
     fix_report = _load_sibling_json(turn_dir, "fix_report.json")
 
-    tab_labels = ["1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses"]
-    if confirm:
-        tab_labels.append(f"{len(tab_labels) + 1} Held-out Verdicts")
-    if fix_report:
-        tab_labels.append(f"{len(tab_labels) + 1} Fix")
-    tabs = st.tabs(tab_labels)
+    tabs = st.tabs(EXPLORE_TAB_LABELS)
     with tabs[0]:
         _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
     with tabs[1]:
@@ -100,14 +98,51 @@ def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
         # Tab 3 stays the PURE proposal view (same as a plain explore run);
         # verdicts live in their own tab so proposal and validation never blur.
         _render_standalone_hypotheses(report, turn_dir)
-    next_tab = 3
-    if confirm:
-        with tabs[next_tab]:
+    with tabs[3]:
+        if confirm:
             _render_holdout_panel(confirm)
-        next_tab += 1
-    if fix_report:
-        with tabs[next_tab]:
+        else:
+            _render_unavailable_panel(
+                "Held-out verdicts",
+                "This run stopped at M3: hypotheses were proposed but not "
+                "re-tested on held-out data.",
+                "A held-out confirm phase (pipeline phase 2 — frozen-recipe "
+                "re-evaluation + e-BH + LLM judge, e.g. `test_hypotheses.py`) "
+                "writes `confirm_report.json` next to the exploratory report; "
+                "this panel then fills in.",
+            )
+    with tabs[4]:
+        if fix_report:
             _render_fix_panel(fix_report)
+        else:
+            _render_unavailable_panel(
+                "Fix",
+                "No repair phase was run for this analysis.",
+                "The surgery/fix phase (pipeline phase 3 — M5 confirm → M4 "
+                "surgery → tiered fix L1–L3b, e.g. `run_surgery.py`) writes "
+                "`fix_report.json` next to the exploratory report; this panel "
+                "then fills in.",
+            )
+
+
+# One layout for every explore-shaped result; unavailable stages grey out
+# rather than vanish (see render_explore_report).
+EXPLORE_TAB_LABELS = [
+    "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+    "4 Held-out Verdicts", "5 Fix",
+]
+
+
+def _render_unavailable_panel(title: str, what_happened: str, how_to_get_it: str) -> None:
+    """Greyed placeholder for a pipeline stage this run never reached."""
+    st.markdown(
+        '<div class="ev-unavailable">'
+        f"<div class='ev-unavailable-title'>⚪ {title} — not available for this run</div>"
+        f"<p>{what_happened}</p>"
+        f"<p class='ev-unavailable-hint'>{how_to_get_it}</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -3004,6 +3039,19 @@ def _inject_css() -> None:
     st.markdown(
         """
         <style>
+        /* Greyed placeholder for pipeline stages a run never reached
+           (held-out verdicts / fix) — present but visibly dormant. */
+        .ev-unavailable {
+          border: 1.5px dashed var(--ev-border-strong);
+          border-radius: var(--ev-radius);
+          background: color-mix(in srgb, var(--ev-muted) 7%, var(--ev-panel));
+          color: var(--ev-muted);
+          padding: 1.1rem 1.3rem;
+          margin: .4rem 0 1rem 0;
+        }
+        .ev-unavailable-title { font-weight: 600; margin-bottom: .35rem; }
+        .ev-unavailable p { margin: .15rem 0; color: var(--ev-muted); }
+        .ev-unavailable-hint { font-size: .86rem; opacity: .85; }
         /* Color values are the validated dataviz-skill reference palette
            (references/palette.md) plugged straight into these token names —
            status/accent hex are unchanged across light/dark by design, only

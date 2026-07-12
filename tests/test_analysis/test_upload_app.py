@@ -214,11 +214,50 @@ def test_finished_run_renders_explore_tabs(tmp_path):
     radio.set_value(run.name)
     at.run()
     assert not at.exception
+    # uploads share the dashboard's FIXED five-tab layout; the stages this
+    # M3-only run never reached grey out instead of disappearing
     assert [t.label for t in at.tabs] == [
         "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+        "4 Held-out Verdicts", "5 Fix",
     ]
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "Peaked attention marks hallucinations." in blob
+    assert blob.count("not available for this run") == 2
+
+
+def test_attached_local_dir_renders_in_sidebar_and_body(tmp_path):
+    """--attach lists an existing explore output next to uploads (read-only)
+    and renders it with the same unified five-tab layout."""
+    from streamlit.testing.v1 import AppTest
+
+    local = tmp_path / "outputs_attn_full"
+    local.mkdir()
+    (local / "exploratory_report.json").write_text(json.dumps({
+        "ok": True, "question": "q",
+        "observations": ["obs"], "takeaways": [], "hypotheses": [],
+        "candidate_signals": [], "charts": [], "plots": [], "tables": {},
+    }))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    sys.argv = ["upload_app.py", str(ws), "--attach", str(local)]
+    at = AppTest.from_file("evalvitals/analysis/upload_app.py", default_timeout=30)
+    at.run()
+    assert not at.exception
+
+    radio = at.sidebar.radio[0]
+    label = next(o for o in radio.options if str(o).endswith(local.name))
+    assert label.startswith("📁")
+    radio.set_value(f"@{local}")
+    at.run()
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+        "4 Held-out Verdicts", "5 Fix",
+    ]
+    assert any("attached results directory" in str(c.value) for c in at.caption)
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert blob.count("not available for this run") == 2
 
 
 def test_failed_run_shows_log_and_hint(tmp_path):

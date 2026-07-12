@@ -232,8 +232,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--backend", default="claude_code", choices=list(BACKENDS))
     parser.add_argument("--model", default="")
     parser.add_argument("--timeout-sec", type=int, default=1200)
+    parser.add_argument(
+        "--attach", action="append", default=[], metavar="DIR",
+        help="Existing result directory (explore output or loop run) to list "
+             "alongside uploads. Repeatable.",
+    )
     args, _ = parser.parse_known_args(sys.argv[1:])
     return args
+
+
+def _local_state(path: Path) -> str:
+    """Sidebar state for an attached (read-only) result directory."""
+    if (path / "exploratory_report.json").exists() or (path / "fused_report.json").exists():
+        return "done"
+    if (path / "run_log.jsonl").exists() or any(path.glob("logs*/run_log.jsonl")):
+        return "done"  # a loop run — renders through the loop story view
+    return "stale"
 
 
 def main() -> None:
@@ -251,25 +265,42 @@ def main() -> None:
     )
     dapp._inject_css()
 
+    new_label = "➕ New analysis"
     runs = list_runs(workspace)
     states = {d.name: job_status(d)["state"] for d in runs}
+    # Attached read-only result dirs (e.g. an example's committed outputs) sit
+    # in the same sidebar as uploads; option values carry an "@" prefix so a
+    # local path can never collide with an upload's run name.
+    attached = []
+    for raw in args.attach:
+        p = Path(raw).resolve()
+        if p.is_dir() and p not in attached:
+            attached.append(p)
+    local_states = {f"@{p}": _local_state(p) for p in attached}
 
-    new_label = "➕ New analysis"
+    def _label(v: str) -> str:
+        if v == new_label:
+            return v
+        if v.startswith("@"):
+            return f"📁 {_STATE_ICONS.get(local_states.get(v, 'stale'), '⚪')} {Path(v[1:]).name}"
+        return f"{_STATE_ICONS.get(states.get(v, 'stale'), '⚪')} {v}"
+
     st.sidebar.markdown('<div class="ev-sidebar-title">EvalVitals</div>',
                         unsafe_allow_html=True)
     st.sidebar.caption(str(workspace))
     choice = st.sidebar.radio(
         "Runs",
-        [new_label] + [d.name for d in runs],
+        [new_label] + [f"@{p}" for p in attached] + [d.name for d in runs],
         key="ev_run_choice",
-        format_func=lambda v: v if v == new_label
-        else f"{_STATE_ICONS.get(states.get(v, 'stale'), '⚪')} {v}",
+        format_func=_label,
     )
     st.sidebar.markdown("---")
-    st.sidebar.metric("Runs", len(runs))
+    st.sidebar.metric("Runs", len(runs) + len(attached))
 
     if choice == new_label:
         _render_new_analysis(st, workspace, args, new_label)
+    elif choice.startswith("@"):
+        _render_local(st, dapp, Path(choice[1:]))
     else:
         _render_run(st, dapp, workspace / choice)
 
@@ -320,6 +351,25 @@ def _render_new_analysis(st: Any, workspace: Path, args: argparse.Namespace,
         )
         st.session_state["ev_run_choice"] = run_dir.name
         st.rerun()
+
+
+def _render_local(st: Any, dapp: Any, path: Path) -> None:
+    """Render an attached (read-only) result directory — an explore output or
+    a loop run — with the same views `evalvitals dashboard` would use."""
+    from evalvitals.analysis.dashboard import load_run
+
+    st.markdown(f"## 📁 {path.name}")
+    st.caption(f"attached results directory · {path}")
+
+    session = load_run(path)
+    if session.get("kind") == "loop" and session.get("story"):
+        dapp._render_loop_story(Path(session["root"]), session["story"], session["runs"])
+        return
+    if session["runs"]:
+        dapp.render_explore_report(Path(session["root"]), session["runs"][0])
+        return
+    st.warning("No exploratory_report.json / fused_report.json / run_log.jsonl "
+               "found in this directory.")
 
 
 def _render_run(st: Any, dapp: Any, run_dir: Path) -> None:

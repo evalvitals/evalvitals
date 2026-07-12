@@ -44,17 +44,18 @@ def test_top_level_web_dispatch(monkeypatch):
 
     captured = {}
 
-    def _fake_launch(workspace, *, port, backend, model, timeout_sec):
+    def _fake_launch(workspace, *, port, backend, model, timeout_sec, attach):
         captured.update(workspace=workspace, port=port, backend=backend,
-                        model=model, timeout_sec=timeout_sec)
+                        model=model, timeout_sec=timeout_sec, attach=attach)
         return 0
 
     monkeypatch.setattr(cli_mod, "launch_upload_app", _fake_launch)
     assert main(["web", "my_runs", "--port", "8500", "--backend", "claude_code",
-                 "--model", "claude-opus-4-8", "--timeout-sec", "900"]) == 0
+                 "--model", "claude-opus-4-8", "--timeout-sec", "900",
+                 "--attach", "outputs_a", "--attach", "outputs_b"]) == 0
     assert captured == {"workspace": "my_runs", "port": 8500,
                         "backend": "claude_code", "model": "claude-opus-4-8",
-                        "timeout_sec": 900}
+                        "timeout_sec": 900, "attach": ["outputs_a", "outputs_b"]}
 
 
 def test_explore_entry_help(capsys):
