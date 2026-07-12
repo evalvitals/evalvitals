@@ -223,6 +223,9 @@ __marimo__/
 runs/
 evalvitals_chat_output/
 examples/**/outputs/
+# web upload workbench workspaces (`evalvitals web` / run_web.sh)
+evalvitals_web_runs/
+examples/**/web_runs/
 .antigravitycli/examples/qwen_loop/outputs/
 examples/qwen_loop_agy/*
 .docker/

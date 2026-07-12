@@ -59,7 +59,15 @@ def main() -> None:
         _render_empty(root)
         return
 
-    turn = runs[selected]
+    render_explore_report(root, runs[selected])
+
+
+def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
+    """Render one standalone explore report — the 3 proposal tabs plus any
+    held-out pipeline artifacts (confirm/fix) sitting next to it.
+
+    Shared entry: dashboard_app's explore view and the upload workbench
+    (upload_app.py) both render finished runs through this."""
     turn_dir = Path(turn["dir"])
     report = turn["report"]
 
