@@ -149,6 +149,16 @@ pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
 ```
 
+Or serve the browser-first workbench — upload a .zip of results to start each
+analysis, with existing result directories attached read-only in the same
+sidebar. Every result renders with one fixed five-tab layout (problem setting,
+exploratory analysis, hypotheses, held-out verdicts, fix); stages a run never
+reached grey out as "not available":
+
+```bash
+evalvitals web my_runs --port 8500 --attach evalvitals_explore_output
+```
+
 See [Exploratory Analysis (M2/M3)](m2_analysis.md) for the full standalone
 explore + hypothesis-generation workflow.
 

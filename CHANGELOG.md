@@ -6,6 +6,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — one fixed five-tab layout for every explore result; the web workbench as the unified surface
+
+- **Fixed tab set** (`dashboard_app.render_explore_report`): every
+  explore-shaped result — plain `evalvitals explore` run, held-out pipeline
+  run, uploaded-zip run — now shows the same five tabs (Problem Setting /
+  Exploratory Analysis / Hypotheses / Held-out Verdicts / Fix). Stages a run
+  never reached render as greyed **"not available"** placeholders saying what
+  the panel would show and which phase produces it (`confirm_report.json` /
+  `fix_report.json`), instead of the tabs appearing and disappearing between
+  runs. `SKIP_FIX=1` pipeline runs get real verdicts in tab 4 and a greyed
+  tab 5. Applies to `evalvitals dashboard` and the workbench alike (shared
+  renderer).
+- **`evalvitals web --attach DIR`** (repeatable): existing result directories
+  (explore outputs or loop runs) are listed read-only (📁) in the workbench
+  sidebar next to uploads, rendered with the same views `evalvitals dashboard`
+  would use — one page holds "upload a .zip to start a new analysis" AND the
+  results other scripts already produced. `run_web.sh` auto-attaches the
+  example's `outputs_attn_full` / `outputs_pipeline/1_explore` / `outputs`
+  when present (`ATTACH_DIRS` env override).
+
+### Changed — eval-chart-style skill synced to the redesigned theme palette
+
+The dashboard redesign swapped `eval_viz_theme`'s palette for the
+dataviz-validated light/dark palette, which left the bundled eval-chart-style
+skill teaching the retired colors — agent-drawn PNGs and host-rendered charts
+would have disagreed (most visibly PASS: neutral slate vs status green). The
+skill's §1 now carries the light-mode values of the same palette: FAIL
+`#d03b3b` / PASS `#0ca30c` (reserved status colors), inconclusive `#fab219`
+(amber, with the label-not-color-alone rule), leaky `#898781`; the 8-slot
+fixed categorical order (`#2a78d6` …) with green/red slots skipped next to
+outcome hues; ordinal blue ramp `#86b6ef → #2a78d6 → #104281` (validated);
+diverging `#2a78d6 ↔ #f0efec ↔ #e34948` — the categorical red, deliberately
+not the FAIL red, so signed heatmaps can't impersonate the outcome.
+
 ### Added — `evalvitals web`: upload-a-.zip explore workbench
 
 - **`evalvitals web [WORKSPACE]`** (new CLI subcommand) serves a Streamlit page
