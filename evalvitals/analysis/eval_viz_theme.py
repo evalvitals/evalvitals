@@ -40,23 +40,49 @@ from evalvitals.viz.labels import display_name, raw_hint
 # ---------------------------------------------------------------------------
 # 1. SEMANTIC PALETTE  — color encodes ROLE, never decoration.
 #    Reuse these names everywhere; never hardcode a hex in a chart.
+#    Values are the validated dataviz-skill reference palette (dataviz
+#    skill's references/palette.md): status colors are fixed across modes,
+#    only ink/surface/grid shift. apply() swaps PALETTE in place between
+#    _LIGHT/_DARK — see its docstring for how dark mode is detected.
 # ---------------------------------------------------------------------------
-PALETTE = {
-    "FAIL":          "#C0413B",   # warning hue — the failing group, every chart
-    "PASS":          "#5B7A99",   # neutral slate — the passing group, every chart
-    "SIGNIFICANT":   "#2E8B6F",   # green — survived FDR / REJECT H0
-    "INCONCLUSIVE":  "#B8BCC2",   # grey — did not survive
-    "ACCENT":        "#3A6EA5",   # single-series / neutral measurement
-    "LEAKY":         "#9AA0A6",   # greyed-out: target-leaking signal, do not elevate
-    "GRID":          "#E6E8EB",
-    "AXIS":          "#5A5F66",
-    "TEXT":          "#2B2F33",
-    "BAND":          "rgba(91,122,153,0.12)",  # CI / reference band fill
+_LIGHT = {
+    "FAIL":          "#d03b3b",   # status: critical
+    "PASS":          "#0ca30c",   # status: good
+    "SIGNIFICANT":   "#0ca30c",   # status: good — survived FDR / REJECT H0
+    "INCONCLUSIVE":  "#fab219",   # status: warning — did not survive
+    "ACCENT":        "#2a78d6",   # categorical slot 1 / sequential base hue
+    "LEAKY":         "#898781",   # muted ink: target-leaking signal, do not elevate
+    "GRID":          "#e1e0d9",   # hairline gridline
+    "AXIS":          "#898781",   # muted ink (axis/tick labels)
+    "TEXT":          "#0b0b0b",   # primary ink
+    "SURFACE":       "#fcfcfb",   # chart surface — sequential-scale zero end
+    "BAND":          "rgba(42,120,214,0.12)",  # CI / reference band fill
+    "DIVERGE_NEG":   "#2a78d6",   # diverging pole (negative) — blue
+    "DIVERGE_POS":   "#e34948",   # diverging pole (positive) — red
+    "DIVERGE_MID":   "#f0efec",   # diverging neutral midpoint
 }
+_DARK = {
+    "FAIL":          "#d03b3b",
+    "PASS":          "#0ca30c",
+    "SIGNIFICANT":   "#0ca30c",
+    "INCONCLUSIVE":  "#fab219",
+    "ACCENT":        "#3987e5",
+    "LEAKY":         "#898781",
+    "GRID":          "#2c2c2a",
+    "AXIS":          "#898781",
+    "TEXT":          "#ffffff",
+    "SURFACE":       "#1a1a19",
+    "BAND":          "rgba(57,135,229,0.20)",
+    "DIVERGE_NEG":   "#3987e5",
+    "DIVERGE_POS":   "#e66767",
+    "DIVERGE_MID":   "#383835",
+}
+PALETTE = dict(_LIGHT)  # mutated in place by apply(); chart builders read this dict live
 
 FONT = "Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
 
-# Map any outcome label -> role color. Extend if labels differ.
+# Map any outcome label -> role color. Extend if labels differ. Rebuilt by
+# apply() alongside PALETTE so it never goes stale after a mode switch.
 OUTCOME_COLORS = {
     # NB: True hashes to 1 and False to 0, so the int keys cover the bool case too.
     "FAIL": PALETTE["FAIL"], "fail": PALETTE["FAIL"], 1: PALETTE["FAIL"],
@@ -65,6 +91,16 @@ OUTCOME_COLORS = {
 
 def outcome_color(v):
     return OUTCOME_COLORS.get(v, PALETTE["ACCENT"])
+
+def _detect_dark() -> bool:
+    """Best-effort dark-mode detection via Streamlit's theme context; False
+    (light) if streamlit isn't installed or there's no active script run
+    (e.g. notebook/CLI use of this module)."""
+    try:
+        import streamlit as st
+        return st.context.theme.type == "dark"
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +175,25 @@ def human_bins(edges) -> list[str]:
 # ---------------------------------------------------------------------------
 # 4. GLOBAL TEMPLATE  — register once; every chart inherits font, grid, margins.
 # ---------------------------------------------------------------------------
-def apply(set_default: bool = True) -> str:
+def apply(set_default: bool = True, dark: "bool | None" = None) -> str:
+    """Register the plotly template. *dark* picks the light/dark palette
+    variant; ``None`` auto-detects via Streamlit's theme context (see
+    :func:`_detect_dark`), defaulting to light outside Streamlit.
+
+    Mutates the module-level ``PALETTE``/``OUTCOME_COLORS`` dicts in place
+    (rather than rebinding them) so every chart builder — which all read
+    ``PALETTE["..."]`` live, not a captured snapshot — picks up the new
+    values immediately.
+    """
+    if dark is None:
+        dark = _detect_dark()
+    PALETTE.clear()
+    PALETTE.update(_DARK if dark else _LIGHT)
+    OUTCOME_COLORS.clear()
+    OUTCOME_COLORS.update({
+        "FAIL": PALETTE["FAIL"], "fail": PALETTE["FAIL"], 1: PALETTE["FAIL"],
+        "PASS": PALETTE["PASS"], "pass": PALETTE["PASS"], 0: PALETTE["PASS"],
+    })
     tmpl = go.layout.Template()
     tmpl.layout = go.Layout(
         font=dict(family=FONT, size=13, color=PALETTE["TEXT"]),
@@ -484,7 +538,7 @@ def corr_heatmap(df, signals, method="pearson"):
     labels = [short(c) for c in cols]
     fig = go.Figure(go.Heatmap(
         z=M.values, x=labels, y=labels, zmin=-1, zmax=1,
-        colorscale=[[0, PALETTE["FAIL"]], [0.5, "#FFFFFF"], [1, PALETTE["PASS"]]],
+        colorscale=[[0, PALETTE["DIVERGE_NEG"]], [0.5, PALETTE["DIVERGE_MID"]], [1, PALETTE["DIVERGE_POS"]]],
         text=[[fmt(v, "corr") for v in row] for row in M.values],
         texttemplate="%{text}", textfont=dict(size=11),
         colorbar=dict(title="r", thickness=12)))
@@ -594,7 +648,7 @@ def confusion_matrix(y_true, y_pred, pos_label="Yes", neg_label="No", title="Con
     fig = go.Figure(go.Heatmap(
         z=Z, x=[f"actual {pos_label}", f"actual {neg_label}"],
         y=[f"pred {pos_label}", f"pred {neg_label}"],
-        colorscale=[[0, "#FFFFFF"], [1, PALETTE["ACCENT"]]],
+        colorscale=[[0, PALETTE["SURFACE"]], [1, PALETTE["ACCENT"]]],
         text=[[f"TP {tp}", f"FP {fp}"], [f"FN {fn}", f"TN {tn}"]],
         texttemplate="%{text}", textfont=dict(size=14), showscale=False))
     fig.update_layout(title=title, xaxis_title="", yaxis_title="")

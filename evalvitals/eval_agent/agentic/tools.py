@@ -264,6 +264,9 @@ def _cluster_failures(loop: Any, state: _RunState) -> "Callable[[EvidenceBoard, 
         )
         state.failure_modes = report
         board.failure_modes = [c.to_dict() for c in report.clusters]
+        run_logger = getattr(loop, "run_logger", None)
+        if run_logger is not None:
+            run_logger.save_artifact_json("failure_modes.json", report.to_dict())
         return ToolOutcome(
             True, f"{len(report.clusters)} failure mode(s) from {report.n_fail_cases} FAIL case(s)",
             payload=report,

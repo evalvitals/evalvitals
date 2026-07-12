@@ -125,26 +125,22 @@ def test_loop_dashboard_renders_analysis_panel_without_error(tmp_path):
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "Problem Setting" in blob
     assert "Bottom line" in blob
-    # M2 is exploratory-only in the current scope — descriptive framing, no
-    # supported/not-supported verdict, even though this fixture's own data
-    # carries adjudication/reject fields that would have implied one.
-    assert "Candidate signals" in blob
-    assert "Evidence you can use" not in blob
-    assert any("descriptively, without a validity verdict" in str(i.value) for i in at.info)
-    # the "Bottom line" itself must not fall back to compile_diagnostic_report's
-    # own confirmatory answer (a "supported claim" or its "no supported claim"
-    # fallback) — it must use the descriptive computation instead.
-    assert "No supported diagnostic claim" not in blob
-    assert "shows the largest FAIL-vs-PASS separation" in blob
+    # This fixture carries a real surgery/fix record (M5 "supported"), so the
+    # run is confirmatory, not descriptive-only — evidence gets a verdict, and
+    # the M4/M5 stage chips are real pipeline stages, not hidden.
+    assert "Candidate signals" not in blob
+    assert "Evidence you can use" in blob
+    assert any("carry validity verdicts" in str(i.value) for i in at.info)
     assert "How to read this evidence" in blob
     assert "Takeaway" in blob
     assert "Supporting experiment" in blob
     assert "Method:" in blob
     assert "Takeaway:" in blob
     assert "Agent-authored dashboard narrative for this run." in blob
-    # M4/M5 stage chips are temporarily hidden (not adjusted to current scope).
     assert "M1" in blob and "M2" in blob and "M3" in blob
-    assert "Mechanism test" not in blob and "Repair / surgery test" not in blob
+    assert "Mechanism test" in blob and "Repair / surgery test" in blob
+    # the supported M5 verdict reaches both the hero band and the hypothesis card.
+    assert ">Supported</span>" in blob
 
 
 def test_standalone_dashboard_hypotheses_tab_falls_back_gracefully_when_absent(tmp_path):
@@ -353,7 +349,7 @@ def test_standalone_dashboard_falls_back_to_sample_rows_without_records_json(tmp
     assert "only a small sample was saved" in captions.lower()
 
 
-def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
+def test_loop_dashboard_informs_when_no_explore_report(tmp_path):
     logs = tmp_path / "logs_m2_5"
     logs.mkdir(parents=True)
     (logs / "run_log.jsonl").write_text(
@@ -362,8 +358,79 @@ def test_loop_dashboard_warns_when_no_explore_report(tmp_path):
     )
     at = _run_app(tmp_path)
     assert not at.exception
-    # No measured signals → an actionable warning, not a silent empty page.
-    assert any("explore report" in str(w.value).lower() for w in at.warning)
+    # Missing explore artifacts is a normal, expected state (e.g. a
+    # hypotheses-only rerun) — an info note, not an alarming yellow warning.
+    assert any("explore report" in str(i.value).lower() for i in at.info)
+    assert not any("explore report" in str(w.value).lower() for w in at.warning)
+
+
+def _build_agentic_run(root):
+    """An AgenticDiagnoseLoop run: run_start/loop_end lifecycle, a rejected
+    early-stop dispatch (host discipline, not an error), then a real M1-M3-M5
+    happy path that resolves supported."""
+    logs = root / "logs_agentic"
+    logs.mkdir(parents=True)
+    events = [
+        {"event": "run_start", "model": "FakeModel(...)", "decision_judge": "ClaudeModel(...)",
+         "max_actions": 10, "n_cases": 4,
+         "protocol": {"description": "Do FAIL cases share an attention signature?"},
+         "label_distribution": {"FAIL": 2, "PASS": 2}},
+        {"event": "probe", "cycle": 0, "analyzers": ["attention"], "findings": {}, "artifact_paths": {}},
+        {"event": "agent_decision", "step": 0, "action": "run_probe", "params": {},
+         "rationale": "start with M1", "valid": True},
+        {"event": "agent_tool", "step": 0, "tool": "run_probe", "ok": True, "summary": "ran 1 analyzer(s)"},
+        {"event": "agent_decision", "step": 1, "action": "stop",
+         "params": {"resolved": True, "reason": "too early"}, "rationale": "check early exit", "valid": True},
+        {"event": "agent_tool", "step": 1, "tool": "stop", "ok": False,
+         "error": "no_supported_hypothesis", "summary": "cannot declare success yet"},
+        {"event": "analysis", "cycle": 0, "conclusion": "signal found"},
+        {"event": "agent_decision", "step": 2, "action": "propose_hypotheses", "params": {},
+         "rationale": "generate hypotheses", "valid": True},
+        {"event": "agent_tool", "step": 2, "tool": "propose_hypotheses", "ok": True, "summary": "1 hypothesis"},
+        {"event": "diagnosis", "cycle": 0, "n_hypotheses": 1,
+         "hypotheses": [{"statement": "attention causes failure", "failure_mode": "attention"}]},
+        {"event": "agent_decision", "step": 3, "action": "test_hypothesis", "params": {},
+         "rationale": "test it", "valid": True},
+        {"event": "agent_tool", "step": 3, "tool": "test_hypothesis", "ok": True, "summary": "tested"},
+        {"event": "surgery", "cycle": 0, "module": "m5", "status": "supported",
+         "hypothesis": "attention causes failure"},
+        {"event": "agent_decision", "step": 4, "action": "stop",
+         "params": {"resolved": True, "reason": "supported"}, "rationale": "done", "valid": True},
+        {"event": "agent_tool", "step": 4, "tool": "stop", "ok": True, "summary": "resolved"},
+        {"event": "loop_end", "cycles": 1, "stopped_by": "agent_stop", "n_verified": 1,
+         "total_duration_sec": 42.0},
+    ]
+    (logs / "run_log.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    return root
+
+
+def test_agentic_run_dashboard_shows_hero_trajectory_and_verdicts(tmp_path):
+    _build_agentic_run(tmp_path)
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting", "2 Agent Trajectory", "3 Analysis", "4 Hypotheses & Artifacts",
+    ]
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "Agentic Diagnosis Run" in blob
+    # what this run is investigating (run_start's protocol) is stated up front,
+    # not just the bare verdict — a run_start-only field, never previously
+    # surfaced anywhere in the dashboard.
+    assert "Investigating: Do FAIL cases share an attention signature?" in blob
+    assert "2 FAIL / 2 PASS" in blob
+    assert "Resolved" in blob and "Supported" in blob
+    assert ">Supported</span>" in blob
+    assert "attention causes failure" in blob
+    # the rejected early-stop dispatch is a visible discipline feature, not an error.
+    assert "Rejected" in blob and "no_supported_hypothesis" in blob
+    # accepted steps show their tool name and rationale.
+    assert "run_probe" in blob and "test_hypothesis" in blob
+    assert "start with M1" in blob
+    # no raw run-directory path inside the hero band itself (demoted to a caption).
+    assert "<h1>" not in blob
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert str(tmp_path) in captions
 
 
 def test_analysis_tab_tells_connected_story(tmp_path):
@@ -379,12 +446,12 @@ def test_analysis_tab_tells_connected_story(tmp_path):
     assert "Measurement" in blob
     assert "Exploratory analysis" in blob
     assert "Hypothesis generation" in blob
-    # the hypothesis statement appears, but M4/M5 (hypothesis testing) is out of
-    # scope — no support/not-supported verdict, even though this fixture's own
-    # data carries a matching surgery record that would have implied one.
+    # the hypothesis statement appears, and this fixture's matching M5 surgery
+    # record ("supported") now surfaces as a real verdict — M4/M5 are live
+    # pipeline stages once a run actually reaches them.
     assert "language-prior hallucination" in blob
-    assert "M5: supported" not in blob
-    assert "M5" not in blob and "M4" not in blob
+    assert "M5" in blob and "M4" in blob
+    assert ">Supported</span>" in blob
     assert any(e.label == "Why these charts were chosen" for e in at.expander)
     assert len(at.dataframe) >= 2  # signal table + visual-plan table
 

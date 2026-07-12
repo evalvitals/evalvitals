@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from evalvitals.analysis.dashboard import launch_dashboard
+from evalvitals.analysis.dashboard import launch_dashboard, launch_upload_app
 from evalvitals.analysis.explore_run import run_explore
 
 
@@ -88,6 +88,28 @@ def main(argv: list[str] | None = None) -> int:
     dashboard.add_argument("run_dir", help="An explore output dir or a loop-run dir.")
     dashboard.add_argument("--port", type=int, default=None, help="Optional Streamlit port.")
 
+    web = sub.add_parser(
+        "web",
+        help="Launch the upload-and-explore web workbench (upload a .zip, run M2+M3).",
+        description="Serve a Streamlit page where users upload a .zip of results; "
+                    "each upload becomes one `evalvitals explore` run (M2 exploratory "
+                    "analysis + M3 hypotheses) and renders like `evalvitals dashboard`.",
+    )
+    web.add_argument(
+        "workspace", nargs="?", default="evalvitals_web_runs",
+        help="Directory where uploaded runs accumulate (created if missing).",
+    )
+    web.add_argument("--port", type=int, default=None, help="Optional Streamlit port.")
+    web.add_argument(
+        "--backend", "--coder-provider", dest="coder_provider", default="claude_code",
+        choices=["antigravity", "codex", "claude_code", "opencode", "gemini_cli", "kimi_cli"],
+        help="Default coding-agent backend pre-selected in the upload form.",
+    )
+    web.add_argument("--model", "--coder-model", dest="coder_model", default="",
+                     help="Default model id pre-filled in the upload form.")
+    web.add_argument("--timeout-sec", type=int, default=1200,
+                     help="Default per-attempt explorer timeout in the upload form.")
+
     args = parser.parse_args(argv)
     if args.command == "explore":
         if not args.path:
@@ -114,6 +136,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)
+    if args.command == "web":
+        return launch_upload_app(
+            args.workspace,
+            port=args.port,
+            backend=args.coder_provider,
+            model=args.coder_model,
+            timeout_sec=args.timeout_sec,
+        )
 
     parser.print_help()
     return 0

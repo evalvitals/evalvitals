@@ -39,7 +39,46 @@ def launch_dashboard(run_dir: str | Path, *, port: int | None = None) -> int:
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path)]
     if port is not None:
         cmd += ["--server.port", str(port)]
+    # Product chrome, not a debug tool: no "Deploy" button/hamburger menu, no
+    # phone-home usage stats.
+    cmd += ["--client.toolbarMode", "minimal", "--browser.gatherUsageStats", "false"]
     cmd += ["--", str(run_dir)]
+    return subprocess.call(cmd)
+
+
+def launch_upload_app(
+    workspace: str | Path = "evalvitals_web_runs",
+    *,
+    port: int | None = None,
+    backend: str = "claude_code",
+    model: str = "",
+    timeout_sec: int = 1200,
+) -> int:
+    """Launch the upload-and-explore Streamlit workbench (``upload_app.py``).
+
+    The page accepts a .zip of results, extracts it into *workspace*, and runs
+    ``evalvitals explore`` (M2+M3) on it as a detached subprocess; finished
+    runs render with the same tabs as :func:`launch_dashboard`. *backend*,
+    *model* and *timeout_sec* are only the form's defaults — every run can
+    override them in the UI.
+    """
+    try:
+        import streamlit  # noqa: F401
+    except Exception:
+        print(
+            "Streamlit is not installed. Install dashboard extras with:\n"
+            "  pip install -e '.[dashboard]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    app_path = Path(__file__).with_name("upload_app.py")
+    cmd = [sys.executable, "-m", "streamlit", "run", str(app_path)]
+    if port is not None:
+        cmd += ["--server.port", str(port)]
+    cmd += ["--", str(workspace), "--backend", backend, "--timeout-sec", str(int(timeout_sec))]
+    if model:
+        cmd += ["--model", model]
     return subprocess.call(cmd)
 
 
@@ -145,8 +184,30 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
     log_path = max(log_paths, key=lambda p: p.stat().st_size if p.exists() else 0)
     explore_report, explore_dir = _find_explore_report(root, log_path)
 
+    # run_start/loop_end bracket the whole run — prefer the carrier log's own
+    # (the arc actually being displayed), falling back to any log so an M1-only
+    # log still surfaces a run_start when no M2+ arc exists yet.
+    carrier_events = events_by_path.get(log_path, [])
+    run_start = next((e for e in carrier_events if e.get("event") == "run_start"), None)
+    if run_start is None:
+        run_start = next((e for e in events if e.get("event") == "run_start"), None)
+    _carrier_loop_ends = [e for e in carrier_events if e.get("event") == "loop_end"]
+    loop_end = _carrier_loop_ends[-1] if _carrier_loop_ends else None
+    if loop_end is None:
+        _all_loop_ends = [e for e in events if e.get("event") == "loop_end"]
+        loop_end = _all_loop_ends[-1] if _all_loop_ends else None
+
+    agent_steps = _merge_agent_steps(
+        by_event.get("agent_decision", []), by_event.get("agent_tool", [])
+    )
+
     story = {
         "log_path": str(log_path),
+        "run_start": run_start,
+        "loop_end": loop_end,
+        "probes": by_event.get("probe", []),
+        "agent_steps": agent_steps,
+        "mode": "agentic" if agent_steps else "loop",
         "analyses": by_event.get("analysis", []),
         "diagnoses": by_event.get("diagnosis", []),
         "surgeries": by_event.get("surgery", []),
@@ -157,6 +218,10 @@ def load_loop_story(run_dir: str | Path) -> dict[str, Any] | None:
         # so resolve it across the run tree rather than requiring co-location.
         "explore_report": explore_report,
         "explore_dir": explore_dir,
+        # Convention files a stage may have written next to the log (not events —
+        # so no new run_log schema surface is needed for these).
+        "m5_results": _read_sibling_json(root, log_path, "report/m5_results.json") or [],
+        "failure_modes": _read_sibling_json(root, log_path, "artifacts/failure_modes.json"),
     }
     if not story["diagnoses"]:
         proposed = _read_proposed_hypotheses(root)
@@ -204,3 +269,59 @@ def _find_explore_report(root: Path, log_path: Path) -> tuple[dict[str, Any] | N
                 if report is not None and (report.get("charts") or report.get("observations")):
                     return report, str(cand.parent)
     return None, None
+
+
+def _read_sibling_json(root: Path, log_path: Path, *rel_paths: str) -> Any | None:
+    """Look for any of *rel_paths* (e.g. ``"report/m5_results.json"``) under
+    ``root``, then the log's parent and grandparent — mirrors
+    :func:`_find_explore_report`'s search so convention files resolve whether
+    *run_dir* is a bare RunContext root or a ``logs*/`` subdir was selected as
+    the carrier log. Returns the first hit, or ``None``."""
+    bases = [root, log_path.parent, log_path.parent.parent]
+    seen: set[Path] = set()
+    for base in bases:
+        if base in seen or not base.exists():
+            continue
+        seen.add(base)
+        for rel in rel_paths:
+            data = _read_json(base / rel)
+            if data is not None:
+                return data
+    return None
+
+
+def _merge_agent_steps(
+    decisions: list[dict[str, Any]], tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge ``agent_decision`` + ``agent_tool`` events (AgenticDiagnoseLoop)
+    into one ordered per-step list.
+
+    Each entry: ``{step, action, params, rationale, valid, repair_attempts,
+    fallback_used, judge_io, outcome}`` where ``outcome`` is
+    ``{tool, ok, summary, error, duration_sec} | None`` (``None`` when the
+    matching ``agent_tool`` event wasn't logged, e.g. a truncated run)."""
+    tools_by_step = {t.get("step"): t for t in tools}
+    steps: list[dict[str, Any]] = []
+    for d in sorted(decisions, key=lambda e: e.get("step", 0)):
+        tool_ev = tools_by_step.get(d.get("step"))
+        outcome = None
+        if tool_ev is not None:
+            outcome = {
+                "tool": tool_ev.get("tool"),
+                "ok": tool_ev.get("ok"),
+                "summary": tool_ev.get("summary", ""),
+                "error": tool_ev.get("error"),
+                "duration_sec": tool_ev.get("duration_sec"),
+            }
+        steps.append({
+            "step": d.get("step"),
+            "action": d.get("action"),
+            "params": d.get("params") or {},
+            "rationale": d.get("rationale", ""),
+            "valid": d.get("valid", True),
+            "repair_attempts": d.get("repair_attempts", 0),
+            "fallback_used": d.get("fallback_used", False),
+            "judge_io": d.get("judge_io"),
+            "outcome": outcome,
+        })
+    return steps

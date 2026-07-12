@@ -12,7 +12,8 @@ Submodules:
   codegen        CodegenRunner — the single boundary stages use to invoke a CLI
                  coding agent and harvest generated files
   providers      CLI coding-provider adapters (claude_code, codex, antigravity, ...)
-  judges         CLI-backed judge model wrappers (ClaudeModel, AgyModel)
+  judges         CLI-backed judge model wrappers (ClaudeModel, AgyModel) +
+                 liveness-probe autodetection (resolve_cli_judge)
   skills         Agent Skills resolution, sandbox installation, and prompt policy
 """
 
@@ -30,7 +31,7 @@ from evalvitals.agent_runtime.factory import (
     create_sandbox,
 )
 from evalvitals.agent_runtime.json_shape import validate_json_shape
-from evalvitals.agent_runtime.judges import AgyModel, ClaudeModel
+from evalvitals.agent_runtime.judges import AgyModel, ClaudeModel, ResolvedJudge, resolve_cli_judge
 from evalvitals.agent_runtime.providers import create_cli_agent
 from evalvitals.agent_runtime.sandbox import (
     ExperimentSandbox,
@@ -54,6 +55,8 @@ __all__ = [
     "create_sandbox",
     "AgyModel",
     "ClaudeModel",
+    "ResolvedJudge",
+    "resolve_cli_judge",
     "create_cli_agent",
     "ExperimentSandbox",
     "SandboxProtocol",

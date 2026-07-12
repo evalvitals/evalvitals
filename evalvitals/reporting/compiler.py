@@ -38,7 +38,7 @@ def compile_diagnostic_report(
     confidence = _confidence(claims)
 
     return DiagnosticReport(
-        question=str(explore_report.get("question") or "What distinguishes failures from passes?"),
+        question=_fallback_question(explore_report, story),
         answer=answer,
         confidence=confidence,
         claims=claims,
@@ -98,6 +98,21 @@ def _demote_to_descriptive(claim: Claim) -> Claim:
     )
 
 
+_GENERIC_QUESTION = "What distinguishes failures from passes?"
+
+
+def _fallback_question(explore_report: dict[str, Any], story: dict[str, Any]) -> str:
+    """The explore report's own question wins; a loop/agentic run with no
+    explore_report artifact falls back to the protocol description logged at
+    run_start — otherwise a run with no explore report shows a question with
+    no connection to what it actually investigated."""
+    question = str(explore_report.get("question") or "").strip()
+    if question:
+        return question
+    protocol = (story.get("run_start") or {}).get("protocol") or {}
+    return str(protocol.get("description") or "").strip() or _GENERIC_QUESTION
+
+
 def _dashboard_storyboard(
     explore_report: dict[str, Any],
     story: dict[str, Any],
@@ -124,7 +139,7 @@ def _dashboard_storyboard(
             "id": "problem_setting",
             "title": "Problem Setting",
             "stages": ["M1"],
-            "summary": str(explore_report.get("question") or "What distinguishes failures from passes?"),
+            "summary": _fallback_question(explore_report, story),
             "items": observations,
             "artifact_refs": ["data_profile", "candidate_signals"],
         },

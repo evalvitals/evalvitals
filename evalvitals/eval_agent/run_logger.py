@@ -1353,6 +1353,19 @@ class RunLogger:
             warnings.warn(f"RunLogger: could not save text artifact {stem!r}: {exc}")
             return None
 
+    def save_artifact_json(self, stem: str, obj: Any) -> "str | None":
+        """Write *obj* as JSON to ``artifacts/<stem>``; return the run-relative path.
+
+        A conventional-file sibling to the JSONL log for artifacts a downstream
+        reader (e.g. the dashboard) looks up by fixed name rather than by
+        scanning events — e.g. ``failure_modes.json``. A repeat call with the
+        same *stem* overwrites (latest wins); callers that need history should
+        vary the stem themselves.
+        """
+        return self._save_text(
+            self.artifact_dir, stem, json.dumps(obj, indent=2, default=str)
+        )
+
     # Above this size, M2 stats payloads are externalized like every other
     # heavy field (judge I/O, M1 artifacts) instead of inlined in the JSONL
     # line — typical runs stay well under this, so the common case is

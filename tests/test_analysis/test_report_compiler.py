@@ -49,6 +49,26 @@ def test_compile_diagnostic_report_is_claim_first():
     assert report.critique == ["watch leakage"]
 
 
+def test_question_falls_back_to_run_start_protocol_description_not_generic_text():
+    """A loop/agentic run with no explore_report (so no explore_report["question"])
+    must not show the generic "What distinguishes failures from passes?" filler —
+    it should surface what run_start's own protocol actually says this run
+    investigates, both in the compiled question and the problem_setting panel."""
+    story = {
+        "run_start": {"protocol": {"description": "Do FAIL cases share an attention signature?"}},
+    }
+    report = compile_diagnostic_report(story, explore_report=None)
+
+    assert report.question == "Do FAIL cases share an attention signature?"
+    problem_setting = next(p for p in report.dashboard_storyboard if p["id"] == "problem_setting")
+    assert problem_setting["summary"] == "Do FAIL cases share an attention signature?"
+
+
+def test_question_uses_generic_text_when_neither_source_is_available():
+    report = compile_diagnostic_report(story=None, explore_report=None)
+    assert report.question == "What distinguishes failures from passes?"
+
+
 def test_load_run_attaches_diagnostic_report(tmp_path):
     fused = tmp_path / "fused"
     logs = tmp_path / "logs_m2_5"

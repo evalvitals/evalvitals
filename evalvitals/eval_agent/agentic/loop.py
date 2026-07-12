@@ -106,9 +106,13 @@ class AgenticDiagnoseLoop(VLDiagnoseLoop):
 
         _attach_run_logger(self.run_logger, self.probe_agent, self.stats_agent)
         if self.run_logger is not None:
-            self.run_logger.log_run_start(
-                _run_config(self, data, loop_name="AgenticDiagnoseLoop")
-            )
+            # _run_config records the M3 *stage* judge (loop.diagnosis_agent.judge),
+            # not the decision judge driving this loop's own tool-calling — add it
+            # explicitly so the dashboard header can show who is actually deciding.
+            cfg = _run_config(self, data, loop_name="AgenticDiagnoseLoop")
+            cfg["decision_judge"] = repr(self.judge)
+            cfg["max_actions"] = self.max_actions
+            self.run_logger.log_run_start(cfg)
 
         board = EvidenceBoard(
             protocol_summary=_protocol_summary(self.protocol),

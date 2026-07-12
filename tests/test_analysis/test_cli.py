@@ -30,6 +30,33 @@ def test_top_level_dashboard_help(capsys):
     assert "Streamlit dashboard" in capsys.readouterr().out
 
 
+def test_top_level_web_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["web", "--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "upload a .zip" in out
+    assert "--backend" in out
+
+
+def test_top_level_web_dispatch(monkeypatch):
+    import evalvitals.cli as cli_mod
+
+    captured = {}
+
+    def _fake_launch(workspace, *, port, backend, model, timeout_sec):
+        captured.update(workspace=workspace, port=port, backend=backend,
+                        model=model, timeout_sec=timeout_sec)
+        return 0
+
+    monkeypatch.setattr(cli_mod, "launch_upload_app", _fake_launch)
+    assert main(["web", "my_runs", "--port", "8500", "--backend", "claude_code",
+                 "--model", "claude-opus-4-8", "--timeout-sec", "900"]) == 0
+    assert captured == {"workspace": "my_runs", "port": 8500,
+                        "backend": "claude_code", "model": "claude-opus-4-8",
+                        "timeout_sec": 900}
+
+
 def test_explore_entry_help(capsys):
     with pytest.raises(SystemExit) as exc:
         explore_main(["--help"])
