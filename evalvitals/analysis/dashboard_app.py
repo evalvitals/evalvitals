@@ -45,7 +45,13 @@ def main() -> None:
     root = Path(session["root"])
     runs = session["runs"]
 
-    st.set_page_config(page_title="EvalVitals", layout="wide", initial_sidebar_state="collapsed")
+    st.set_page_config(
+        page_title="EvalVitals",
+        page_icon="🩺",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+        menu_items={"Get help": None, "Report a bug": None, "About": "EvalVitals diagnosis dashboard."},
+    )
     _inject_css()
     _viz_ready()
 
@@ -134,51 +140,253 @@ def _render_empty(root: Path) -> None:
     st.caption(str(root))
 
 
-def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, Any]]) -> None:
-    """Render a diagnostic loop run with a data-rich Analysis tab (signal effects,
-    e-BH adjudication, explorer charts & tables) plus the M1→M2→M3 flow.
+def _run_lifecycle(story: dict[str, Any]) -> dict[str, Any]:
+    """Run-level provenance pulled from the additive run_start/loop_end story
+    keys (see load_loop_story) — every field is optional, so callers must
+    tolerate None throughout."""
+    run_start = story.get("run_start") or {}
+    loop_end = story.get("loop_end") or {}
+    protocol = run_start.get("protocol") or {}
+    label_dist = run_start.get("label_distribution") or {}
+    return {
+        "n_cases": run_start.get("n_cases"),
+        "model": run_start.get("model"),
+        "decision_judge": run_start.get("decision_judge"),
+        "max_actions": run_start.get("max_actions"),
+        "duration_sec": loop_end.get("total_duration_sec"),
+        "resolved": loop_end.get("resolved"),
+        "stopped_by": loop_end.get("stopped_by"),
+        "n_verified": loop_end.get("n_verified"),
+        "cycles": loop_end.get("cycles"),
+        # What this run is actually investigating — logged at run_start but,
+        # before this, never surfaced anywhere in the dashboard (a real gap:
+        # a first-time viewer had no way to see what was being tested).
+        "protocol_description": protocol.get("description") or "",
+        "task_domain": protocol.get("task_domain") or "",
+        "n_fail": label_dist.get("FAIL"),
+        "n_pass": label_dist.get("PASS"),
+    }
 
-    M4/M5 are temporarily out of scope (not yet adjusted), so the header and
-    stage strip stop at M3 rather than implying a 5-stage pipeline is live."""
+
+def _clean_repr(value: Any) -> str:
+    """Strip a bare object repr's memory address (`" at 0x7f..."`) — a
+    fallback repr() is much more readable without it."""
+    import re
+
+    return re.sub(r" at 0x[0-9a-fA-F]+", "", str(value))
+
+
+def _hero_verdict(hyps: list[dict[str, Any]], lifecycle: dict[str, Any], *, descriptive: bool) -> tuple[str, str, str]:
+    """Return (badge_text, pill_class, detail_text) for the hero band.
+
+    Descriptive runs never claim a verdict (see _story_is_descriptive) — this
+    states that honestly instead of guessing one from partial data."""
+    if descriptive:
+        return ("Analysis phase", "ev-pill", "No verdict yet — this run hasn't reached a test phase.")
+    tested = [h for h in hyps if h.get("m5")]
+    supported = [h for h in tested if h["m5"].get("status") == "supported"]
+    if supported:
+        return (
+            "Resolved · Supported", "ev-pill-ok",
+            f"Testing supported this explanation for the failures: “{supported[0]['statement']}”",
+        )
+    if tested and all(h["m5"].get("status") == "refuted" for h in tested):
+        return ("Resolved · Refuted", "ev-pill-fail", "No hypothesis survived testing.")
+    if tested:
+        return ("Inconclusive", "ev-pill-warn", "Testing ran but did not clearly resolve a hypothesis.")
+    stopped_by = lifecycle.get("stopped_by")
+    if stopped_by:
+        return (
+            f"Stopped · {str(stopped_by).replace('_', ' ')}", "ev-pill",
+            "The run stopped before reaching a tested hypothesis.",
+        )
+    return ("In progress", "ev-pill", "No hypothesis has been tested yet.")
+
+
+def _render_hero_band(root: Path, story: dict[str, Any], *, descriptive: bool, hyps: list[dict[str, Any]], agentic: bool) -> None:
+    """Answer-first hero band: mode badge, verdict pill + one-line conclusion,
+    then a KPI stat-tile row — replaces the old raw "M1 -> M2 -> M3" header so
+    the first screen states what happened instead of making a reader dig."""
+    lifecycle = _run_lifecycle(story)
+    if agentic:
+        kicker = "Agentic Diagnosis Run"
+    elif descriptive:
+        kicker = "Analysis Phase"
+    else:
+        kicker = "Diagnostic Loop Run"
+    badge_text, pill_class, detail = _hero_verdict(hyps, lifecycle, descriptive=descriptive)
+
+    task_line = ""
+    if lifecycle.get("protocol_description"):
+        task_line = (
+            f'<div class="ev-hero-task">Investigating: {_html_escape(_truncate(lifecycle["protocol_description"], 200))}</div>'
+        )
+
     st.markdown(
         f"""
         <div class="ev-header">
           <div>
-            <div class="ev-kicker">Diagnostic Loop Run</div>
-            <h1>M1 → M2 → M3</h1>
-            <div class="ev-path">{_html_escape(str(root))}</div>
+            <div class="ev-kicker">{_html_escape(kicker)}</div>
+            {task_line}
+            <div class="ev-hero-verdict">
+              <span class="ev-pill {pill_class}">{_html_escape(badge_text)}</span>
+            </div>
+            <div class="ev-hero-verdict-text">{_html_escape(_truncate(detail, 220))}</div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    st.caption(str(root))
 
+    tiles: list[tuple[str, str, str]] = []
+    stages_run = ", ".join(sorted(_active_stages(story))) or "none yet"
+    tiles.append(("Stages run", stages_run, ""))
+    if hyps:
+        tiles.append(("Hypotheses", _format_int(len(hyps)),
+                       f"{lifecycle['n_verified']} verified" if lifecycle.get("n_verified") else "proposed"))
+    if lifecycle.get("n_cases") is not None:
+        case_caption = ""
+        if lifecycle.get("n_fail") is not None and lifecycle.get("n_pass") is not None:
+            case_caption = f"{lifecycle['n_fail']} FAIL / {lifecycle['n_pass']} PASS"
+        tiles.append(("Cases", _format_int(lifecycle["n_cases"]), case_caption))
+    if lifecycle.get("duration_sec") is not None:
+        tiles.append(("Duration", f"{lifecycle['duration_sec']:.0f}s", ""))
+    if agentic and lifecycle.get("max_actions") is not None:
+        n_steps = len(story.get("agent_steps") or [])
+        tiles.append(("Actions", f"{n_steps} / {lifecycle['max_actions']}", "steps taken / budget"))
+
+    if tiles:
+        # Single-line per tile: a multi-line/indented chunk here would trip
+        # Markdown's "4-space indent = code block" rule once concatenated,
+        # rendering everything past the first tile as literal escaped text.
+        cells = "".join(
+            f'<div class="ev-metric-card">'
+            f'<div class="ev-metric-label">{_html_escape(label)}</div>'
+            f'<div class="ev-metric-value">{_html_escape(value)}</div>'
+            f'<div class="ev-metric-caption">{_html_escape(caption)}</div>'
+            f"</div>"
+            for label, value, caption in tiles
+        )
+        st.markdown(f'<div class="ev-kpi-row">{cells}</div>', unsafe_allow_html=True)
+
+    secondary = []
+    if lifecycle.get("model"):
+        secondary.append(f"model: {_clean_repr(lifecycle['model'])}")
+    if agentic and lifecycle.get("decision_judge"):
+        secondary.append(f"judge: {_clean_repr(lifecycle['decision_judge'])}")
+    if secondary:
+        st.caption(" · ".join(secondary))
+
+
+def _render_agent_trajectory_tab(story: dict[str, Any]) -> None:
+    """The agentic decision timeline: what the judge chose, why, and whether
+    the host accepted it. A rejected dispatch (stop-gate, precondition,
+    max_actions) is rendered as a visible discipline feature, not an error —
+    it's proof the loop can't just declare victory early."""
+    steps = story.get("agent_steps") or []
+    lifecycle = _run_lifecycle(story)
+
+    budget_bits = []
+    if lifecycle.get("max_actions") is not None:
+        budget_bits.append(f"{len(steps)} / {lifecycle['max_actions']} steps")
+    if lifecycle.get("stopped_by"):
+        budget_bits.append(f"stopped by: {lifecycle['stopped_by']}")
+    if lifecycle.get("duration_sec") is not None:
+        budget_bits.append(f"{lifecycle['duration_sec']:.0f}s")
+    if budget_bits:
+        st.caption(" · ".join(budget_bits))
+
+    if not steps:
+        st.info("This run has no agentic decision steps recorded.", icon="ℹ️")
+        return
+
+    for step in steps:
+        outcome = step.get("outcome")
+        rejected = bool(outcome) and not outcome.get("ok", True)
+        cls = "ev-step ev-step-rejected" if rejected else "ev-step"
+        action = str(step.get("action") or "")
+        rationale = str(step.get("rationale") or "")
+        top_pill = ""
+        if rejected:
+            reason = str(outcome.get("error") or "rejected")
+            top_pill = f'<span class="ev-pill ev-pill-warn">Rejected · {_html_escape(reason)}</span>'
+        elif outcome is not None:
+            top_pill = '<span class="ev-pill ev-pill-ok">Accepted</span>'
+        flags = []
+        if step.get("repair_attempts"):
+            flags.append(f'<span class="ev-pill ev-pill-warn">{step["repair_attempts"]} repair attempt(s)</span>')
+        if step.get("fallback_used"):
+            flags.append('<span class="ev-pill ev-pill-warn">fallback used</span>')
+        st.markdown(
+            f"""
+            <div class="{cls}">
+              <div class="ev-step-top">
+                <span class="ev-step-index">Step {step.get('step')}</span>
+                {top_pill} {''.join(flags)}
+              </div>
+              <div class="ev-step-tool">{_html_escape(action)}</div>
+              <div class="ev-step-rationale">{_html_escape(rationale)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if step.get("params"):
+            st.code(json.dumps(step["params"], indent=2, default=str), language="json")
+        if outcome:
+            summary = str(outcome.get("summary") or outcome.get("error") or "")
+            if summary:
+                st.markdown(f'<div class="ev-step-outcome">{_html_escape(summary)}</div>', unsafe_allow_html=True)
+        if step.get("judge_io"):
+            with st.expander(f"Judge I/O — step {step.get('step')}", expanded=False):
+                st.json(step["judge_io"])
+
+
+def _render_loop_story(root: Path, story: dict[str, Any], runs: list[dict[str, Any]]) -> None:
+    """Render a diagnostic loop run: an answer-first hero band, then Problem
+    Setting -> (Agent Trajectory, for agentic runs) -> Analysis -> Hypotheses."""
     # The Step-1 explore report (signals/charts/tables M2 confirmed & M3 consulted)
     # usually lives in a sibling dir; load_loop_story resolves it for us.
     explore_report = story.get("explore_report")
     if not explore_report:
         explore_report = next((r["report"] for r in runs if r["name"] == "fused_report"), None)
     explore_dir = Path(story.get("explore_dir") or (runs[0]["dir"] if runs else root))
+
+    descriptive = _story_is_descriptive(story)
+    hyps = _hypotheses_with_outcomes(story)
+    agent_steps = story.get("agent_steps") or []
+
+    _render_hero_band(root, story, descriptive=descriptive, hyps=hyps, agentic=bool(agent_steps))
+
     if not explore_report:
-        st.warning(
+        st.info(
             "No explore report was found alongside this loop log, so measured "
             "signals/charts are unavailable. Re-run with `--explore-report`, or "
             "point the dashboard at a directory containing `fused_report.json` / "
-            "`exploratory_report.json`."
+            "`exploratory_report.json`.",
+            icon="ℹ️",
         )
 
     has_downstream = bool(story.get("surgeries") or story.get("fixes"))
-    hypothesis_tab = "3 Hypotheses & Artifacts" if has_downstream else "3 Proposed Hypotheses"
-    setting, analysis, hypotheses = st.tabs([
-        "1 Problem Setting",
-        "2 Analysis",
-        hypothesis_tab,
-    ])
-    with setting:
+    hypothesis_label = "Hypotheses & Artifacts" if has_downstream else "Proposed Hypotheses"
+    labels = ["Problem Setting"]
+    if agent_steps:
+        labels.append("Agent Trajectory")
+    labels += ["Analysis", hypothesis_label]
+    tabs = st.tabs([f"{i + 1} {label}" for i, label in enumerate(labels)])
+
+    idx = 0
+    with tabs[idx]:
         _render_problem_setting(root, explore_report or {}, story=story, artifact_dir=explore_dir)
-    with analysis:
+    idx += 1
+    if agent_steps:
+        with tabs[idx]:
+            _render_agent_trajectory_tab(story)
+        idx += 1
+    with tabs[idx]:
         _render_loop_analysis_panel(story, explore_report, explore_dir, root)
-    with hypotheses:
+    idx += 1
+    with tabs[idx]:
         _render_hypothesis_decision_panel(story, explore_report, explore_dir)
 
 
@@ -215,13 +423,25 @@ def _hypotheses_with_outcomes(story: dict[str, Any]) -> list[dict[str, Any]]:
             stmt = _hypothesis_statement(h)
             if not stmt:
                 continue
+            tests = tests_by_stmt.get(stmt, [])
+            m5_test = next((t for t in tests if t.get("module") == "m5"), None)
+            m5 = None
+            if m5_test is not None:
+                evidence = m5_test.get("evidence") or {}
+                m5 = {
+                    "status": m5_test.get("status"),
+                    "effect_size": evidence.get("m5_effect_size"),
+                    "confidence": evidence.get("m5_confidence"),
+                    "protocol_consistent": evidence.get("m5_protocol_consistent"),
+                }
             out.append({
                 "statement": stmt,
                 "failure_mode": _hypothesis_failure_mode(h),
                 "test_design": _hypothesis_test_design(h),
                 "cycle": d.get("cycle"),
                 "referenced_charts": d.get("referenced_charts") or [],
-                "tests": tests_by_stmt.get(stmt, []),
+                "tests": tests,
+                "m5": m5,
             })
     return out
 
@@ -260,7 +480,14 @@ def _render_problem_setting(
     """Panel 1: orient the user before any statistical claims."""
     report = report or {}
     storyboard = _storyboard_panels(report, story=story)
-    question = str(report.get("question") or "What distinguishes failures from passes?")
+    # The explore report's own "question" wins; a loop/agentic run without one
+    # (no explore_report artifact) falls back to the protocol description
+    # logged at run_start — otherwise a first-time viewer sees no explanation
+    # of what this run is even investigating.
+    fallback_question = "What distinguishes failures from passes?"
+    if story:
+        fallback_question = _run_lifecycle(story).get("protocol_description") or fallback_question
+    question = str(report.get("question") or fallback_question)
     signals = _candidate_signals(report)
     charts = [c for c in report.get("charts", []) if isinstance(c, dict)]
 
@@ -382,20 +609,30 @@ def _render_problem_setting(
 
     with c2:
         st.markdown("#### Evaluation frame")
-        # M2 is exploratory-only in the current scope — no confirm/e-BH verdict,
-        # and M4/M5 (mechanism test, repair/surgery) counts are not shown even
-        # if the loaded run's own data carries them.
+        # Standalone explore reports have no loop/story at all, so they're
+        # always the descriptive framing; a loop run's own story says whether
+        # a test phase actually ran.
+        descriptive = _story_is_descriptive(story) if story else True
         stages = []
         if story:
             stages = [
                 ("M2 analyses", len(story.get("analyses") or [])),
                 ("M3 diagnoses", len(story.get("diagnoses") or [])),
             ]
+            if not descriptive:
+                surgeries = story.get("surgeries") or []
+                stages.append(("M4/M5 tests", len(surgeries)))
+                stages.append(("Fixes", len(story.get("fixes") or [])))
+        method_text = (
+            "Exploratory (descriptive) — no confirm/test phase has run yet for this hypothesis"
+            if descriptive else
+            "Confirmatory — a test phase ran and hypotheses below carry validity verdicts"
+        )
         st.markdown(
-            """
+            f"""
             <div class="ev-brief-card">
               <div class="ev-brief-label">Analysis method</div>
-              <div class="ev-brief-value">Exploratory (descriptive) — no confirm phase in the current scope</div>
+              <div class="ev-brief-value">{_html_escape(method_text)}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -406,20 +643,36 @@ def _render_problem_setting(
 
 
 def _render_stage_map(*, active: set[str]) -> None:
-    """Small stage strip: context, not content.
-
-    M4/M5 are temporarily omitted from this strip — they haven't been adjusted
-    to the current M1-M3 scope yet, so showing them would be misleading."""
+    """Small stage strip: the full M1-M5 pipeline map, with the stages this
+    run actually reached highlighted (see :func:`_active_stages`)."""
     chips = []
     for spec in stage_specs_as_dicts():
-        if spec["id"] in ("M4", "M5"):
-            continue
         cls = "ev-stage-chip ev-stage-active" if spec["id"] in active else "ev-stage-chip"
         chips.append(
             f'<span class="{cls}"><b>{_html_escape(spec["id"])}</b> '
             f'{_html_escape(spec["name"])}</span>'
         )
     st.markdown('<div class="ev-stage-strip">' + "".join(chips) + "</div>", unsafe_allow_html=True)
+
+
+def _active_stages(story: dict[str, Any] | None) -> set[str]:
+    """Which M1-M5 stages this run's own log actually reached, for the stage
+    strip's highlighting — a run that stopped at M3 shows M4/M5 as pipeline
+    context, not as if they'd run."""
+    story = story or {}
+    active: set[str] = set()
+    if story.get("probes"):
+        active.add("M1")
+    if story.get("analyses"):
+        active.add("M2")
+    if story.get("diagnoses"):
+        active.add("M3")
+    surgeries = story.get("surgeries") or []
+    if any(s.get("module") == "m4" for s in surgeries):
+        active.add("M4")
+    if any(s.get("module") == "m5" for s in surgeries):
+        active.add("M5")
+    return active
 
 
 def _class_balance_from_report(
@@ -572,29 +825,36 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
     """Panel 2: analysis methods, evidence, charts, and takeaways."""
     explore_report = explore_report or {}
     if not explore_report:
-        st.warning(
+        st.info(
             "No explore report was found alongside this loop log, so the Analysis "
             "panel cannot show measured signals or charts. Re-run with "
             "`--explore-report`, or point the dashboard at a directory containing "
-            "`fused_report.json` / `exploratory_report.json`."
+            "`fused_report.json` / `exploratory_report.json`.",
+            icon="ℹ️",
         )
     signals = _candidate_signals(explore_report)
     adj = explore_report.get("adjudication") or {}
     readings = [r for r in explore_report.get("chart_readings") or [] if isinstance(r, dict)]
     storyboard = _storyboard_panels(explore_report, story=story)
-    # M2 is exploratory-only in the current scope (no confirm/M4/M5 phase wired
-    # up yet), so it never shows a supported/not-supported verdict — always
-    # descriptive, regardless of what the loaded run's own data says.
-    descriptive = True
+    # Descriptive (no verdict yet) vs confirmatory (surgery/fix data exists) —
+    # see _story_is_descriptive; every branch below already keys off this.
+    descriptive = _story_is_descriptive(story)
 
     st.markdown("### Analysis")
-    _render_stage_map(active={"M2"})
-    st.info(
-        "Analysis phase — candidate signals and proposed hypotheses are shown "
-        "**descriptively, without a validity verdict**. A confirm phase to "
-        "adjudicate them on a held-out split is not part of the current scope.",
-        icon="🔍",
-    )
+    _render_stage_map(active=_active_stages(story))
+    if descriptive:
+        st.info(
+            "Analysis phase — candidate signals and proposed hypotheses are shown "
+            "**descriptively, without a validity verdict**. A confirm/test phase "
+            "hasn't run yet for this hypothesis.",
+            icon="🔍",
+        )
+    else:
+        st.info(
+            "Confirmatory — signals and hypotheses below carry validity verdicts "
+            "from the test phase that ran for this hypothesis.",
+            icon="✅",
+        )
     st.markdown(
         f"""
         <div class="ev-report-answer">
@@ -666,26 +926,26 @@ def _render_loop_analysis_panel(story, explore_report, explore_dir, root=None) -
 
 
 def _render_hypothesis_decision_panel(story, explore_report, explore_dir) -> None:
-    """Panel 3: M3 hypotheses only.
-
-    M4/M5 (mechanism test, repair/surgery) are temporarily out of scope — this
-    run doesn't do hypothesis testing, so no downstream decision evidence,
-    test verdicts, or fix records are shown here, regardless of whether the
-    loaded run's own data happens to carry them."""
+    """Panel 3: M3 hypotheses, with M4/M5 verdicts joined in when this run's
+    own data has them (see :func:`_hypotheses_with_outcomes`'s ``m5`` key)."""
+    descriptive = _story_is_descriptive(story)
     hyps = _hypotheses_with_outcomes(story)
     storyboard = _storyboard_panels(explore_report or {}, story=story)
     st.markdown("### Proposed Hypotheses")
-    _render_stage_map(active={"M3"})
+    _render_stage_map(active=_active_stages(story))
     _render_storyboard_panel(storyboard, "hypotheses_artifacts")
     if hyps:
-        st.caption("These are M3 hypotheses proposed from the M2 analysis. Hypothesis "
-                   "testing is not part of the current scope.")
+        if descriptive:
+            st.caption("These are M3 hypotheses proposed from the M2 analysis. A "
+                       "confirm/test phase hasn't run yet for this hypothesis.")
+        else:
+            st.caption("M3 hypotheses joined with their M4/M5 test verdicts, where tested.")
         for h in hyps:
-            _render_hypothesis_card(h)
+            _render_hypothesis_card(h, descriptive=descriptive)
     else:
         st.warning("No M3 hypotheses were recorded for this run.")
 
-    with st.expander("Inspect M1-M3 artifacts and flow", expanded=True):
+    with st.expander("Inspect M1-M5 artifacts and flow", expanded=True):
         _render_loop_flow(story, explore_report, explore_dir)
     with st.expander("Inspect raw tables", expanded=False):
         _render_explore_tables(explore_report, explore_dir, full=True)
@@ -1019,11 +1279,11 @@ def _load_sibling_json(turn_dir: Path, name: str) -> dict[str, Any] | None:
 
 
 _VERDICT_COLORS = {
-    "supported": "#0f8a5f",
-    "partial": "#b8860b",
-    "refuted": "#b42318",
-    "not_testable": "#667085",
-    "not_judged": "#667085",
+    "supported": "var(--ev-ok)",
+    "partial": "var(--ev-warn)",
+    "refuted": "var(--ev-fail)",
+    "not_testable": "var(--ev-muted)",
+    "not_judged": "var(--ev-muted)",
 }
 
 
@@ -1082,7 +1342,7 @@ def _render_standalone_hypothesis_card(
     badge = reasoning_line = ""
     if verdict:
         v = str(verdict.get("verdict") or "not_judged")
-        color = _VERDICT_COLORS.get(v, "#667085")
+        color = _VERDICT_COLORS.get(v, "var(--ev-muted)")
         surgery = " · routed to surgery" if verdict.get("needs_surgery") else ""
         badge = (
             f'<span class="ev-pill" style="border-color:{color};color:{color};">'
@@ -1664,12 +1924,17 @@ def _render_visual_plan(explore_report: dict[str, Any] | None) -> None:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
-def _render_hypothesis_card(h: dict[str, Any]) -> None:
-    """One M3 hypothesis with its cited evidence — no test/support verdict.
+_VERDICT_PILL = {
+    "supported": ("ev-pill-ok", "Supported"),
+    "refuted": ("ev-pill-fail", "Not supported"),
+    "inconclusive": ("ev-pill-warn", "Inconclusive"),
+}
 
-    Hypothesis testing (M4/M5) is out of the current scope, so a hypothesis's
-    ``tests`` (M5/M4 records the loaded run's own data might carry) are
-    deliberately not read or rendered here."""
+
+def _render_hypothesis_card(h: dict[str, Any], *, descriptive: bool = True) -> None:
+    """One M3 hypothesis with its cited evidence. When this run has an M5
+    verdict for it (``h["m5"]``) and the run isn't descriptive-only, a
+    verdict pill renders next to the statement — otherwise, no verdict."""
     refs = h.get("referenced_charts") or []
     ref_line = ("based on: " + ", ".join(str(r) for r in refs)) if refs else ""
     test_design = str(h.get("test_design") or "").strip()
@@ -1677,10 +1942,15 @@ def _render_hypothesis_card(h: dict[str, Any]) -> None:
         f'<div class="ev-signal-test">How this could be checked: {_html_escape(test_design)}</div>'
         if test_design else ""
     )
+    pill = ""
+    m5 = h.get("m5")
+    if not descriptive and m5:
+        cls, label = _VERDICT_PILL.get(str(m5.get("status")), ("ev-pill", str(m5.get("status") or "untested")))
+        pill = f' <span class="ev-pill {cls}">{_html_escape(label)}</span>'
     st.markdown(
         f"""
         <div class="ev-signal">
-          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}</div>
+          <div class="ev-signal-title">{_html_escape(str(h.get('statement', '')))}{pill}</div>
           <div class="ev-signal-body">failure mode: <b>{_html_escape(str(h.get('failure_mode', '')))}</b>
             {('· ' + _html_escape(ref_line)) if ref_line else ''}</div>
           {test_block}
@@ -1691,11 +1961,8 @@ def _render_hypothesis_card(h: dict[str, Any]) -> None:
 
 
 def _render_loop_flow(story, explore_report, explore_dir) -> None:
-    """The ordered narrative: explore notes → M2 → M3 hypotheses.
-
-    M4/M5 (tested interventions, fix adjudication) are temporarily out of
-    scope and deliberately not read from `story` here, even if the loaded
-    run's own data carries surgery/fix records."""
+    """The ordered narrative: explore notes → M2 → M3 hypotheses → (when this
+    run isn't descriptive-only) M4/M5 tests and Fix outcomes."""
     if explore_report:
         with st.expander("Step 1 — exploratory observations (UNCONFIRMED; fed to M3 only)", expanded=False):
             for o in (explore_report.get("observations") or [])[:10]:
@@ -1743,6 +2010,32 @@ def _render_loop_flow(story, explore_report, explore_dir) -> None:
         if raw:
             with st.expander(f"Full M3 reasoning — cycle {diag.get('cycle')} (raw judge output)", expanded=False):
                 st.text(raw)
+
+    if not _story_is_descriptive(story):
+        surgeries = story.get("surgeries") or []
+        m4 = [s for s in surgeries if s.get("module") == "m4"]
+        m5 = [s for s in surgeries if s.get("module") == "m5"]
+        if m4 or m5:
+            st.markdown("### M4/M5 — mechanism + repair tests")
+            for s in m4 + m5:
+                cls, label = _VERDICT_PILL.get(
+                    str(s.get("status")), ("ev-pill", str(s.get("status") or "untested"))
+                )
+                st.markdown(
+                    f"""
+                    <div class="ev-signal">
+                      <div class="ev-signal-title">{_html_escape(str(s.get('hypothesis', '')))}
+                        <span class="ev-pill {cls}">{_html_escape(label)}</span></div>
+                      <div class="ev-signal-body">{_html_escape(str(s.get('module', '')).upper())} · cycle {s.get('cycle')}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        fixes = story.get("fixes") or []
+        if fixes:
+            st.markdown("### Fix")
+            for f in fixes:
+                st.caption(f"Cycle {f.get('cycle')}: fix event recorded.")
 
 
 def _signal_effect_figure(signals: list[dict[str, Any]]):
@@ -2711,22 +3004,67 @@ def _inject_css() -> None:
     st.markdown(
         """
         <style>
+        /* Color values are the validated dataviz-skill reference palette
+           (references/palette.md) plugged straight into these token names —
+           status/accent hex are unchanged across light/dark by design, only
+           surfaces/ink/soft-washes flip. Derived tints use color-mix() against
+           --ev-panel/--ev-accent/etc. so they re-tint automatically in dark
+           mode instead of needing a second hardcoded value. */
         :root {
-          --ev-bg: #f4f6f9;
-          --ev-panel: #ffffff;
-          --ev-border: #e2e6ed;
-          --ev-text: #16202b;
-          --ev-muted: #667085;
-          --ev-accent: #1f7a8c;
-          --ev-accent-dark: #145b68;
-          --ev-accent-soft: #e7f5f7;
-          --ev-ok: #0f8a5f;
-          --ev-fail: #b42318;
-          --ev-warn: #93670c;
+          --ev-bg: #f9f9f7;
+          --ev-panel: #fcfcfb;
+          --ev-panel-elevated: #ffffff;
+          --ev-border: #e1e0d9;
+          --ev-border-strong: #98a2b3;
+          --ev-text: #0b0b0b;
+          --ev-text-secondary: #52514e;
+          --ev-muted: #898781;
+          --ev-accent: #2a78d6;
+          --ev-accent-dark: #184f95;
+          --ev-accent-soft: #cde2fb;
+          --ev-ok: #0ca30c;
+          --ev-warn: #fab219;
+          --ev-serious: #ec835a;
+          --ev-fail: #d03b3b;
+          --ev-info: #2a78d6;
           --ev-radius: 12px;
           --ev-radius-sm: 8px;
           --ev-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
           --ev-shadow-md: 0 6px 16px rgba(16, 24, 40, 0.08);
+        }
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --ev-bg: #0d0d0d;
+            --ev-panel: #1a1a19;
+            --ev-panel-elevated: #232322;
+            --ev-border: #2c2c2a;
+            --ev-border-strong: #4a4a47;
+            --ev-text: #ffffff;
+            --ev-text-secondary: #c3c2b7;
+            --ev-muted: #898781;
+            --ev-accent: #3987e5;
+            --ev-accent-dark: #86b6ef;
+            --ev-accent-soft: #0d366b;
+            --ev-ok: #0ca30c;
+            --ev-warn: #fab219;
+            --ev-serious: #ec835a;
+            --ev-fail: #d03b3b;
+            --ev-info: #3987e5;
+            --ev-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.32);
+            --ev-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.45);
+          }
+        }
+        /* Product chrome, not a debug tool: hamburger menu/Deploy button/Stop
+           indicator, footer "Made with Streamlit" badge, and the top toolbar
+           all hidden. --client.toolbarMode minimal (launch_dashboard) hides
+           most of this server-side too; this CSS also covers direct
+           `streamlit run` invocations that skip that flag. */
+        #MainMenu, footer,
+        [data-testid="stStatusWidget"], [data-testid="stDecoration"],
+        [data-testid="stToolbar"], [data-testid="stAppDeployButton"],
+        [data-testid="stMainMenu"], [data-testid="stMainMenuButton"] {
+          visibility: hidden;
+          height: 0;
         }
         html, body, .stApp {
           font-family: -apple-system, "Segoe UI", "Inter", system-ui, sans-serif;
@@ -2736,7 +3074,7 @@ def _inject_css() -> None:
           color: var(--ev-text);
         }
         [data-testid="stSidebar"] {
-          background: #ffffff;
+          background: var(--ev-panel-elevated);
           border-right: 1px solid var(--ev-border);
         }
         [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
@@ -2755,7 +3093,7 @@ def _inject_css() -> None:
         }
         .ev-header {
           align-items: flex-start;
-          background: linear-gradient(135deg, #ffffff 0%, var(--ev-accent-soft) 145%);
+          background: linear-gradient(135deg, var(--ev-panel-elevated) 0%, var(--ev-accent-soft) 145%);
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-accent);
           border-radius: var(--ev-radius);
@@ -2794,7 +3132,7 @@ def _inject_css() -> None:
           min-width: 12rem;
         }
         .ev-pill {
-          background: #f2f4f7;
+          background: color-mix(in srgb, var(--ev-muted) 12%, var(--ev-panel));
           border: 1px solid var(--ev-border);
           border-radius: 999px;
           color: var(--ev-text);
@@ -2805,14 +3143,24 @@ def _inject_css() -> None:
           white-space: nowrap;
         }
         .ev-pill-ok {
-          background: #eaf7f1;
-          border-color: #b7e4cf;
+          background: color-mix(in srgb, var(--ev-ok) 14%, var(--ev-panel));
+          border-color: color-mix(in srgb, var(--ev-ok) 45%, var(--ev-panel));
           color: var(--ev-ok);
         }
         .ev-pill-fail {
-          background: #fff1f0;
-          border-color: #fecdca;
+          background: color-mix(in srgb, var(--ev-fail) 14%, var(--ev-panel));
+          border-color: color-mix(in srgb, var(--ev-fail) 45%, var(--ev-panel));
           color: var(--ev-fail);
+        }
+        .ev-pill-warn {
+          background: color-mix(in srgb, var(--ev-warn) 18%, var(--ev-panel));
+          border-color: color-mix(in srgb, var(--ev-warn) 50%, var(--ev-panel));
+          color: var(--ev-text);
+        }
+        .ev-pill-serious {
+          background: color-mix(in srgb, var(--ev-serious) 16%, var(--ev-panel));
+          border-color: color-mix(in srgb, var(--ev-serious) 45%, var(--ev-panel));
+          color: var(--ev-serious);
         }
         .ev-metric-card {
           background: var(--ev-panel);
@@ -2869,7 +3217,7 @@ def _inject_css() -> None:
           line-height: 1.45;
         }
         .ev-report-answer {
-          background: #ffffff;
+          background: var(--ev-panel-elevated);
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-accent);
           border-radius: var(--ev-radius);
@@ -2889,7 +3237,7 @@ def _inject_css() -> None:
           margin: 0.2rem 0 0.95rem;
         }
         .ev-stage-card {
-          background: #ffffff;
+          background: var(--ev-panel-elevated);
           border: 1px solid var(--ev-border);
           border-radius: var(--ev-radius);
           min-height: 3.4rem;
@@ -2897,7 +3245,7 @@ def _inject_css() -> None:
           margin-bottom: 0.65rem;
         }
         .ev-stage-active {
-          border-color: #8ec8d2;
+          border-color: color-mix(in srgb, var(--ev-accent) 45%, var(--ev-panel));
           box-shadow: inset 0 0 0 2px var(--ev-accent-soft);
         }
         .ev-stage-id {
@@ -2919,7 +3267,7 @@ def _inject_css() -> None:
           margin: 0.1rem 0 0.75rem;
         }
         .ev-stage-chip {
-          background: #ffffff;
+          background: var(--ev-panel-elevated);
           border: 1px solid var(--ev-border);
           border-radius: 999px;
           color: var(--ev-muted);
@@ -2932,7 +3280,7 @@ def _inject_css() -> None:
         }
         .ev-stage-chip.ev-stage-active {
           background: var(--ev-accent-soft);
-          border-color: #8ec8d2;
+          border-color: color-mix(in srgb, var(--ev-accent) 45%, var(--ev-panel));
           color: var(--ev-accent);
         }
         .ev-analysis-card {
@@ -2947,18 +3295,18 @@ def _inject_css() -> None:
         .ev-analysis-method,
         .ev-analysis-evidence,
         .ev-analysis-takeaway {
-          color: #344054;
+          color: var(--ev-text-secondary);
           font-size: 0.9rem;
           line-height: 1.45;
           margin-top: 0.35rem;
         }
         .ev-analysis-takeaway {
           border-left: 3px solid var(--ev-ok);
-          background: #f6fef9;
+          background: color-mix(in srgb, var(--ev-ok) 8%, var(--ev-panel));
           padding: 0.45rem 0.6rem;
         }
         .ev-storyboard-card {
-          background: #ffffff;
+          background: var(--ev-panel-elevated);
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-ok);
           border-radius: var(--ev-radius);
@@ -2973,12 +3321,12 @@ def _inject_css() -> None:
           margin-bottom: 0.35rem;
         }
         .ev-storyboard-summary {
-          color: #344054;
+          color: var(--ev-text-secondary);
           font-size: 0.92rem;
           line-height: 1.45;
         }
         .ev-structure-card {
-          background: #ffffff;
+          background: var(--ev-panel-elevated);
           border: 1px solid var(--ev-border);
           border-left: 4px solid var(--ev-accent);
           border-radius: var(--ev-radius);
@@ -2993,8 +3341,8 @@ def _inject_css() -> None:
           margin-top: 0.35rem;
         }
         .ev-evidence-summary {
-          background: #f6fef9;
-          border: 1px solid #abefc6;
+          background: color-mix(in srgb, var(--ev-ok) 8%, var(--ev-panel));
+          border: 1px solid color-mix(in srgb, var(--ev-ok) 35%, var(--ev-panel));
           border-left: 4px solid var(--ev-ok);
           border-radius: var(--ev-radius);
           margin: 0.25rem 0 0.75rem;
@@ -3010,8 +3358,8 @@ def _inject_css() -> None:
           box-shadow: var(--ev-shadow);
         }
         .ev-evidence-card.ev-evidence-audit {
-          border-left-color: #98a2b3;
-          background: #fcfcfd;
+          border-left-color: var(--ev-border-strong);
+          background: var(--ev-panel);
         }
         .ev-evidence-card-top {
           align-items: center;
@@ -3027,27 +3375,27 @@ def _inject_css() -> None:
           font-weight: 760;
         }
         .ev-evidence-pill {
-          background: #ecfdf3;
-          border: 1px solid #abefc6;
+          background: color-mix(in srgb, var(--ev-ok) 14%, var(--ev-panel));
+          border: 1px solid color-mix(in srgb, var(--ev-ok) 35%, var(--ev-panel));
           border-radius: 999px;
-          color: #067647;
+          color: var(--ev-ok);
           font-size: 0.72rem;
           font-weight: 760;
           padding: 0.15rem 0.5rem;
           text-transform: uppercase;
         }
         .ev-evidence-meaning {
-          color: #344054;
+          color: var(--ev-text-secondary);
           font-size: 0.92rem;
           line-height: 1.45;
           margin-bottom: 0.5rem;
         }
         .ev-evidence-takeaway {
-          background: #f8fafc;
+          background: color-mix(in srgb, var(--ev-accent) 6%, var(--ev-panel));
           border: 1px solid var(--ev-border);
           border-left: 3px solid var(--ev-info);
           border-radius: var(--ev-radius);
-          color: #344054;
+          color: var(--ev-text-secondary);
           font-size: 0.92rem;
           line-height: 1.45;
           margin: 0.7rem 0 0.75rem;
@@ -3073,7 +3421,7 @@ def _inject_css() -> None:
         }
         .ev-claim-inconclusive,
         .ev-claim-descriptive {
-          border-left: 4px solid #98a2b3;
+          border-left: 4px solid var(--ev-border-strong);
         }
         .ev-claim-refuted {
           border-left: 4px solid var(--ev-fail);
@@ -3104,7 +3452,7 @@ def _inject_css() -> None:
         .ev-note-index {
           align-items: center;
           background: var(--ev-accent-soft);
-          border: 1px solid #badfe5;
+          border: 1px solid color-mix(in srgb, var(--ev-accent) 40%, var(--ev-panel));
           border-radius: 999px;
           color: var(--ev-accent);
           display: flex;
@@ -3129,14 +3477,14 @@ def _inject_css() -> None:
           margin-bottom: 0.35rem;
         }
         .ev-signal-body {
-          color: #344054;
+          color: var(--ev-text-secondary);
           font-size: 0.88rem;
           margin-bottom: 0.55rem;
         }
         .ev-signal-test {
-          background: #f8fafc;
+          background: color-mix(in srgb, var(--ev-accent) 6%, var(--ev-panel));
           border-left: 3px solid var(--ev-accent);
-          color: #475467;
+          color: var(--ev-text-secondary);
           font-size: 0.82rem;
           padding: 0.45rem 0.6rem;
         }
@@ -3178,7 +3526,7 @@ def _inject_css() -> None:
           transition: box-shadow 120ms ease, border-color 120ms ease;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.ev-takeaway-head):hover {
-          border-color: #b9d4d9;
+          border-color: color-mix(in srgb, var(--ev-accent) 35%, var(--ev-panel));
           box-shadow: var(--ev-shadow-md);
         }
         .ev-takeaway-head {
@@ -3188,10 +3536,13 @@ def _inject_css() -> None:
           margin-bottom: 0.15rem;
         }
         .ev-takeaway-badge {
+          /* Always darkens from --ev-accent (not --ev-accent-dark, which is
+             deliberately a *lighter* blue in dark mode for text-legibility
+             elsewhere) so the white glyph stays readable in both modes. */
           align-items: center;
-          background: linear-gradient(135deg, var(--ev-accent), var(--ev-accent-dark));
+          background: linear-gradient(135deg, var(--ev-accent), color-mix(in srgb, var(--ev-accent) 100%, black 35%));
           border-radius: 999px;
-          box-shadow: 0 2px 6px rgba(31, 122, 140, 0.35);
+          box-shadow: 0 2px 6px rgba(42, 120, 214, 0.35);
           color: #ffffff;
           display: flex;
           flex: 0 0 2rem;
@@ -3214,20 +3565,22 @@ def _inject_css() -> None:
           margin: 0.5rem 0;
         }
         .ev-takeaway-analysis {
-          background: #f8fafc;
+          background: color-mix(in srgb, var(--ev-accent) 6%, var(--ev-panel));
           border-left: 3px solid var(--ev-accent);
           border-radius: 0 var(--ev-radius-sm) var(--ev-radius-sm) 0;
-          color: #344054;
+          color: var(--ev-text-secondary);
           font-size: 0.94rem;
           line-height: 1.6;
           margin-top: 1rem;
           padding: 0.75rem 0.95rem;
         }
         .ev-takeaway-caveat {
-          background: #fffaeb;
-          border: 1px solid #fedf89;
+          /* --ev-warn is sub-3:1 on light surfaces (validated palette note) —
+             text stays primary ink; the warning color only tints the wash. */
+          background: color-mix(in srgb, var(--ev-warn) 14%, var(--ev-panel));
+          border: 1px solid color-mix(in srgb, var(--ev-warn) 45%, var(--ev-panel));
           border-radius: var(--ev-radius-sm);
-          color: var(--ev-warn);
+          color: var(--ev-text);
           font-size: 0.82rem;
           margin-top: 0.6rem;
           padding: 0.45rem 0.75rem;
@@ -3269,6 +3622,71 @@ def _inject_css() -> None:
           color: var(--ev-text);
           font-size: 1.05rem;
           margin-top: 1rem;
+        }
+        .ev-hero-task {
+          color: var(--ev-text-secondary);
+          font-size: 0.92rem;
+          line-height: 1.4;
+          margin-top: 0.3rem;
+        }
+        .ev-hero-verdict {
+          align-items: center;
+          display: flex;
+          gap: 0.6rem;
+          margin: 0.35rem 0 0.15rem;
+        }
+        .ev-hero-verdict-text {
+          color: var(--ev-text);
+          font-size: 1.02rem;
+          font-weight: 700;
+          line-height: 1.35;
+        }
+        .ev-kpi-row {
+          display: grid;
+          gap: 0.65rem;
+          grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+          margin: 0.7rem 0 0.85rem;
+        }
+        .ev-step {
+          background: var(--ev-panel);
+          border: 1px solid var(--ev-border);
+          border-left: 4px solid var(--ev-accent);
+          border-radius: var(--ev-radius);
+          margin-bottom: 0.7rem;
+          padding: 0.85rem 1rem;
+          box-shadow: var(--ev-shadow);
+        }
+        .ev-step-rejected {
+          border-left-color: var(--ev-warn);
+        }
+        .ev-step-top {
+          align-items: center;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          justify-content: space-between;
+          margin-bottom: 0.35rem;
+        }
+        .ev-step-index {
+          color: var(--ev-muted);
+          font-size: 0.78rem;
+          font-weight: 760;
+          text-transform: uppercase;
+        }
+        .ev-step-tool {
+          color: var(--ev-text);
+          font-size: 0.98rem;
+          font-weight: 760;
+        }
+        .ev-step-rationale {
+          color: var(--ev-text-secondary);
+          font-size: 0.92rem;
+          line-height: 1.45;
+          margin-bottom: 0.35rem;
+        }
+        .ev-step-outcome {
+          color: var(--ev-text-secondary);
+          font-size: 0.85rem;
         }
         @media (max-width: 900px) {
           .ev-header {

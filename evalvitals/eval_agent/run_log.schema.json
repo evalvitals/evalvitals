@@ -83,6 +83,12 @@
             },
             "model": {
               "type": "string"
+            },
+            "decision_judge": {
+              "type": "string"
+            },
+            "max_actions": {
+              "type": "integer"
             }
           },
           "required": [

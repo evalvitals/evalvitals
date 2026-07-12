@@ -140,11 +140,23 @@ def test_agentic_loop_reaches_a_supported_hypothesis_via_scripted_actions(tmp_pa
 
     # The two new agentic events (agent_decision/agent_tool) were logged and
     # validate against the published run_log schema, alongside the reused
-    # probe/analysis/diagnosis/surgery events from the wrapped M1-M5 stages.
+    # probe/analysis/diagnosis/surgery events from the wrapped M1-M5 stages,
+    # bracketed by run_start/loop_end so the dashboard can show run provenance.
     errors = list(iter_log_errors(ctx.log_path))
     assert errors == []
-    events = {json.loads(line)["event"] for line in ctx.log_path.read_text().splitlines()}
-    assert {"agent_decision", "agent_tool", "probe", "analysis", "diagnosis", "surgery"} <= events
+    lines = [json.loads(line) for line in ctx.log_path.read_text().splitlines()]
+    events = {line["event"] for line in lines}
+    assert {
+        "run_start", "loop_end", "agent_decision", "agent_tool",
+        "probe", "analysis", "diagnosis", "surgery",
+    } <= events
+
+    # run_start distinguishes the agentic decision judge from the M3 stage judge
+    # (both are ClaudeModel repr strings in general, but only one field name is
+    # right for each — the dashboard header needs both).
+    run_start = next(line for line in lines if line["event"] == "run_start")
+    assert run_start["decision_judge"] == repr(action_judge)
+    assert run_start["max_actions"] == 10
 
 
 def test_agentic_loop_wires_cluster_failures_into_the_m3_prompt(tmp_path):
@@ -180,6 +192,13 @@ def test_agentic_loop_wires_cluster_failures_into_the_m3_prompt(tmp_path):
     # clustered failure modes (even the tiny 2-FAIL-case batch here yields the
     # single_cluster fallback, which is still a real, non-empty cluster).
     assert "FAILURE MODES" in m3_judge.calls[0]
+
+    # The cluster_failures tool persists its report so the dashboard can render
+    # it without re-deriving it from the log (dispatch payload isn't logged).
+    fm_path = ctx.root / "artifacts" / "failure_modes.json"
+    assert fm_path.exists()
+    saved = json.loads(fm_path.read_text())
+    assert saved["clusters"]
 
 
 def test_agentic_loop_rejects_premature_stop_and_continues_to_a_real_verdict(tmp_path):
