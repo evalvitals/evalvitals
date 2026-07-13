@@ -6,6 +6,34 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — held-out verification for ANY explore run (`analysis.holdout`, workbench modes)
+
+- **`evalvitals.analysis.holdout`** (new): the deco_hallu pipeline's phase 2,
+  generalized to any dataset the explorer can load. `split_records` carves a
+  deterministic, outcome-stratified explore/holdout partition BEFORE
+  exploration (wraps the fused pipeline's split); `holdout_confirm`
+  re-evaluates the explorer's frozen recipes verbatim on the held-out rows
+  (`compile_recipe`, no re-fitting), rebuilds two-group sufficient stats,
+  adjudicates with `adjudicate_signals(split_label="held_out")`, and has an
+  optional duck-typed LLM judge grade each M3 hypothesis
+  (supported/partial/refuted/not_testable + surgery routing; `judge=None` →
+  `not_judged`). A generic `failure_indicator` maps arbitrary binary outcome
+  columns (fail-like value → boolean/0-1 → minority class, with the rule
+  recorded in the report); non-binary outcomes degrade honestly to skipped
+  verdicts instead of inventing one.
+- **`evalvitals explore --holdout-frac F [--holdout-confirm] [--holdout-seed N]
+  [--judge-model M]`**: with a fraction the explorer only ever sees the
+  explore share (the held-out rows are persisted to `holdout_records.json`);
+  with `--holdout-confirm` the question additionally demands FROZEN,
+  threshold-explicit recipes and `confirm_report.json` lands next to the
+  exploratory report — the dashboard's Held-out Verdicts tab fills in.
+- **Workbench "New analysis" modes**: a mode selector — *Explore only
+  (M2 + M3)* vs *Explore + held-out verification* — with an adjustable
+  explore : verdict split (defaults 1 : 0 and 0.6 : 0.4). In explore-only
+  mode a sub-1.0 share reserves the remainder untouched; in verification
+  mode it becomes the verdict half. The job record carries
+  mode/explore_share/holdout_frac.
+
 ### Changed — one fixed five-tab layout for every explore result; the web workbench as the unified surface
 
 - **Fixed tab set** (`dashboard_app.render_explore_report`): every

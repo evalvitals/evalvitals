@@ -142,6 +142,13 @@ The run writes the generated code, stdout/stderr, a structured exploratory
 report (`exploratory_report.json`), and rendered charts under
 `evalvitals_explore_output/figures/` + `tables/`.
 
+Add `--holdout-frac 0.4 --holdout-confirm` for a held-out design: the split
+is carved off BEFORE exploration (outcome-stratified, deterministic), the
+explorer is told to freeze threshold-explicit recipes, and after M3 the
+held-out rows re-test every recipe verbatim (e-BH, `split_label="held_out"`)
+while an LLM judge grades each hypothesis — `confirm_report.json` lands next
+to the report and fills the dashboard's *Held-out Verdicts* tab.
+
 Open the saved output as a dashboard:
 
 ```bash

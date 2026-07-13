@@ -166,7 +166,11 @@ bash run_web.sh                 # serves http://localhost:8500
 PORT=8600 CODER_PROVIDER=codex bash run_web.sh
 ```
 
-Pick the outcome column / question / backend in the form, hit *Start
+Pick the analysis mode — **Explore only** (M2+M3; split 1 : 0 by default) or
+**Explore + held-out verification** (default split 0.6 : 0.4, adjustable):
+the verdict share is held out BEFORE exploration, then the frozen recipes and
+hypotheses are re-tested on it (e-BH + LLM judge), filling the *Held-out
+Verdicts* tab. Set the outcome column / question / backend, hit *Start
 analysis*, and watch the live log; the analysis runs as a **detached
 subprocess** (closing the tab never kills it) and the finished report renders
 in place with the same tabs as `evalvitals dashboard`. Every upload lands
