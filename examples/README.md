@@ -17,7 +17,9 @@ cd examples/m2_statistics/synthetic_yield_explore && docker compose up
 cd examples/m2_statistics/deco_hallu_explore && docker compose up
 cd examples/m2_statistics/deco_hallu_explore && bash run_attn.sh          # attention-enriched variant (no GPU)
 cd examples/m2_statistics/deco_hallu_explore && bash run_attn_pipeline.sh # full held-out pipeline (SKIP_FIX=1 → no GPU)
-cd examples/m2_statistics/deco_hallu_explore && bash run_web.sh           # upload-a-.zip web workbench (M2+M3 per upload)
+cd examples/m2_statistics/deco_hallu_explore && bash run_web.sh           # ONE web page for all of the above: upload a .zip
+                                                                          # to start a new M2+M3 run, plus the script outputs
+                                                                          # above attached read-only in the same sidebar
 cd examples/diagnosis_loops/qwen_loop_agy && docker compose up
 ```
 
@@ -27,8 +29,10 @@ data (categorical signals only); `run_attn.sh` on `data_attn_full/` — the same
 checkpoints (committed with the repo), which unlocks FAIL/PASS distribution
 views and cross-checkpoint attention comparisons; and `run_attn_pipeline.sh` —
 the complete propose → held-out test (frozen recipes + LLM judge) →
-surgery/tiered-fix arc ending in one five-tab web report (proposal,
-held-out verdicts and fix each get their own tab). See its
+surgery/tiered-fix arc. Every explore-shaped result renders with the SAME
+five-tab layout (proposal, held-out verdicts and fix each get their own
+tab); stages a run never reached grey out as "not available" instead of
+disappearing, so an M3-only run and a full pipeline run look alike. See its
 [README](m2_statistics/deco_hallu_explore/README.md).
 
 For the general standalone exploratory analysis workflow, see

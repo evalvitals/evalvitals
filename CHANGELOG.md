@@ -6,6 +6,68 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — held-out verification for ANY explore run (`analysis.holdout`, workbench modes)
+
+- **`evalvitals.analysis.holdout`** (new): the deco_hallu pipeline's phase 2,
+  generalized to any dataset the explorer can load. `split_records` carves a
+  deterministic, outcome-stratified explore/holdout partition BEFORE
+  exploration (wraps the fused pipeline's split); `holdout_confirm`
+  re-evaluates the explorer's frozen recipes verbatim on the held-out rows
+  (`compile_recipe`, no re-fitting), rebuilds two-group sufficient stats,
+  adjudicates with `adjudicate_signals(split_label="held_out")`, and has an
+  optional duck-typed LLM judge grade each M3 hypothesis
+  (supported/partial/refuted/not_testable + surgery routing; `judge=None` →
+  `not_judged`). A generic `failure_indicator` maps arbitrary binary outcome
+  columns (fail-like value → boolean/0-1 → minority class, with the rule
+  recorded in the report); non-binary outcomes degrade honestly to skipped
+  verdicts instead of inventing one.
+- **`evalvitals explore --holdout-frac F [--holdout-confirm] [--holdout-seed N]
+  [--judge-model M]`**: with a fraction the explorer only ever sees the
+  explore share (the held-out rows are persisted to `holdout_records.json`);
+  with `--holdout-confirm` the question additionally demands FROZEN,
+  threshold-explicit recipes and `confirm_report.json` lands next to the
+  exploratory report — the dashboard's Held-out Verdicts tab fills in.
+- **Workbench "New analysis" modes**: a mode selector — *Explore only
+  (M2 + M3)* vs *Explore + held-out verification* — with an adjustable
+  explore : verdict split (defaults 1 : 0 and 0.6 : 0.4). In explore-only
+  mode a sub-1.0 share reserves the remainder untouched; in verification
+  mode it becomes the verdict half. The job record carries
+  mode/explore_share/holdout_frac.
+
+### Changed — one fixed five-tab layout for every explore result; the web workbench as the unified surface
+
+- **Fixed tab set** (`dashboard_app.render_explore_report`): every
+  explore-shaped result — plain `evalvitals explore` run, held-out pipeline
+  run, uploaded-zip run — now shows the same five tabs (Problem Setting /
+  Exploratory Analysis / Hypotheses / Held-out Verdicts / Fix). Stages a run
+  never reached render as greyed **"not available"** placeholders saying what
+  the panel would show and which phase produces it (`confirm_report.json` /
+  `fix_report.json`), instead of the tabs appearing and disappearing between
+  runs. `SKIP_FIX=1` pipeline runs get real verdicts in tab 4 and a greyed
+  tab 5. Applies to `evalvitals dashboard` and the workbench alike (shared
+  renderer).
+- **`evalvitals web --attach DIR`** (repeatable): existing result directories
+  (explore outputs or loop runs) are listed read-only (📁) in the workbench
+  sidebar next to uploads, rendered with the same views `evalvitals dashboard`
+  would use — one page holds "upload a .zip to start a new analysis" AND the
+  results other scripts already produced. `run_web.sh` auto-attaches the
+  example's `outputs_attn_full` / `outputs_pipeline/1_explore` / `outputs`
+  when present (`ATTACH_DIRS` env override).
+
+### Changed — eval-chart-style skill synced to the redesigned theme palette
+
+The dashboard redesign swapped `eval_viz_theme`'s palette for the
+dataviz-validated light/dark palette, which left the bundled eval-chart-style
+skill teaching the retired colors — agent-drawn PNGs and host-rendered charts
+would have disagreed (most visibly PASS: neutral slate vs status green). The
+skill's §1 now carries the light-mode values of the same palette: FAIL
+`#d03b3b` / PASS `#0ca30c` (reserved status colors), inconclusive `#fab219`
+(amber, with the label-not-color-alone rule), leaky `#898781`; the 8-slot
+fixed categorical order (`#2a78d6` …) with green/red slots skipped next to
+outcome hues; ordinal blue ramp `#86b6ef → #2a78d6 → #104281` (validated);
+diverging `#2a78d6 ↔ #f0efec ↔ #e34948` — the categorical red, deliberately
+not the FAIL red, so signed heatmaps can't impersonate the outcome.
+
 ### Added — `evalvitals web`: upload-a-.zip explore workbench
 
 - **`evalvitals web [WORKSPACE]`** (new CLI subcommand) serves a Streamlit page

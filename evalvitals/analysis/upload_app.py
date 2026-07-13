@@ -102,6 +102,8 @@ def build_explore_argv(
     backend: str,
     model: str,
     timeout_sec: int,
+    holdout_frac: float = 0.0,
+    holdout_confirm: bool = False,
 ) -> list[str]:
     """The exact ``evalvitals explore`` invocation for one uploaded run."""
     argv = [
@@ -116,6 +118,10 @@ def build_explore_argv(
         argv += ["--outcome-col", outcome_col]
     if model:
         argv += ["--model", model]
+    if holdout_frac > 0:
+        argv += ["--holdout-frac", str(round(holdout_frac, 4))]
+    if holdout_confirm:
+        argv += ["--holdout-confirm"]
     return argv
 
 
@@ -128,15 +134,24 @@ def launch_explore_job(
     backend: str,
     model: str,
     timeout_sec: int,
+    mode: str = "explore",
+    explore_share: float = 1.0,
 ) -> dict[str, Any]:
     """Start the analysis as a detached subprocess and persist its job record.
+
+    *mode* is ``"explore"`` (M2+M3 only) or ``"verify"`` (M2+M3, then the
+    held-out share re-tests the frozen recipes + hypotheses). *explore_share*
+    is the explore fraction; the remainder is held out — verified in
+    ``verify`` mode, merely reserved in ``explore`` mode.
 
     The command goes through a tiny ``job.sh`` wrapper so the exit code lands
     in ``exit_code`` even if this server restarts while the run is in flight.
     """
+    holdout_frac = max(0.0, round(1.0 - float(explore_share), 4))
     argv = build_explore_argv(
         data_dir, run_dir / "output", question=question, outcome_col=outcome_col,
         backend=backend, model=model, timeout_sec=timeout_sec,
+        holdout_frac=holdout_frac, holdout_confirm=(mode == "verify"),
     )
     job_sh = run_dir / "job.sh"
     job_sh.write_text(
@@ -157,6 +172,9 @@ def launch_explore_job(
         "backend": backend,
         "model": model,
         "timeout_sec": int(timeout_sec),
+        "mode": mode,
+        "explore_share": float(explore_share),
+        "holdout_frac": holdout_frac,
         "data_dir": str(data_dir),
         "out_dir": str(run_dir / "output"),
         "started_at": datetime.now().isoformat(timespec="seconds"),
@@ -232,8 +250,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--backend", default="claude_code", choices=list(BACKENDS))
     parser.add_argument("--model", default="")
     parser.add_argument("--timeout-sec", type=int, default=1200)
+    parser.add_argument(
+        "--attach", action="append", default=[], metavar="DIR",
+        help="Existing result directory (explore output or loop run) to list "
+             "alongside uploads. Repeatable.",
+    )
     args, _ = parser.parse_known_args(sys.argv[1:])
     return args
+
+
+def _local_state(path: Path) -> str:
+    """Sidebar state for an attached (read-only) result directory."""
+    if (path / "exploratory_report.json").exists() or (path / "fused_report.json").exists():
+        return "done"
+    if (path / "run_log.jsonl").exists() or any(path.glob("logs*/run_log.jsonl")):
+        return "done"  # a loop run — renders through the loop story view
+    return "stale"
 
 
 def main() -> None:
@@ -251,25 +283,42 @@ def main() -> None:
     )
     dapp._inject_css()
 
+    new_label = "➕ New analysis"
     runs = list_runs(workspace)
     states = {d.name: job_status(d)["state"] for d in runs}
+    # Attached read-only result dirs (e.g. an example's committed outputs) sit
+    # in the same sidebar as uploads; option values carry an "@" prefix so a
+    # local path can never collide with an upload's run name.
+    attached = []
+    for raw in args.attach:
+        p = Path(raw).resolve()
+        if p.is_dir() and p not in attached:
+            attached.append(p)
+    local_states = {f"@{p}": _local_state(p) for p in attached}
 
-    new_label = "➕ New analysis"
+    def _label(v: str) -> str:
+        if v == new_label:
+            return v
+        if v.startswith("@"):
+            return f"📁 {_STATE_ICONS.get(local_states.get(v, 'stale'), '⚪')} {Path(v[1:]).name}"
+        return f"{_STATE_ICONS.get(states.get(v, 'stale'), '⚪')} {v}"
+
     st.sidebar.markdown('<div class="ev-sidebar-title">EvalVitals</div>',
                         unsafe_allow_html=True)
     st.sidebar.caption(str(workspace))
     choice = st.sidebar.radio(
         "Runs",
-        [new_label] + [d.name for d in runs],
+        [new_label] + [f"@{p}" for p in attached] + [d.name for d in runs],
         key="ev_run_choice",
-        format_func=lambda v: v if v == new_label
-        else f"{_STATE_ICONS.get(states.get(v, 'stale'), '⚪')} {v}",
+        format_func=_label,
     )
     st.sidebar.markdown("---")
-    st.sidebar.metric("Runs", len(runs))
+    st.sidebar.metric("Runs", len(runs) + len(attached))
 
     if choice == new_label:
         _render_new_analysis(st, workspace, args, new_label)
+    elif choice.startswith("@"):
+        _render_local(st, dapp, Path(choice[1:]))
     else:
         _render_run(st, dapp, workspace / choice)
 
@@ -289,11 +338,46 @@ def _render_new_analysis(st: Any, workspace: Path, args: argparse.Namespace,
 
     uploaded = st.file_uploader("Results archive", type=["zip"])
     question = st.text_area("Analysis question", value=DEFAULT_QUESTION, height=90)
+
+    mode_label = st.radio(
+        "Analysis mode",
+        ["Explore only (M2 + M3)", "Explore + held-out verification"],
+        horizontal=True,
+        help="Explore only: exploratory analysis and proposed hypotheses — the "
+             "Held-out Verdicts and Fix tabs stay greyed. With verification: "
+             "part of the rows is held out BEFORE exploration, then the frozen "
+             "recipes and hypotheses are re-tested on it (e-BH + LLM judge) — "
+             "the Held-out Verdicts tab fills in.",
+    )
+    verify = mode_label.startswith("Explore +")
+    if verify:
+        explore_share = st.slider(
+            "Explore : verdict split", min_value=0.3, max_value=0.9, value=0.6,
+            step=0.05, key="ev_share_verify", format="%.2f",
+            help="Share of rows the explorer sees; the rest is the held-out "
+                 "verdict half (stratified by outcome, deterministic).",
+        )
+        st.caption(f"explore **{explore_share:.0%}** : verdict **{1 - explore_share:.0%}**")
+    else:
+        explore_share = st.slider(
+            "Explore : reserved split", min_value=0.5, max_value=1.0, value=1.0,
+            step=0.05, key="ev_share_explore", format="%.2f",
+            help="1.0 analyses everything in-sample. Below 1.0 the remainder "
+                 "is held out untouched (saved to holdout_records.json) but "
+                 "NOT verified in this mode.",
+        )
+        st.caption(
+            f"explore **{explore_share:.0%}** : reserved **{1 - explore_share:.0%}**"
+            + ("" if explore_share < 1.0 else " — all rows analysed in-sample")
+        )
+
     col1, col2, col3, col4 = st.columns(4)
     outcome_col = col1.text_input(
         "Outcome column", value="label",
         help="Name of the pass/fail (or target) column. Leave empty to "
-             "auto-detect by name heuristics, or fall back to unsupervised EDA.",
+             "auto-detect by name heuristics, or fall back to unsupervised EDA. "
+             "Held-out verification needs it to stratify the split and grade "
+             "signals.",
     )
     backend = col2.selectbox("Coding-agent backend", list(BACKENDS),
                              index=list(BACKENDS).index(args.backend))
@@ -317,9 +401,30 @@ def _render_new_analysis(st: Any, workspace: Path, args: argparse.Namespace,
             run_dir, data_dir, question=question.strip() or DEFAULT_QUESTION,
             outcome_col=outcome_col.strip(), backend=backend,
             model=model.strip(), timeout_sec=int(timeout_sec),
+            mode="verify" if verify else "explore",
+            explore_share=float(explore_share),
         )
         st.session_state["ev_run_choice"] = run_dir.name
         st.rerun()
+
+
+def _render_local(st: Any, dapp: Any, path: Path) -> None:
+    """Render an attached (read-only) result directory — an explore output or
+    a loop run — with the same views `evalvitals dashboard` would use."""
+    from evalvitals.analysis.dashboard import load_run
+
+    st.markdown(f"## 📁 {path.name}")
+    st.caption(f"attached results directory · {path}")
+
+    session = load_run(path)
+    if session.get("kind") == "loop" and session.get("story"):
+        dapp._render_loop_story(Path(session["root"]), session["story"], session["runs"])
+        return
+    if session["runs"]:
+        dapp.render_explore_report(Path(session["root"]), session["runs"][0])
+        return
+    st.warning("No exploratory_report.json / fused_report.json / run_log.jsonl "
+               "found in this directory.")
 
 
 def _render_run(st: Any, dapp: Any, run_dir: Path) -> None:
@@ -341,6 +446,13 @@ def _render_run(st: Any, dapp: Any, run_dir: Path) -> None:
     with st.expander("Run parameters", expanded=False):
         st.markdown(f"**Question:** {job.get('question', '—')}")
         st.markdown(f"**Outcome column:** `{job.get('outcome_col') or '(auto)'}`")
+        if job.get("mode"):
+            share = float(job.get("explore_share", 1.0))
+            mode_txt = ("explore + held-out verification"
+                        if job["mode"] == "verify" else "explore only (M2+M3)")
+            st.markdown(f"**Mode:** {mode_txt} — split "
+                        f"{share:.0%} explore : {1 - share:.0%} "
+                        f"{'verdict' if job['mode'] == 'verify' else 'reserved'}")
         st.code(" ".join(shlex.quote(a) for a in job.get("argv", [])) or "(unknown)",
                 language="bash")
 

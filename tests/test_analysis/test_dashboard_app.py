@@ -158,6 +158,8 @@ def test_standalone_dashboard_hypotheses_tab_falls_back_gracefully_when_absent(t
         "1 Problem Setting",
         "2 Exploratory Analysis",
         "3 Hypotheses",
+        "4 Held-out Verdicts",
+        "5 Fix",
     ]
     blob = " ".join(str(m.value) for m in at.markdown)
     assert any("No hypotheses were recorded" in str(i.value) for i in at.info)
@@ -718,15 +720,34 @@ def test_explore_dashboard_renders_holdout_verdicts_and_fix(tmp_path):
     assert "All repair candidates" in blob
 
 
-def test_explore_dashboard_without_pipeline_artifacts_keeps_three_tabs(tmp_path):
+def test_explore_dashboard_without_pipeline_artifacts_greys_out_tabs(tmp_path):
+    """The layout is FIXED at five tabs: an M3-only run shows the held-out
+    verdict and fix tabs as greyed "not available" placeholders instead of
+    dropping them, so every explore-shaped result has the same shape."""
     _build_explore_run_with_pipeline(tmp_path, with_confirm=False, with_fix=False)
     at = _run_app(tmp_path)
     assert not at.exception
     assert [t.label for t in at.tabs] == [
         "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+        "4 Held-out Verdicts", "5 Fix",
     ]
     blob = " ".join(str(m.value) for m in at.markdown)
+    assert blob.count("not available for this run") == 2
+    assert "stopped at M3" in blob                    # verdict placeholder
+    assert "No repair phase was run" in blob          # fix placeholder
     assert "held-out: supported" not in blob  # no badges without a confirm phase
+    assert "All repair candidates" not in blob
+
+
+def test_explore_dashboard_confirm_without_fix_greys_only_fix(tmp_path):
+    """SKIP_FIX pipeline shape: real verdicts in tab 4, placeholder in tab 5."""
+    _build_explore_run_with_pipeline(tmp_path, with_confirm=True, with_fix=False)
+    at = _run_app(tmp_path)
+    assert not at.exception
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert "held-out: supported" in blob
+    assert blob.count("not available for this run") == 1
+    assert "No repair phase was run" in blob
 
 
 def test_fix_narrative_digest():

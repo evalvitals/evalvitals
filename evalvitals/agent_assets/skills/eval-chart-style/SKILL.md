@@ -1,6 +1,6 @@
 ---
 name: eval-chart-style
-version: 0.2.0
+version: 0.3.0
 description: >
   Chart-type policy + house style for FAIL-vs-PASS LLM/VLM eval analysis
   figures. Use whenever you plot eval results inside an EvalVitals analysis
@@ -49,32 +49,46 @@ violin + ECDF + heatmap + forest + scatter over eight bar charts.
 
 ## 1. Semantic palette (color encodes role, not decoration)
 
-Lock these and reuse in every figure — the reader must never re-learn who is who:
+These are the light-mode values of the CVD-validated palette the host theme
+(`eval_viz_theme`) renders with — using them keeps agent-drawn PNGs and
+host-rendered charts on ONE palette. Lock them and reuse in every figure; the
+reader must never re-learn who is who:
 
-- FAIL → warning red `#C0413B`; PASS → neutral slate `#5B7A99` (same side, same
-  hue in every chart).
-- Supported / survived-adjudication → green `#2E8B6F`; inconclusive → grey
-  `#B8BCC2`. Unknown significance defaults to grey, never green.
-- Leakage/sanity signals → muted grey `#9AA0A6`, never a "winner" color.
+- FAIL → critical red `#d03b3b`; PASS → good green `#0ca30c` (same side, same
+  hue in every chart). These are *status* colors — reserved for outcome/verdict
+  roles, never for "series 4".
+- Supported / survived-adjudication → the same good green `#0ca30c`;
+  inconclusive / did-not-survive → warning amber `#fab219`. Unknown or
+  not-yet-adjudicated defaults to amber, never green. Amber is low-contrast on
+  light surfaces by design: a status color always ships with a text label,
+  never color alone.
+- Leakage/sanity signals → muted ink `#898781`, never a "winner" color.
 
 Non-outcome dimensions get their own color logic — do NOT squeeze every panel
 into the FAIL/PASS pair plus grey:
 
 - **Categorical series** (checkpoint/model lines, object classes, several
-  signals overlaid on one axis): use this series order, in order —
-  `#0F4D92` deep blue, `#8BCF8B` green, `#B64342` red\*, `#42949E` teal,
-  `#9A4D8E` violet, `#CFCECE` neutral grey. (\*Skip the red slot whenever
-  FAIL-red already appears on the same panel — the outcome hue must stay
-  unambiguous.)
+  signals overlaid on one axis): use this fixed slot order, never cycled —
+  1 `#2a78d6` blue, 2 `#1baf7a` aqua, 3 `#eda100` yellow, 4 `#008300` green\*,
+  5 `#4a3aa7` violet, 6 `#e34948` red\*, 7 `#e87ba4` magenta, 8 `#eb6834`
+  orange. (\*Skip the green and red slots whenever PASS-green/FAIL-red appear
+  on the same panel — the outcome hues must stay unambiguous.) A 9th series is
+  never a new hue: fold it into "Other" or split into small multiples. Color
+  follows the entity, not its rank — filtering series must not repaint the
+  survivors.
 - **Ordered dimensions** (model size 2B→4B→8B, ordered bins, dose/strength
-  ladders): ONE hue with a luminance/alpha ramp (light → dark = small →
-  large), not distinct hues — the ordering should be readable from the ramp
-  alone. E.g. three blues `#B4C0E4 → #7884B4 → #0F4D92`.
+  ladders): ONE hue with a luminance ramp (light → dark = small → large), not
+  distinct hues — the ordering should be readable from the ramp alone. Use the
+  blue ramp `#86b6ef → #2a78d6 → #104281` (validated: monotone lightness, the
+  light end still clears the surface).
+- Single-series / neutral measurement → accent blue `#2a78d6`.
 - Precedence: semantic role colors always win — wherever the outcome appears,
   FAIL/PASS keep their hues; the series/ramp colors are for panels sliced by
   something other than the outcome. Heatmaps: diverging data (signed effects)
-  → Red-Blue diverging around 0; magnitude-only data → a single-hue
-  sequential ramp.
+  → blue `#2a78d6` ↔ neutral grey `#f0efec` ↔ red `#e34948` around 0 (the
+  categorical red, deliberately NOT the FAIL red — a signed heatmap must not
+  impersonate the outcome; never put a hue at the midpoint); magnitude-only
+  data → a single-hue sequential ramp from near-white toward `#2a78d6`.
 
 Never print a raw column id (`generated_probe1_false_detection`) on an axis,
 tick, or title — use a short human alias (≤ ~12 chars) and keep the raw name in
