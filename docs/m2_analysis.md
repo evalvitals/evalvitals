@@ -154,6 +154,68 @@ renders a compact section for feeding into M3 hypothesis generation — this is
 exactly what `AgenticDiagnoseLoop`'s `cluster_failures` tool does
 automatically (see [quickstart](quickstart.md#agenticdiagnoseloop--judge-decided-m1-m5-alternative-to-the-fixed-cycle)).
 
+### Failure-aware embedding and boundary-aware naming (opt-in)
+
+Two ProbeLLM-inspired extensions (arXiv 2602.12966), both off by default —
+zero behavior change unless you opt in:
+
+```python
+report = cluster_failures(
+    records,
+    expected_col="expected",     # fold a failure-mechanism signal into grouping
+    boundary_aware=True,         # contrast each cluster's edge cases with PASS rows
+)
+```
+
+- **`expected_col`** (or `error_fn=lambda row: "..."` for full control): groups
+  reflect *how* the model failed, not just what the prompt was about. When a
+  `judge` is also given, one batched call describes each mismatch mechanism
+  (e.g. "off-by-one count", "wrong entity substituted"); without a judge, a
+  deterministic `"expected=... got=..."` string is used instead.
+- **`boundary_aware=True`**: keeps non-FAIL rows as a contrast pool. For each
+  cluster, the cases farthest from the centroid are paired with their nearest
+  verified non-failure (`FailureMode.boundary_pairs`), and — when `judge` is
+  given — the namer is shown these pairs to describe *where* the failure
+  boundary sits rather than only what the failing cases share.
+
+## Probe Search — Hierarchical MCTS Failure Discovery (VLM)
+
+`ProbeSearchAgent` (`evalvitals.eval_agent`) implements ProbeLLM's other core
+idea: instead of clustering failures the model *already* showed you, it
+actively synthesizes and evaluates **new** test cases, adaptively balancing
+broad topical coverage (**Macro**) against local refinement around cases that
+keep failing (**Micro**) via a hierarchical UCB-guided tree search
+(`evalvitals.analysis.probe_search.ProbeSearch` — standalone, generic over
+injected generator/verifier callables).
+
+```python
+from evalvitals.eval_agent import ClaudeModel, ProbeSearchAgent
+
+agent = ProbeSearchAgent(judge=ClaudeModel(), budget=20)
+result = agent.run(model, seed_pool)  # seed_pool: a VLM CaseBatch (image+question+expected)
+
+print(result.n_simulations, result.n_macro, result.n_micro, result.error_rate)
+for case in result.failure_cases:
+    print(case.inputs.prompt, "->", case.observed, "(expected", case.expected, ")")
+```
+
+**Scope (v1, VLM-only):** the bundled generator
+(`evalvitals.eval_agent.VLMProbeCandidateGenerator`) only *paraphrases*
+existing seed questions over the same image — Macro picks the seed least
+similar to what's been explored so far, Micro rewords the current search
+node's own case — so the seed's `expected` answer always stays valid without
+needing a vision-capable judge or a tool that invents new gold answers. This
+trades away the paper's full entity/attribute-substitution Micro generator
+(which re-verifies a new gold answer via tools) for a safe, dependency-free
+default; supply your own `generate_macro`/`generate_micro` callables to
+`ProbeSearch` directly for richer generation.
+
+`result.failure_cases` is a plain `CaseBatch` — feed it straight into
+`cluster_failures` above for failure-mode synthesis. Inside
+`AgenticDiagnoseLoop`, the same capability is exposed as the `search_probes`
+tool (host-capped via `max_calls`), reusing the loop's own decision judge and
+target model.
+
 ## Backend notes
 
 `--backend` selects the local coding-agent CLI: `antigravity` (default),

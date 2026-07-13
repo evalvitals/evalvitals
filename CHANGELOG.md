@@ -6,6 +6,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — ProbeLLM-style failure-mode synthesis: failure-aware clustering + hierarchical MCTS probe search (VLM)
+
+Deeper integration of arXiv 2602.12966 ("ProbeLLM"), which already inspired
+`eval_agent`'s failure-mode-clustering design (see the 2026-07-10/11 refactor
+entry below) — two further pieces from that paper, both additive:
+
+- **`evalvitals.analysis.cluster_failures`**: two new opt-in, off-by-default
+  parameters. `expected_col`/`error_fn` fold a failure-*mechanism* signal into
+  each FAIL case's vectorized text (LLM-described when `judge` is given,
+  deterministic `"expected=... got=..."` fallback otherwise), so grouping
+  reflects *how* the model failed, not just what the prompt was about.
+  `boundary_aware=True` keeps non-FAIL rows as a contrast pool and pairs each
+  cluster's peripheral cases with their nearest verified non-failure
+  (`FailureMode.boundary_pairs`), surfaced to the LLM namer to describe
+  *where* the failure boundary sits. Existing callers see byte-identical
+  output — neither parameter is used unless explicitly passed.
+- **`evalvitals.analysis.probe_search`** (new, standalone): `ProbeSearch`, a
+  hierarchical two-level MCTS (Macro = broad topical coverage, Micro = local
+  refinement around recurring failures) that adaptively synthesizes and
+  evaluates *new* test cases rather than analyzing an already-collected
+  dataset, via three injected callables (`generate_macro`/`generate_micro`/
+  `verify`) — no model/judge/eval_agent dependency in this module.
+- **`evalvitals.eval_agent.ProbeSearchAgent`** + **`VLMProbeCandidateGenerator`**
+  (new): wire `ProbeSearch` to a real target model and judge for VLM QA —
+  `CaseDiscoveryAgent` as the verifier, paraphrase-based Macro/Micro question
+  generation over a fixed (image, expected) seed pool as the generators (v1
+  scope: paraphrase only, never new imagery or an unverified new gold
+  answer). Also exposed as `AgenticDiagnoseLoop`'s new `search_probes` tool
+  (host-capped via `max_calls`), reusing the loop's own decision judge/model.
+  `result.failure_cases` is a plain `CaseBatch` that feeds directly into
+  `cluster_failures` above.
+- See [m2_analysis.md#probe-search--hierarchical-mcts-failure-discovery-vlm](docs/m2_analysis.md)
+  and `docs/architecture.md`'s package-layout/stage-contracts sections.
+
 ### Added — held-out verification for ANY explore run (`analysis.holdout`, workbench modes)
 
 - **`evalvitals.analysis.holdout`** (new): the deco_hallu pipeline's phase 2,

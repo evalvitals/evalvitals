@@ -139,6 +139,7 @@ class _RunState:
     artifact_pngs: list[Any] = field(default_factory=list)
     stats_report: Any = None
     failure_modes: Any = None
+    probe_search_result: Any = None
     surgery_outcome: Any = None
     fix_outcome: Any = None
 
@@ -271,6 +272,36 @@ def _cluster_failures(loop: Any, state: _RunState) -> "Callable[[EvidenceBoard, 
             True, f"{len(report.clusters)} failure mode(s) from {report.n_fail_cases} FAIL case(s)",
             payload=report,
         )
+
+    return handler
+
+
+def _search_probes(loop: Any, state: _RunState) -> "Callable[[EvidenceBoard, dict], ToolOutcome]":
+    def handler(board: "EvidenceBoard", params: dict[str, Any]) -> ToolOutcome:
+        from evalvitals.eval_agent.stages.probe_search_agent import ProbeSearchAgent
+
+        seed_pool = state.data
+        if not len(seed_pool):
+            return ToolOutcome(False, "no seed cases available to probe", error="empty")
+        budget = int(params.get("budget", 10))
+        agent = ProbeSearchAgent(judge=loop.judge, protocol=loop.protocol, budget=budget)
+        result = agent.run(loop.model, seed_pool)
+        state.probe_search_result = result
+        board.probe_search_findings = [
+            {
+                "prompt": c.inputs.prompt, "expected": c.expected, "observed": str(c.observed),
+            }
+            for c in result.failure_cases
+        ]
+        run_logger = getattr(loop, "run_logger", None)
+        if run_logger is not None:
+            run_logger.save_artifact_json("probe_search_result.json", result.to_dict())
+        summary = (
+            f"{result.n_simulations} simulation(s) (macro={result.n_macro}, "
+            f"micro={result.n_micro}), {len(result.failure_cases)} new failure(s) "
+            f"found (error_rate={result.error_rate:.0%})"
+        )
+        return ToolOutcome(bool(result.n_simulations), summary, payload=result)
 
     return handler
 
@@ -438,6 +469,18 @@ def build_default_registry(loop: Any, state: _RunState) -> ToolRegistry:
         handler=_cluster_failures(loop, state),
         max_calls=2,
         requires=("probe_findings",),
+    ))
+    registry.register(ToolSpec(
+        name="search_probes",
+        description=(
+            "Run a hierarchical Macro/Micro MCTS probe search (ProbeLLM-style) that "
+            "synthesizes and evaluates NEW test cases beyond the loaded dataset, "
+            "seeded from it — surfaces failures the original data never showed. "
+            "params.budget (int, default 10): total new probes to simulate."
+        ),
+        params_schema={"type": "object", "properties": {"budget": {"type": "integer"}}},
+        handler=_search_probes(loop, state),
+        max_calls=2,
     ))
     registry.register(ToolSpec(
         name="propose_hypotheses",

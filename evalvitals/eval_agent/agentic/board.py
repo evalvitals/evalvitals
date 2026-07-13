@@ -52,6 +52,7 @@ class EvidenceBoard:
     stats_confirmatory: bool = False
     explore_takeaways: list[dict[str, Any]] = field(default_factory=list)
     failure_modes: list[dict[str, Any]] = field(default_factory=list)
+    probe_search_findings: list[dict[str, Any]] = field(default_factory=list)
     hypotheses: list[dict[str, Any]] = field(default_factory=list)
     action_log: list[dict[str, Any]] = field(default_factory=list)
     budget: BudgetState = field(default_factory=BudgetState)
@@ -82,6 +83,8 @@ class EvidenceBoard:
             lines.append(f"EXPLORE TAKEAWAYS: {self.explore_takeaways}")
         if self.failure_modes:
             lines.append(f"FAILURE MODES (clustered): {self.failure_modes}")
+        if self.probe_search_findings:
+            lines.append(f"PROBE SEARCH (newly synthesized failures): {self.probe_search_findings}")
         lines.append(f"HYPOTHESES: {self.hypotheses or 'none yet'}")
 
         if self.action_log:

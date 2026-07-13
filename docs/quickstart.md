@@ -457,8 +457,9 @@ protocol = ExperimentProtocol(
 `VLDiagnoseLoop` above always runs M1→M2→M3→M5 in the same order every cycle.
 `AgenticDiagnoseLoop` wraps the identical stages, confirm-split, and post-loop
 `run_m4`/`run_fix` — but a CLI judge decides which tool to call next each
-turn (probe, run stats, explore the raw data, propose hypotheses, test one,
-fix, or stop), instead of a fixed sequence. The host — not the judge —
+turn (probe, run stats, explore the raw data, cluster failure modes, search
+for new failure cases via a Macro/Micro MCTS probe search, propose
+hypotheses, test one, fix, or stop), instead of a fixed sequence. The host — not the judge —
 enforces call limits, tool preconditions, and the stopping discipline: the
 judge cannot declare success (`stop(resolved=true)`) until a hypothesis has
 actually been tested and is statistically supported and protocol-consistent;

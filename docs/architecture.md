@@ -199,11 +199,12 @@ VLDiagnoseLoop  (loop.py — current, protocol-guided, stops on verified hypothe
 
 AgenticDiagnoseLoop  (agentic/loop.py — judge-decided, same M1-M5 stages)
   A CLI judge picks the next tool (run_probe / run_stats / explore_data /
-  cluster_failures / propose_hypotheses / test_hypothesis / run_surgery /
-  run_fix / stop) each turn from an EvidenceBoard, instead of a fixed cycle.
-  The host — not the judge — enforces tool call caps, preconditions, and the
-  stop-gate (declaring success requires an actually-tested, supported,
-  protocol-consistent hypothesis). See [quickstart](quickstart.md#agenticdiagnoseloop--judge-decided-m1-m5-alternative-to-the-fixed-cycle).
+  cluster_failures / search_probes / propose_hypotheses / test_hypothesis /
+  run_surgery / run_fix / stop) each turn from an EvidenceBoard, instead of a
+  fixed cycle. The host — not the judge — enforces tool call caps,
+  preconditions, and the stop-gate (declaring success requires an
+  actually-tested, supported, protocol-consistent hypothesis). See
+  [quickstart](quickstart.md#agenticdiagnoseloop--judge-decided-m1-m5-alternative-to-the-fixed-cycle).
 ```
 
 The agent touches models only through the `Model` protocol and stores all
@@ -240,7 +241,15 @@ eval_agent/
     ├── experiment_writer.py  M4  ExperimentWriter
     ├── fix_agent.py       M4 (post-loop)  FixAgent, FixCandidate, FixOutcome
     ├── fix_tiers.py       FixTier ladder (L1 prompt → L4 parameter space)
-    └── hypothesis_tester.py  M5  HypothesisTester, HypothesisTestResult
+    ├── hypothesis_tester.py  M5  HypothesisTester, HypothesisTestResult
+    ├── case_discovery.py  CaseDiscoveryAgent — runs candidates through a model,
+    │                      labels PASS/FAIL/UNKNOWN (judge or heuristic scorer)
+    ├── probe_candidate_generator.py  VLMProbeCandidateGenerator — ProbeLLM
+    │                      Macro/Micro question paraphrasing over a fixed
+    │                      VLM seed pool (see probe search, below)
+    └── probe_search_agent.py  ProbeSearchAgent — wires ProbeSearch (below) to
+                           a real model + judge via CaseDiscoveryAgent +
+                           VLMProbeCandidateGenerator
 
 evalvitals.agent_runtime/  shared CLI-agent runtime (sandbox, codegen, providers,
                             judges, skills) — used by both eval_agent and analysis;
@@ -249,7 +258,14 @@ evalvitals.agent_runtime/  shared CLI-agent runtime (sandbox, codegen, providers
 evalvitals.analysis/       M2 lives here now (StatsAnalysisAgent, AnalysisModule,
                             stats tool catalog) — usable standalone, not just from
                             the loop. Also: ExploratoryAnalysisAgent, HypothesisAgent,
-                            cluster_failures (failure-mode clustering).
+                            cluster_failures (failure-mode clustering, with
+                            opt-in ProbeLLM-style failure-aware embedding +
+                            boundary-aware induction), probe_search.py
+                            (ProbeSearch — standalone hierarchical MCTS over
+                            injected generator/verifier callables; the eval_agent-
+                            layer glue that supplies real callables lives in
+                            stages/probe_search_agent.py above, since it needs a
+                            live target model + judge).
 ```
 
 ### Stage contracts
@@ -264,6 +280,13 @@ evalvitals.analysis/       M2 lives here now (StatsAnalysisAgent, AnalysisModule
 | M3 | `stages/diagnosis.py` | `DiagnosisAgent` | `diagnose(report, prior_cycles) → DiagnosisResult` |
 | M4 | `stages/surgery.py` | `SurgeryAgent` | `operate(hypothesis, model, results, data) → InterventionResult` |
 | M5 | `stages/hypothesis_tester.py` | `HypothesisTester` | `test(hypotheses, report, data, protocol) → list[HypothesisTestResult]`; `stopping_criteria_met(results) → bool` |
+
+**Pre-M1 (optional): `ProbeSearchAgent.run(model, seed_pool) → ProbeSearchResult`**
+— a hierarchical Macro/Micro MCTS (`evalvitals.analysis.probe_search.ProbeSearch`)
+that synthesizes and evaluates new test cases (VLM QA in v1) rather than
+analyzing an already-collected dataset; `result.failure_cases` is a `CaseBatch`
+that can seed or extend the data M1 then probes. See
+[m2_analysis.md#probe-search--hierarchical-mcts-failure-discovery-vlm](m2_analysis.md#probe-search--hierarchical-mcts-failure-discovery-vlm).
 
 **M1 analyzer selection** happens in two tiers:
 
