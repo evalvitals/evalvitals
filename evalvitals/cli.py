@@ -79,6 +79,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip M3 (falsifiable hypotheses proposed from the M2 takeaways). "
              "Runs by default after a successful explore.",
     )
+    explore.add_argument(
+        "--holdout-frac", type=float, default=0.0,
+        help="Fraction of rows to hold out BEFORE exploration (outcome-"
+             "stratified, deterministic). 0 disables (default).",
+    )
+    explore.add_argument(
+        "--holdout-confirm", action="store_true",
+        help="After exploring, re-test the frozen recipes + hypotheses on the "
+             "held-out rows (writes confirm_report.json — the dashboard's "
+             "Held-out Verdicts tab). Requires --holdout-frac > 0.",
+    )
+    explore.add_argument("--holdout-seed", type=int, default=0,
+                         help="Seed for the held-out split (default 0).")
+    explore.add_argument(
+        "--judge-model", default="claude-opus-4-8",
+        help="LLM judge grading each hypothesis against the held-out table "
+             "(only used with --holdout-confirm).",
+    )
 
     dashboard = sub.add_parser(
         "dashboard",
@@ -138,6 +156,10 @@ def main(argv: list[str] | None = None) -> int:
             use_bundled_skills=args.use_bundled_skills,
             outcome_col=args.outcome_col,
             propose_hypotheses=args.propose_hypotheses,
+            holdout_frac=args.holdout_frac,
+            holdout_seed=args.holdout_seed,
+            holdout_confirm=args.holdout_confirm,
+            judge_model=args.judge_model,
         )
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)

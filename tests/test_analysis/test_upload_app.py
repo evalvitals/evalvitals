@@ -86,6 +86,45 @@ def test_build_explore_argv_carries_form_choices(tmp_path):
     bare = build_explore_argv(tmp_path, tmp_path, question="q", outcome_col="",
                               backend="codex", model="", timeout_sec=60)
     assert "--outcome-col" not in bare and "--model" not in bare
+    assert "--holdout-frac" not in bare and "--holdout-confirm" not in bare
+
+    verified = build_explore_argv(tmp_path, tmp_path, question="q",
+                                  outcome_col="label", backend="claude_code",
+                                  model="", timeout_sec=60,
+                                  holdout_frac=0.4, holdout_confirm=True)
+    assert verified[verified.index("--holdout-frac") + 1] == "0.4"
+    assert "--holdout-confirm" in verified
+
+
+def test_launch_explore_job_verify_mode_records_split(tmp_path, monkeypatch):
+    import evalvitals.analysis.upload_app as ua
+
+    class _FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr(ua.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    run_dir = tmp_path / "run1"
+    run_dir.mkdir()
+    job = launch_explore_job(
+        run_dir, run_dir / "data", question="q", outcome_col="label",
+        backend="claude_code", model="", timeout_sec=600,
+        mode="verify", explore_share=0.6,
+    )
+    assert job["mode"] == "verify"
+    assert job["explore_share"] == 0.6 and job["holdout_frac"] == 0.4
+    wrapper = (run_dir / "job.sh").read_text()
+    assert "--holdout-frac 0.4" in wrapper and "--holdout-confirm" in wrapper
+
+    # explore-only mode with the default 1:0 split adds no holdout flags
+    run2 = tmp_path / "run2"
+    run2.mkdir()
+    job2 = launch_explore_job(
+        run2, run2 / "data", question="q", outcome_col="label",
+        backend="claude_code", model="", timeout_sec=600,
+        mode="explore", explore_share=1.0,
+    )
+    assert job2["holdout_frac"] == 0.0
+    assert "--holdout" not in (run2 / "job.sh").read_text()
 
 
 def test_launch_explore_job_writes_record_and_wrapper(tmp_path, monkeypatch):
@@ -203,6 +242,23 @@ def test_upload_page_renders_form(tmp_path):
     # the sidebar-reopen chevron must be exempted from the chrome-hiding CSS,
     # or a collapsed sidebar (narrow window) can never be reopened
     assert "stExpandSidebarButton" in blob
+
+
+def test_mode_selection_drives_split_slider(tmp_path):
+    at = _run_app(tmp_path)
+    mode = next(r for r in at.radio if r.label == "Analysis mode")
+    # default: explore only, whole dataset (1:0)
+    assert mode.value == "Explore only (M2 + M3)"
+    slider = at.slider[0]
+    assert slider.value == 1.0
+
+    mode.set_value("Explore + held-out verification")
+    at.run()
+    assert not at.exception
+    slider = at.slider[0]
+    assert slider.value == 0.6  # 0.6 : 0.4 default in verification mode
+    blob = " ".join(str(m.value) for m in at.caption)
+    assert "60%" in blob and "40%" in blob
 
 
 def test_finished_run_renders_explore_tabs(tmp_path):
