@@ -200,6 +200,9 @@ def test_upload_page_renders_form(tmp_path):
     assert at.button[0].label == "Start analysis"
     # nothing uploaded yet -> the launch button is disabled
     assert at.button[0].disabled
+    # the sidebar-reopen chevron must be exempted from the chrome-hiding CSS,
+    # or a collapsed sidebar (narrow window) can never be reopened
+    assert "stExpandSidebarButton" in blob
 
 
 def test_finished_run_renders_explore_tabs(tmp_path):

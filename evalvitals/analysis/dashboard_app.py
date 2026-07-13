@@ -3114,6 +3114,17 @@ def _inject_css() -> None:
           visibility: hidden;
           height: 0;
         }
+        /* The sidebar open/close chevrons live in the same header chrome the
+           rules above purge. They must survive it: Streamlit auto-collapses
+           the sidebar on narrow windows, and with the reopen button hidden a
+           collapsed sidebar is unreachable forever ("the sidebar vanished").
+           visibility:visible on the child overrides the hidden ancestor. */
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"] {
+          visibility: visible !important;
+          height: auto !important;
+        }
         html, body, .stApp {
           font-family: -apple-system, "Segoe UI", "Inter", system-ui, sans-serif;
         }
