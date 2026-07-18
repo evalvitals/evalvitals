@@ -60,10 +60,11 @@ evalvitals explore ./results \
 `kimi_cli`, or `antigravity`. The selected coding-agent CLI must be installed
 and authenticated separately.
 
-Prefer a browser? `evalvitals web` serves an upload page instead: drop a
-**.zip** of results and each upload becomes one explore run (M2 exploratory
-analysis + M3 hypotheses) whose report renders in place, with past runs kept
-in a sidebar.
+Prefer a browser? `evalvitals web` serves a local data-analysis workbench:
+drop a **.zip** containing JSON/JSONL/CSV/TSV/Parquet/Excel data and/or images,
+PDFs, audio, or video. Each upload becomes a persistent data thread: the page
+shows ingestion and M2/M3 progress, renders M2 as soon as it finishes, and
+accepts artifact-grounded follow-up questions without uploading again.
 
 EvalVitals writes an auditable analysis bundle instead of returning only prose:
 

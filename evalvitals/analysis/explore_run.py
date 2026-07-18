@@ -71,6 +71,7 @@ def run_explore(
     holdout_seed: int = 0,
     holdout_confirm: bool = False,
     judge_model: str = "claude-opus-4-8",
+    progress_sink: Any = None,
 ) -> int:
     """Run one exploratory analysis and persist its artifacts.
 
@@ -140,6 +141,7 @@ def run_explore(
         include_tool_calls=include_tool_calls,
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,
+        progress_sink=progress_sink,
     )
     report = result.report
 
@@ -234,7 +236,9 @@ def _verdict_suffix(signal: Any) -> str:
     return "  [host: " + ", ".join(parts) + "]"
 
 
-def write_report_artifacts(report: Any, out_dir: Path) -> None:
+def write_report_artifacts(
+    report: Any, out_dir: Path, *, report_filename: str = "exploratory_report.json"
+) -> None:
     """Persist one explore run's artifacts: figures/, tables/, rendered charts,
     the report JSON, and the generated code/stdout/stderr.
 
@@ -253,7 +257,7 @@ def write_report_artifacts(report: Any, out_dir: Path) -> None:
     except Exception:  # rendering is best-effort, never blocks persistence
         pass
 
-    (out_dir / "exploratory_report.json").write_text(
+    (out_dir / report_filename).write_text(
         json.dumps(report.to_dict(), indent=2, default=str),
         encoding="utf-8",
     )

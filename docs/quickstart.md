@@ -156,11 +156,13 @@ pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
 ```
 
-Or serve the browser-first workbench — upload a .zip of results to start each
-analysis, with existing result directories attached read-only in the same
-sidebar. Every result renders with one fixed five-tab layout (problem setting,
-exploratory analysis, hypotheses, held-out verdicts, fix); stages a run never
-reached grey out as "not available":
+Or serve the browser-first workbench — upload a .zip of tabular data and/or
+media to start a persistent analysis thread, with existing result directories
+attached read-only in the same sidebar. The page streams durable stage events,
+shows M2 before M3 has finished, and supports follow-up questions over the same
+normalized bundle. Every result renders with one fixed five-tab layout (problem
+setting, exploratory analysis, hypotheses, held-out verdicts, fix); stages a
+run never reached grey out as "not available":
 
 ```bash
 evalvitals web my_runs --port 8500 --attach evalvitals_explore_output

@@ -97,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         help="LLM judge grading each hypothesis against the held-out table "
              "(only used with --holdout-confirm).",
     )
+    explore.add_argument("--progress-path", default="",
+                         help="Append durable workbench progress events to this JSONL path.")
+    explore.add_argument("--thread-id", default="", help=argparse.SUPPRESS)
+    explore.add_argument("--turn-id", default="", help=argparse.SUPPRESS)
 
     dashboard = sub.add_parser(
         "dashboard",
@@ -137,7 +141,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "explore":
         if not args.path:
             parser.error("evalvitals explore requires a results path")
-        return run_explore(
+        progress_sink = None
+        if args.progress_path:
+            from evalvitals.analysis.workbench import EventSink
+
+            progress_sink = EventSink(
+                args.progress_path,
+                thread_id=args.thread_id or "standalone",
+                turn_id=args.turn_id or "explore",
+            )
+            progress_sink.emit("job", "started", "Analysis worker started")
+        code = run_explore(
             args.path,
             question=args.question,
             out=args.out,
@@ -160,7 +174,14 @@ def main(argv: list[str] | None = None) -> int:
             holdout_seed=args.holdout_seed,
             holdout_confirm=args.holdout_confirm,
             judge_model=args.judge_model,
+            progress_sink=progress_sink,
         )
+        if progress_sink is not None:
+            progress_sink.emit(
+                "job", "completed" if code == 0 else "failed",
+                "Analysis worker completed" if code == 0 else "Analysis worker failed",
+            )
+        return code
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)
     if args.command == "web":

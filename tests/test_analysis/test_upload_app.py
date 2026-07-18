@@ -16,6 +16,9 @@ import zipfile
 import pytest
 
 from evalvitals.analysis.upload_app import (
+    _route_followup,
+    _timeline_steps,
+    archive_run,
     build_explore_argv,
     job_status,
     launch_explore_job,
@@ -94,6 +97,12 @@ def test_build_explore_argv_carries_form_choices(tmp_path):
                                   holdout_frac=0.4, holdout_confirm=True)
     assert verified[verified.index("--holdout-frac") + 1] == "0.4"
     assert "--holdout-confirm" in verified
+
+    antigravity = build_explore_argv(
+        tmp_path, tmp_path, question="q", outcome_col="label",
+        backend="antigravity", model="", timeout_sec=60,
+    )
+    assert antigravity[antigravity.index("--backend") + 1] == "antigravity"
 
 
 def test_launch_explore_job_verify_mode_records_split(tmp_path, monkeypatch):
@@ -188,6 +197,58 @@ def test_list_runs_only_dirs_with_job_json(tmp_path):
     a.mkdir()
     (a / "job.json").write_text("{}")
     assert list_runs(tmp_path) == [a]
+
+
+def test_archive_run_moves_only_direct_workspace_runs(tmp_path):
+    run = tmp_path / "finished_run"
+    run.mkdir()
+    (run / "job.json").write_text("{}")
+    (run / "output.txt").write_text("keep me")
+
+    archived = archive_run(tmp_path, run)
+    assert archived == tmp_path / ".trash" / "finished_run"
+    assert not run.exists()
+    assert archived.joinpath("output.txt").read_text() == "keep me"
+    assert list_runs(tmp_path) == []
+
+    attached = tmp_path.parent / "attached_results"
+    attached.mkdir()
+    (attached / "job.json").write_text("{}")
+    with pytest.raises(ValueError, match="local workbench run"):
+        archive_run(tmp_path, attached)
+    assert attached.exists()
+
+
+def test_timeline_collapses_event_history_and_closes_dangling_steps():
+    events = [
+        {"turn_id": "initial", "stage": "ingest", "status": "started", "message": "Extracting"},
+        {"turn_id": "initial", "stage": "discover", "status": "completed", "message": "Found files"},
+        {"turn_id": "initial", "stage": "job", "status": "started", "message": "Worker started"},
+        {"turn_id": "initial", "stage": "m2", "status": "started", "message": "Starting M2"},
+        {"turn_id": "initial", "stage": "m2_codegen", "status": "started", "message": "Generating code"},
+        {"turn_id": "followup", "stage": "route", "status": "started", "message": "Other turn"},
+    ]
+
+    steps = _timeline_steps(events, turn_id="initial", run_state="done")
+    by_stage = {str(step["stage"]): step for step in steps}
+    assert set(by_stage) == {"ingest", "discover", "job", "m2", "m2_codegen"}
+    assert all(step["status"] == "completed" for step in by_stage.values())
+    assert "final report is available" in by_stage["job"]["message"]
+
+
+def test_followup_router_and_canceled_turn_status(tmp_path):
+    assert _route_followup("Explain the first takeaway") == "answer"
+    assert _route_followup("Compare the two groups with a new chart") == "analyze"
+    assert _route_followup("What hypothesis should we test?") == "hypothesize"
+
+    turn = tmp_path / "turn"
+    turn.mkdir()
+    events = tmp_path / "events.jsonl"
+    (turn / "job.json").write_text(json.dumps({
+        "pid": 999999999, "turn_id": "turn_001", "events_path": str(events),
+    }))
+    events.write_text(json.dumps({"turn_id": "turn_001", "status": "canceled"}) + "\n")
+    assert job_status(turn)["state"] == "canceled"
 
 
 # ── the page itself (dashboard extras) ───────────────────────────────────────

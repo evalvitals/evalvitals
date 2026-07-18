@@ -212,6 +212,11 @@ def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_pat
             "analysis": "Mean yield rises from 70.1% in low-temperature batches to 88.4% in high-temperature ones.",
             "caveat": "Descriptive only; temperature and pressure are correlated.",
         }],
+        "chart_readings": [{
+            "chart": "yield_by_temp",
+            "reading": "The high-temperature group has the higher plotted mean yield.",
+            "do_not_infer": "This does not establish temperature as the cause.",
+        }],
         "charts": [{
             "name": "yield_by_temp", "kind": "line",
             "data": "tables/yield_by_temp.csv", "x": "temp_bin", "y": "mean_yield",
@@ -228,6 +233,8 @@ def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_pat
     assert "Higher temperature batches yield more" in blob
     assert "Mean yield rises from 70.1%" in blob
     assert "Caveat" in blob and "Descriptive only" in blob
+    assert "How to read this visual" in blob
+    assert "high-temperature group has the higher plotted mean yield" in blob
     # its supporting chart was found and rendered, not left orphaned
     assert "referenced evidence not found" not in blob
     assert "Mean yield by temperature bin" in blob  # the chart's own title rendered
@@ -235,6 +242,39 @@ def test_standalone_dashboard_pairs_takeaway_with_its_chart_and_analysis(tmp_pat
     assert "Standalone M2" not in blob
     assert "M3 hypotheses" not in blob
     assert "hypothesis formation" not in blob
+
+
+def test_standalone_dashboard_explains_unlinked_exploratory_material(tmp_path):
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables" / "primary.csv").write_text(
+        "group,value\na,1\nb,2\n", encoding="utf-8"
+    )
+    (tmp_path / "tables" / "context.csv").write_text(
+        "group,value\na,3\nb,4\n", encoding="utf-8"
+    )
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "takeaways": [{
+            "title": "Primary finding.", "chart_names": ["primary"],
+            "table_names": [], "analysis": "The ranked finding.", "caveat": "",
+        }],
+        "visual_plan": [
+            {"name": "primary", "question": "What is the main pattern?",
+             "rationale": "Direct comparison.", "disposition": "primary"},
+            {"name": "context", "question": "Does the distribution have an edge case?",
+             "rationale": "A group comparison exposes imbalance.", "disposition": "supporting",
+             "not_promoted_reason": "It is a diagnostic context check, not a ranked result."},
+        ],
+        "charts": [
+            {"name": "primary", "kind": "bar", "data": "tables/primary.csv", "x": "group", "y": "value"},
+            {"name": "context", "kind": "bar", "data": "tables/context.csv", "x": "group", "y": "value"},
+        ],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    labels = [e.label for e in at.expander]
+    assert any("Supporting exploratory material (not a conclusion)" in label for label in labels)
 
 
 def test_standalone_dashboard_falls_back_gracefully_with_no_takeaways(tmp_path):
