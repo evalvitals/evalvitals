@@ -185,7 +185,9 @@ from evalvitals.eval_agent.stages.fix_tools import PipelineSpec
 from evalvitals.eval_agent.stages.hypothesis_tester import HypothesisTester, HypothesisTestResult
 from evalvitals.eval_agent.stages.probe import ModelKind, StrategyProbe
 from evalvitals.eval_agent.stages.probe_agent import ProbeAgent
+from evalvitals.eval_agent.stages.probe_candidate_generator import VLMProbeCandidateGenerator
 from evalvitals.eval_agent.stages.probe_generator import GeneratedProbe, ProbeGenerator
+from evalvitals.eval_agent.stages.probe_search_agent import ProbeSearchAgent
 from evalvitals.eval_agent.stages.protocol import ExperimentProtocol, ProbingSchema
 from evalvitals.eval_agent.stages.surgery import InterventionResult, SurgeryAgent
 from evalvitals.eval_agent.stages.whitebox_probe_generator import (
@@ -207,6 +209,9 @@ __all__ = [
     "GeneratedProbe",
     "WhiteboxProbeGenerator",
     "GeneratedWhiteboxProbe",
+    # ProbeLLM-style hierarchical MCTS probe search
+    "ProbeSearchAgent",
+    "VLMProbeCandidateGenerator",
     # Fix module (post-loop tiered repair)
     "FixAgent",
     "FixCandidate",

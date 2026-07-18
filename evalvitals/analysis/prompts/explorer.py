@@ -63,6 +63,13 @@ Setup:
   shape. If a file wraps a list of per-case dicts alongside scalar metadata,
   merge that metadata into every row it produces (e.g. a per-model file's
   "model" field becomes a "model" column on each of that file's rows).
+- a browser workbench bundle may also contain ``records.json`` (normalized
+  tabular rows), ``media_units.jsonl`` (file/page/time-segment metadata), and
+  a ``media/`` tree holding original images, PDFs, audio, or video. Start from
+  the normalized rows when present, join media units by source path when useful,
+  and inspect representative media only when your CLI can actually read it.
+  Do not invent semantic content for audio/video/PDF pages you could not open;
+  state the capability limitation in a caveat instead.
 {outcome_hint}- after building the tidy table, determine whether it has a recognizable
   outcome column (binary / categorical / continuous) or none at all — do NOT
   invent a FAIL/PASS split when there is no such column.
@@ -118,7 +125,9 @@ First build a "visual_plan" list. Each item should be a dict:
     "plot_kind": "<chosen plot type, e.g. bar, line, scatter, box, violin, heatmap, paired_slope>",
     "fallback_kind": "<bar|line|scatter when a deterministic host chart is useful>",
     "required_columns": ["..."],
-    "rationale": "<why this plot type fits the data and avoids misleading summaries>"
+    "rationale": "<why this plot type fits the data and avoids misleading summaries>",
+    "disposition": "<primary|supporting|skipped>",
+    "not_promoted_reason": "<required when supporting; why this is context/diagnostic material rather than a ranked takeaway>"
   }}
 
 Use these decision principles:
@@ -135,6 +144,9 @@ Use these decision principles:
     structure, and group contrasts over any label-vs-label story.
   - skip a planned visual when required columns are absent or sample size makes it
     misleading; say so in caveats.
+  - A ``primary`` visual MUST be cited by at least one takeaway's ``chart_names``.
+    Use ``supporting`` only for context/diagnostic material and give a concrete
+    ``not_promoted_reason``. Do not emit an artifact for a ``skipped`` visual.
 
 For EVERY chart you report in "charts":
 - write its plotted data as a CSV under "tables/<name>.csv"
@@ -177,9 +189,11 @@ Report/dashboard contract:
 
 Secondary fields (for programmatic consumers such as a downstream confirmatory
 pipeline — NOT the primary reader-facing narrative; keep these terse):
-- add "chart_readings": one short dict per important visual with
+- add "chart_readings": one short dict for EVERY emitted chart or plot, keyed
+  by its exact chart name or PNG stem, with
   {{"chart": "<name/title>", "reading": "<what a human should see>",
-  "do_not_infer": "<what this chart cannot prove>"}}.
+  "do_not_infer": "<what this chart cannot prove>"}}. This is the explanation
+  displayed immediately below that visual; never leave it generic or omit it.
 - add "claims" only for carefully worded descriptive/confirmable statements. Each
   claim must cite chart/signal identifiers in "evidence_ids"; set status to
   "descriptive" (never "supported" — this tool does not confirm anything).
@@ -223,7 +237,9 @@ pipeline — NOT the primary reader-facing narrative; keep these terse):
         "plot_kind": "line",
         "fallback_kind": "line",
         "required_columns": ["obj_size", "label"],
-        "rationale": "Ordered bins show risk trend without assuming linearity."}}
+        "rationale": "Ordered bins show risk trend without assuming linearity.",
+        "disposition": "primary",
+        "not_promoted_reason": ""}}
     ],
     "takeaways": [
       {{"title": "Small objects fail far more often (18% vs 4%, n=120).",

@@ -18,7 +18,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from evalvitals.reporting.compiler import compile_diagnostic_report
 
@@ -53,6 +53,7 @@ def launch_upload_app(
     backend: str = "claude_code",
     model: str = "",
     timeout_sec: int = 1200,
+    attach: "Sequence[str | Path]" = (),
 ) -> int:
     """Launch the upload-and-explore Streamlit workbench (``upload_app.py``).
 
@@ -60,7 +61,9 @@ def launch_upload_app(
     ``evalvitals explore`` (M2+M3) on it as a detached subprocess; finished
     runs render with the same tabs as :func:`launch_dashboard`. *backend*,
     *model* and *timeout_sec* are only the form's defaults — every run can
-    override them in the UI.
+    override them in the UI. *attach* lists existing result directories
+    (explore outputs or loop runs) read-only in the same sidebar, so one page
+    can hold the uploads AND e.g. an example's script-produced reports.
     """
     try:
         import streamlit  # noqa: F401
@@ -79,6 +82,8 @@ def launch_upload_app(
     cmd += ["--", str(workspace), "--backend", backend, "--timeout-sec", str(int(timeout_sec))]
     if model:
         cmd += ["--model", model]
+    for a in attach:
+        cmd += ["--attach", str(a)]
     return subprocess.call(cmd)
 
 

@@ -34,9 +34,15 @@ def test_bundled_skill_set():
     ecs = next(Path(p) for p in paths if Path(p).name == "eval-chart-style")
     body = (ecs / "SKILL.md").read_text(encoding="utf-8")
     assert "never" in body.lower() and "bar" in body.lower()  # the anti-mean-bar policy
-    assert "#C0413B" in body  # FAIL palette locked to eval_viz_theme's
+    # Palette locked to eval_viz_theme's (the dataviz-validated light values) so
+    # agent PNGs and host plotly charts stay on ONE palette:
+    assert "#d03b3b" in body           # FAIL = status critical
+    assert "#0ca30c" in body           # PASS/supported = status good
+    assert "#fab219" in body           # inconclusive = status warning, not grey
+    assert "#C0413B" not in body       # pre-redesign palette fully retired
+    assert "#5B7A99" not in body
     # Non-outcome dimensions get real color range, not endless red/blue/grey:
-    assert "#0F4D92" in body           # categorical series order present
+    assert "#2a78d6" in body           # categorical slot 1 / accent present
     assert "ramp" in body.lower()      # ordered-dimension single-hue ramp rule
     assert "Nothing else" not in body  # the old two-colors-only lockdown is gone
 

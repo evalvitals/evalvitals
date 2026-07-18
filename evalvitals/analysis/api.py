@@ -56,6 +56,7 @@ def explore(
     include_tool_calls: bool = False,
     timeout_sec: int = 120,
     max_attempts: int = 2,
+    progress_sink: Any = None,
 ) -> ExploreRunResult:
     """Run one exploratory analysis over a path or in-memory records.
 
@@ -90,8 +91,11 @@ def explore(
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,
         use_bundled_skills=use_bundled_skills,
+        progress_sink=progress_sink,
     )
 
+    if progress_sink is not None:
+        progress_sink.emit("m2", "started", "Starting exploratory analysis (M2)")
     if isinstance(source, (str, Path)):
         report = agent.explore_path(
             source,
@@ -109,17 +113,36 @@ def explore(
     # decides). A standalone run has no held-out split, so verdicts are IN-SAMPLE.
     adjudicate_report(report, split_label="in_sample")
 
+    out_dir: Path | None = None
+    if out is not None:
+        out_dir = Path(out).resolve()
+        # Persist M2 independently so the workbench can render it while M3 is
+        # still running.  The final report keeps its existing stable filename.
+        from evalvitals.analysis.explore_run import write_report_artifacts
+
+        write_report_artifacts(report, out_dir, report_filename="partial_report.json")
+    if progress_sink is not None:
+        progress_sink.emit(
+            "m2", "completed" if report.ok else "failed",
+            "Exploratory analysis completed" if report.ok else (report.error or "Exploratory analysis failed"),
+            artifact_refs=[out_dir / "partial_report.json"] if out_dir else (),
+            metrics={"attempts": report.attempts},
+        )
+
     # M3: propose falsifiable hypotheses from M2's takeaways — proposal only,
     # no validation. Only worth trying when M2 actually produced something to
     # reason over.
     if propose_hypotheses and report.ok and (report.takeaways or report.observations):
         hyp_agent = HypothesisAgent(cli_config=cli_config, timeout_sec=timeout_sec)
+        if progress_sink is not None:
+            progress_sink.emit("m3", "started", "Proposing falsifiable hypotheses (M3)")
         try:
             report.hypotheses = [h.to_dict() for h in hyp_agent.propose(report.to_dict())]
         except Exception as exc:  # noqa: BLE001 — M3 is best-effort, never blocks the result
             logger.warning("hypothesis generation failed: %s", exc)
+        if progress_sink is not None:
+            progress_sink.emit("m3", "completed", f"Proposed {len(report.hypotheses)} hypotheses")
 
-    out_dir: Path | None = None
     if out is not None:
         out_dir = Path(out).resolve()
         # Lazy import: write_report_artifacts lives in explore_run.py, which
@@ -127,6 +150,11 @@ def explore(
         from evalvitals.analysis.explore_run import write_report_artifacts
 
         write_report_artifacts(report, out_dir)
+    if progress_sink is not None:
+        progress_sink.emit(
+            "persist", "completed", "Analysis artifacts are ready",
+            artifact_refs=[out_dir / "exploratory_report.json"] if out_dir else (),
+        )
 
     return ExploreRunResult(
         report=report,

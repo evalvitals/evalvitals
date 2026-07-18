@@ -23,8 +23,28 @@ from pathlib import Path
 from typing import Any
 
 from evalvitals.analysis.api import explore
-from evalvitals.analysis.explorer import RECORDS_FILENAME
+from evalvitals.analysis.explorer import RECORDS_FILENAME, load_records_from_path
+from evalvitals.analysis.holdout import holdout_confirm as run_holdout_confirm
+from evalvitals.analysis.holdout import split_records
 from evalvitals.viz.renderer import render_chart_specs
+
+# Appended to the analysis question when a held-out confirm phase will follow:
+# recipes must be frozen and threshold-explicit or there is nothing to re-test.
+HOLDOUT_QUESTION_SUFFIX = (
+    " This is the EXPLORATION HALF of a held-out design: a disjoint validate "
+    "split exists and will re-test whatever you propose. Make every candidate "
+    "signal a FROZEN, threshold-explicit recipe (explicit numeric thresholds, "
+    "no re-fitting) so it can be re-evaluated verbatim on the held-out half, "
+    "and propose hypotheses precise enough to be graded against held-out "
+    "statistics."
+)
+
+
+def _build_judge(model: str):
+    """Judge for the held-out confirm phase (separate so tests can stub it)."""
+    from evalvitals.agent_runtime.judges import ClaudeModel
+
+    return ClaudeModel(model=model, effort="low")
 
 
 def run_explore(
@@ -47,6 +67,11 @@ def run_explore(
     use_bundled_skills: bool = True,
     outcome_col: str | None = None,
     propose_hypotheses: bool = True,
+    holdout_frac: float = 0.0,
+    holdout_seed: int = 0,
+    holdout_confirm: bool = False,
+    judge_model: str = "claude-opus-4-8",
+    progress_sink: Any = None,
 ) -> int:
     """Run one exploratory analysis and persist its artifacts.
 
@@ -66,12 +91,41 @@ def run_explore(
     *propose_hypotheses* runs M3 (``HypothesisAgent``) on M2's takeaways after
     a successful explore, using the same coding-agent backend; set False to
     skip it (e.g. to save the extra LLM call).
+
+    *holdout_frac* > 0 splits the loaded records BEFORE exploration
+    (deterministic, outcome-stratified; the explorer only sees the explore
+    share). With *holdout_confirm* the held-out rows then re-test the frozen
+    recipes + hypotheses (``analysis.holdout``) and ``confirm_report.json``
+    lands next to the exploratory report — the dashboard's Held-out Verdicts
+    tab fills in. Without it the rows are simply reserved on disk.
     """
     out_dir = Path(out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    source: Any = path
+    holdout_rows: "list[dict[str, Any]] | None" = None
+    if holdout_frac and holdout_frac > 0:
+        records = load_records_from_path(
+            path, max_rows=max_rows, max_files=max_files,
+            include_tool_calls=include_tool_calls,
+        )
+        explore_share, holdout_rows = split_records(
+            records, holdout_frac, seed=holdout_seed, outcome_col=outcome_col
+        )
+        if holdout_rows is None:
+            print(f"holdout: split impossible (n={len(records)}, frac={holdout_frac}) "
+                  "— falling back to a plain in-sample run")
+        else:
+            source = explore_share
+            print(f"holdout: exploring {len(explore_share)} rows, "
+                  f"{len(holdout_rows)} held out "
+                  + ("(verification follows)" if holdout_confirm
+                     else "(reserved, not verified in this mode)"))
+            if holdout_confirm:
+                question = question.rstrip() + HOLDOUT_QUESTION_SUFFIX
+
     result = explore(
-        path,
+        source,
         question=question,
         out=out_dir,
         provider=coder_provider,
@@ -87,6 +141,7 @@ def run_explore(
         include_tool_calls=include_tool_calls,
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,
+        progress_sink=progress_sink,
     )
     report = result.report
 
@@ -116,6 +171,49 @@ def run_explore(
             f"(e-BH family n={adj.get('n_in_family', 0)}, alpha={adj.get('alpha')})"
         )
 
+    if holdout_rows is not None:
+        # Audit trail either way: the exact rows the explorer never saw.
+        (out_dir / "holdout_records.json").write_text(
+            json.dumps(holdout_rows, default=str), encoding="utf-8"
+        )
+        split_meta = {
+            "n_explore": len(source) if isinstance(source, list) else None,
+            "n_holdout": len(holdout_rows),
+            "holdout_frac": holdout_frac,
+            "seed": holdout_seed,
+            "stratified_by": outcome_col or "label",
+        }
+        if holdout_confirm:
+            judge = None
+            judge_meta = None
+            try:
+                judge = _build_judge(judge_model)
+                judge_meta = {"model": judge_model, "effort": "low"}
+            except Exception as exc:  # noqa: BLE001 — verdicts degrade to not_judged
+                print(f"judge unavailable ({exc}) — hypotheses will be not_judged")
+            confirm = run_holdout_confirm(
+                report.to_dict(), holdout_rows,
+                outcome_col=outcome_col or "label",
+                judge=judge, judge_meta=judge_meta,
+            )
+            confirm["split_meta"] = split_meta
+            (out_dir / "confirm_report.json").write_text(
+                json.dumps(confirm, indent=1, default=str), encoding="utf-8"
+            )
+            cadj = confirm.get("adjudication") or {}
+            print(
+                f"\nheld-out adjudication: {cadj.get('n_rejected', 0)}/"
+                f"{cadj.get('n_host_adjudicated', 0)} reject "
+                f"(n={confirm.get('n_validate_rows')} rows, "
+                f"{confirm.get('n_validate_fail')} failures)"
+            )
+            for v in confirm.get("hypothesis_verdicts", []):
+                print(f" * [{v.get('verdict')}] {str(v.get('statement', ''))[:90]}")
+        else:
+            (out_dir / "holdout_split.json").write_text(
+                json.dumps(split_meta, indent=1), encoding="utf-8"
+            )
+
     if dashboard:
         from evalvitals.analysis.dashboard import launch_dashboard
 
@@ -138,7 +236,9 @@ def _verdict_suffix(signal: Any) -> str:
     return "  [host: " + ", ".join(parts) + "]"
 
 
-def write_report_artifacts(report: Any, out_dir: Path) -> None:
+def write_report_artifacts(
+    report: Any, out_dir: Path, *, report_filename: str = "exploratory_report.json"
+) -> None:
     """Persist one explore run's artifacts: figures/, tables/, rendered charts,
     the report JSON, and the generated code/stdout/stderr.
 
@@ -157,7 +257,7 @@ def write_report_artifacts(report: Any, out_dir: Path) -> None:
     except Exception:  # rendering is best-effort, never blocks persistence
         pass
 
-    (out_dir / "exploratory_report.json").write_text(
+    (out_dir / report_filename).write_text(
         json.dumps(report.to_dict(), indent=2, default=str),
         encoding="utf-8",
     )

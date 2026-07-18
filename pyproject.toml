@@ -68,6 +68,10 @@ cluster = [
 dashboard = [
     "streamlit>=1.30",
     "pandas>=2.0",
+    "pillow>=9.0",
+    "pypdf>=4.0",
+    "pyarrow>=14.0",
+    "openpyxl>=3.1",
 ]
 gemini = ["google-genai>=1.0"]
 all = [
@@ -84,6 +88,10 @@ all = [
     "hdbscan>=0.8.33",
     "streamlit>=1.30",
     "pandas>=2.0",
+    "pillow>=9.0",
+    "pypdf>=4.0",
+    "pyarrow>=14.0",
+    "openpyxl>=3.1",
 ]
 dev = [
     "pytest>=8.0",

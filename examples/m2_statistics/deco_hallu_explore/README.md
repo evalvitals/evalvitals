@@ -131,10 +131,12 @@ Env overrides: `CODER_MODEL` / `JUDGE_MODEL` (e.g. `claude-opus-4-8`),
 4. `run_surgery.py` — survivors go to the diagnosis loop's M5 confirm → M4 →
    tiered fix (L1→L3b) on the loop example's frozen M1 batch (GPU).
 
-`confirm_report.json` / `fix_report.json` land next to the exploratory report;
-the dashboard keeps tab 3 as the *pure proposal* (unvalidated hypotheses, as in
-`run_attn.sh`) and adds separate **4 Held-out Verdicts** and **5 Fix** tabs —
-with `SKIP_FIX=1` only the verdicts tab appears:
+`confirm_report.json` / `fix_report.json` land next to the exploratory report.
+Every explore view has the same FIXED five tabs: tab 3 stays the *pure
+proposal* (unvalidated hypotheses, as in `run_attn.sh`), **4 Held-out
+Verdicts** and **5 Fix** fill in from those artifacts — and grey out as
+"not available" when a run stopped earlier (with `SKIP_FIX=1`, tab 5 stays
+greyed until phase 3 runs):
 
 ```bash
 evalvitals dashboard outputs_pipeline/1_explore
@@ -164,7 +166,11 @@ bash run_web.sh                 # serves http://localhost:8500
 PORT=8600 CODER_PROVIDER=codex bash run_web.sh
 ```
 
-Pick the outcome column / question / backend in the form, hit *Start
+Pick the analysis mode — **Explore only** (M2+M3; split 1 : 0 by default) or
+**Explore + held-out verification** (default split 0.6 : 0.4, adjustable):
+the verdict share is held out BEFORE exploration, then the frozen recipes and
+hypotheses are re-tested on it (e-BH + LLM judge), filling the *Held-out
+Verdicts* tab. Set the outcome column / question / backend, hit *Start
 analysis*, and watch the live log; the analysis runs as a **detached
 subprocess** (closing the tab never kills it) and the finished report renders
 in place with the same tabs as `evalvitals dashboard`. Every upload lands
@@ -173,10 +179,18 @@ artifacts, `explore.log`, `job.sh` to re-run it by hand) and past runs stay
 selectable in the sidebar. Try it by zipping `data_2b_attn/` or
 `data_attn_full/` and uploading that.
 
+This page is also the **unified view over the sibling scripts' results**: any
+existing output directory here (`outputs_attn_full`, `outputs_pipeline/
+1_explore`, `outputs`) is attached read-only in the same sidebar (📁), and
+every result — uploaded or attached, M3-only or full pipeline — renders with
+the same fixed five-tab layout, unreached stages greyed out.
+
 Env overrides: `PORT` (default 8500), `WORKSPACE` (default `web_runs`),
 `CODER_PROVIDER` / `CODER_MODEL` / `TIMEOUT_SEC` — these only set the form's
-defaults; each upload can override them in the UI. The generic entry point is
-`evalvitals web <workspace> --port N` (this script is a thin wrapper).
+defaults; each upload can override them in the UI — and `ATTACH_DIRS`
+(space-separated result dirs to list read-only). The generic entry point is
+`evalvitals web <workspace> --port N [--attach DIR ...]` (this script is a
+thin wrapper).
 
 See [`docs/m2_analysis.md`](../../../docs/m2_analysis.md) for the general
 standalone M2/M3 workflow, and

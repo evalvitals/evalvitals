@@ -16,6 +16,9 @@ import zipfile
 import pytest
 
 from evalvitals.analysis.upload_app import (
+    _route_followup,
+    _timeline_steps,
+    archive_run,
     build_explore_argv,
     job_status,
     launch_explore_job,
@@ -86,6 +89,51 @@ def test_build_explore_argv_carries_form_choices(tmp_path):
     bare = build_explore_argv(tmp_path, tmp_path, question="q", outcome_col="",
                               backend="codex", model="", timeout_sec=60)
     assert "--outcome-col" not in bare and "--model" not in bare
+    assert "--holdout-frac" not in bare and "--holdout-confirm" not in bare
+
+    verified = build_explore_argv(tmp_path, tmp_path, question="q",
+                                  outcome_col="label", backend="claude_code",
+                                  model="", timeout_sec=60,
+                                  holdout_frac=0.4, holdout_confirm=True)
+    assert verified[verified.index("--holdout-frac") + 1] == "0.4"
+    assert "--holdout-confirm" in verified
+
+    antigravity = build_explore_argv(
+        tmp_path, tmp_path, question="q", outcome_col="label",
+        backend="antigravity", model="", timeout_sec=60,
+    )
+    assert antigravity[antigravity.index("--backend") + 1] == "antigravity"
+
+
+def test_launch_explore_job_verify_mode_records_split(tmp_path, monkeypatch):
+    import evalvitals.analysis.upload_app as ua
+
+    class _FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr(ua.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    run_dir = tmp_path / "run1"
+    run_dir.mkdir()
+    job = launch_explore_job(
+        run_dir, run_dir / "data", question="q", outcome_col="label",
+        backend="claude_code", model="", timeout_sec=600,
+        mode="verify", explore_share=0.6,
+    )
+    assert job["mode"] == "verify"
+    assert job["explore_share"] == 0.6 and job["holdout_frac"] == 0.4
+    wrapper = (run_dir / "job.sh").read_text()
+    assert "--holdout-frac 0.4" in wrapper and "--holdout-confirm" in wrapper
+
+    # explore-only mode with the default 1:0 split adds no holdout flags
+    run2 = tmp_path / "run2"
+    run2.mkdir()
+    job2 = launch_explore_job(
+        run2, run2 / "data", question="q", outcome_col="label",
+        backend="claude_code", model="", timeout_sec=600,
+        mode="explore", explore_share=1.0,
+    )
+    assert job2["holdout_frac"] == 0.0
+    assert "--holdout" not in (run2 / "job.sh").read_text()
 
 
 def test_launch_explore_job_writes_record_and_wrapper(tmp_path, monkeypatch):
@@ -151,6 +199,58 @@ def test_list_runs_only_dirs_with_job_json(tmp_path):
     assert list_runs(tmp_path) == [a]
 
 
+def test_archive_run_moves_only_direct_workspace_runs(tmp_path):
+    run = tmp_path / "finished_run"
+    run.mkdir()
+    (run / "job.json").write_text("{}")
+    (run / "output.txt").write_text("keep me")
+
+    archived = archive_run(tmp_path, run)
+    assert archived == tmp_path / ".trash" / "finished_run"
+    assert not run.exists()
+    assert archived.joinpath("output.txt").read_text() == "keep me"
+    assert list_runs(tmp_path) == []
+
+    attached = tmp_path.parent / "attached_results"
+    attached.mkdir()
+    (attached / "job.json").write_text("{}")
+    with pytest.raises(ValueError, match="local workbench run"):
+        archive_run(tmp_path, attached)
+    assert attached.exists()
+
+
+def test_timeline_collapses_event_history_and_closes_dangling_steps():
+    events = [
+        {"turn_id": "initial", "stage": "ingest", "status": "started", "message": "Extracting"},
+        {"turn_id": "initial", "stage": "discover", "status": "completed", "message": "Found files"},
+        {"turn_id": "initial", "stage": "job", "status": "started", "message": "Worker started"},
+        {"turn_id": "initial", "stage": "m2", "status": "started", "message": "Starting M2"},
+        {"turn_id": "initial", "stage": "m2_codegen", "status": "started", "message": "Generating code"},
+        {"turn_id": "followup", "stage": "route", "status": "started", "message": "Other turn"},
+    ]
+
+    steps = _timeline_steps(events, turn_id="initial", run_state="done")
+    by_stage = {str(step["stage"]): step for step in steps}
+    assert set(by_stage) == {"ingest", "discover", "job", "m2", "m2_codegen"}
+    assert all(step["status"] == "completed" for step in by_stage.values())
+    assert "final report is available" in by_stage["job"]["message"]
+
+
+def test_followup_router_and_canceled_turn_status(tmp_path):
+    assert _route_followup("Explain the first takeaway") == "answer"
+    assert _route_followup("Compare the two groups with a new chart") == "analyze"
+    assert _route_followup("What hypothesis should we test?") == "hypothesize"
+
+    turn = tmp_path / "turn"
+    turn.mkdir()
+    events = tmp_path / "events.jsonl"
+    (turn / "job.json").write_text(json.dumps({
+        "pid": 999999999, "turn_id": "turn_001", "events_path": str(events),
+    }))
+    events.write_text(json.dumps({"turn_id": "turn_001", "status": "canceled"}) + "\n")
+    assert job_status(turn)["state"] == "canceled"
+
+
 # ── the page itself (dashboard extras) ───────────────────────────────────────
 
 pytest.importorskip("streamlit")
@@ -200,6 +300,26 @@ def test_upload_page_renders_form(tmp_path):
     assert at.button[0].label == "Start analysis"
     # nothing uploaded yet -> the launch button is disabled
     assert at.button[0].disabled
+    # the sidebar-reopen chevron must be exempted from the chrome-hiding CSS,
+    # or a collapsed sidebar (narrow window) can never be reopened
+    assert "stExpandSidebarButton" in blob
+
+
+def test_mode_selection_drives_split_slider(tmp_path):
+    at = _run_app(tmp_path)
+    mode = next(r for r in at.radio if r.label == "Analysis mode")
+    # default: explore only, whole dataset (1:0)
+    assert mode.value == "Explore only (M2 + M3)"
+    slider = at.slider[0]
+    assert slider.value == 1.0
+
+    mode.set_value("Explore + held-out verification")
+    at.run()
+    assert not at.exception
+    slider = at.slider[0]
+    assert slider.value == 0.6  # 0.6 : 0.4 default in verification mode
+    blob = " ".join(str(m.value) for m in at.caption)
+    assert "60%" in blob and "40%" in blob
 
 
 def test_finished_run_renders_explore_tabs(tmp_path):
@@ -214,11 +334,50 @@ def test_finished_run_renders_explore_tabs(tmp_path):
     radio.set_value(run.name)
     at.run()
     assert not at.exception
+    # uploads share the dashboard's FIXED five-tab layout; the stages this
+    # M3-only run never reached grey out instead of disappearing
     assert [t.label for t in at.tabs] == [
         "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+        "4 Held-out Verdicts", "5 Fix",
     ]
     blob = " ".join(str(m.value) for m in at.markdown)
     assert "Peaked attention marks hallucinations." in blob
+    assert blob.count("not available for this run") == 2
+
+
+def test_attached_local_dir_renders_in_sidebar_and_body(tmp_path):
+    """--attach lists an existing explore output next to uploads (read-only)
+    and renders it with the same unified five-tab layout."""
+    from streamlit.testing.v1 import AppTest
+
+    local = tmp_path / "outputs_attn_full"
+    local.mkdir()
+    (local / "exploratory_report.json").write_text(json.dumps({
+        "ok": True, "question": "q",
+        "observations": ["obs"], "takeaways": [], "hypotheses": [],
+        "candidate_signals": [], "charts": [], "plots": [], "tables": {},
+    }))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    sys.argv = ["upload_app.py", str(ws), "--attach", str(local)]
+    at = AppTest.from_file("evalvitals/analysis/upload_app.py", default_timeout=30)
+    at.run()
+    assert not at.exception
+
+    radio = at.sidebar.radio[0]
+    label = next(o for o in radio.options if str(o).endswith(local.name))
+    assert label.startswith("📁")
+    radio.set_value(f"@{local}")
+    at.run()
+    assert not at.exception
+    assert [t.label for t in at.tabs] == [
+        "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+        "4 Held-out Verdicts", "5 Fix",
+    ]
+    assert any("attached results directory" in str(c.value) for c in at.caption)
+    blob = " ".join(str(m.value) for m in at.markdown)
+    assert blob.count("not available for this run") == 2
 
 
 def test_failed_run_shows_log_and_hint(tmp_path):

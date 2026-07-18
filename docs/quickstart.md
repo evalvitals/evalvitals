@@ -142,11 +142,30 @@ The run writes the generated code, stdout/stderr, a structured exploratory
 report (`exploratory_report.json`), and rendered charts under
 `evalvitals_explore_output/figures/` + `tables/`.
 
+Add `--holdout-frac 0.4 --holdout-confirm` for a held-out design: the split
+is carved off BEFORE exploration (outcome-stratified, deterministic), the
+explorer is told to freeze threshold-explicit recipes, and after M3 the
+held-out rows re-test every recipe verbatim (e-BH, `split_label="held_out"`)
+while an LLM judge grades each hypothesis — `confirm_report.json` lands next
+to the report and fills the dashboard's *Held-out Verdicts* tab.
+
 Open the saved output as a dashboard:
 
 ```bash
 pip install -e ".[dashboard]"
 evalvitals dashboard evalvitals_explore_output
+```
+
+Or serve the browser-first workbench — upload a .zip of tabular data and/or
+media to start a persistent analysis thread, with existing result directories
+attached read-only in the same sidebar. The page streams durable stage events,
+shows M2 before M3 has finished, and supports follow-up questions over the same
+normalized bundle. Every result renders with one fixed five-tab layout (problem
+setting, exploratory analysis, hypotheses, held-out verdicts, fix); stages a
+run never reached grey out as "not available":
+
+```bash
+evalvitals web my_runs --port 8500 --attach evalvitals_explore_output
 ```
 
 See [Exploratory Analysis (M2/M3)](m2_analysis.md) for the full standalone
@@ -440,8 +459,9 @@ protocol = ExperimentProtocol(
 `VLDiagnoseLoop` above always runs M1→M2→M3→M5 in the same order every cycle.
 `AgenticDiagnoseLoop` wraps the identical stages, confirm-split, and post-loop
 `run_m4`/`run_fix` — but a CLI judge decides which tool to call next each
-turn (probe, run stats, explore the raw data, propose hypotheses, test one,
-fix, or stop), instead of a fixed sequence. The host — not the judge —
+turn (probe, run stats, explore the raw data, cluster failure modes, search
+for new failure cases via a Macro/Micro MCTS probe search, propose
+hypotheses, test one, fix, or stop), instead of a fixed sequence. The host — not the judge —
 enforces call limits, tool preconditions, and the stopping discipline: the
 judge cannot declare success (`stop(resolved=true)`) until a hypothesis has
 actually been tested and is statistically supported and protocol-consistent;

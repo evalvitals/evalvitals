@@ -87,6 +87,29 @@ def test_explore_persists_artifacts_only_when_out_is_given(tmp_path, monkeypatch
     ]
 
 
+def test_explore_persists_m2_partial_and_emits_stages(tmp_path, monkeypatch):
+    monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeExploreAgent)
+    monkeypatch.setattr(explore_api, "HypothesisAgent", _FakeHypothesisAgent)
+
+    class _Sink:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, stage, status, message, **kwargs):
+            self.events.append((stage, status, message, kwargs))
+
+    sink = _Sink()
+    out_dir = tmp_path / "out"
+    explore([{"case_id": "c0", "label": "pass"}], provider="llm", out=out_dir, progress_sink=sink)
+
+    assert json.loads((out_dir / "partial_report.json").read_text())["hypotheses"] == []
+    assert (out_dir / "exploratory_report.json").exists()
+    assert [(stage, status) for stage, status, *_ in sink.events] == [
+        ("m2", "started"), ("m2", "completed"), ("m3", "started"),
+        ("m3", "completed"), ("persist", "completed"),
+    ]
+
+
 def test_explore_skips_m3_when_disabled(monkeypatch):
     monkeypatch.setattr(explore_api, "ExploratoryAnalysisAgent", _FakeExploreAgent)
 

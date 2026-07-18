@@ -69,8 +69,14 @@ def main() -> None:
 
 
 def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
-    """Render one standalone explore report — the 3 proposal tabs plus any
-    held-out pipeline artifacts (confirm/fix) sitting next to it.
+    """Render one standalone explore report with the FIXED five-tab layout.
+
+    Every explore-shaped result — a plain M2/M3 run, a held-out pipeline run,
+    an uploaded-zip run — shows the same five tabs, so the reader never has to
+    re-learn the page. Stages the run did not reach (held-out verdicts, fix)
+    render as greyed "not available" placeholders instead of disappearing;
+    they fill in the moment a downstream phase drops ``confirm_report.json`` /
+    ``fix_report.json`` next to the exploratory report.
 
     Shared entry: dashboard_app's explore view and the upload workbench
     (upload_app.py) both render finished runs through this."""
@@ -80,18 +86,10 @@ def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
     _render_header(root, turn, report)
     _render_top_metrics(report)
 
-    # Held-out pipeline artifacts (written by a downstream confirm/fix phase
-    # next to the exploratory report). When present, the run graduates from
-    # "proposal only" to a full propose -> held-out-test -> fix story.
     confirm = _load_sibling_json(turn_dir, "confirm_report.json")
     fix_report = _load_sibling_json(turn_dir, "fix_report.json")
 
-    tab_labels = ["1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses"]
-    if confirm:
-        tab_labels.append(f"{len(tab_labels) + 1} Held-out Verdicts")
-    if fix_report:
-        tab_labels.append(f"{len(tab_labels) + 1} Fix")
-    tabs = st.tabs(tab_labels)
+    tabs = st.tabs(EXPLORE_TAB_LABELS)
     with tabs[0]:
         _render_problem_setting(root, report, story=None, artifact_dir=turn_dir)
     with tabs[1]:
@@ -100,14 +98,51 @@ def render_explore_report(root: Path, turn: dict[str, Any]) -> None:
         # Tab 3 stays the PURE proposal view (same as a plain explore run);
         # verdicts live in their own tab so proposal and validation never blur.
         _render_standalone_hypotheses(report, turn_dir)
-    next_tab = 3
-    if confirm:
-        with tabs[next_tab]:
+    with tabs[3]:
+        if confirm:
             _render_holdout_panel(confirm)
-        next_tab += 1
-    if fix_report:
-        with tabs[next_tab]:
+        else:
+            _render_unavailable_panel(
+                "Held-out verdicts",
+                "This run stopped at M3: hypotheses were proposed but not "
+                "re-tested on held-out data.",
+                "A held-out confirm phase (pipeline phase 2 — frozen-recipe "
+                "re-evaluation + e-BH + LLM judge, e.g. `test_hypotheses.py`) "
+                "writes `confirm_report.json` next to the exploratory report; "
+                "this panel then fills in.",
+            )
+    with tabs[4]:
+        if fix_report:
             _render_fix_panel(fix_report)
+        else:
+            _render_unavailable_panel(
+                "Fix",
+                "No repair phase was run for this analysis.",
+                "The surgery/fix phase (pipeline phase 3 — M5 confirm → M4 "
+                "surgery → tiered fix L1–L3b, e.g. `run_surgery.py`) writes "
+                "`fix_report.json` next to the exploratory report; this panel "
+                "then fills in.",
+            )
+
+
+# One layout for every explore-shaped result; unavailable stages grey out
+# rather than vanish (see render_explore_report).
+EXPLORE_TAB_LABELS = [
+    "1 Problem Setting", "2 Exploratory Analysis", "3 Hypotheses",
+    "4 Held-out Verdicts", "5 Fix",
+]
+
+
+def _render_unavailable_panel(title: str, what_happened: str, how_to_get_it: str) -> None:
+    """Greyed placeholder for a pipeline stage this run never reached."""
+    st.markdown(
+        '<div class="ev-unavailable">'
+        f"<div class='ev-unavailable-title'>⚪ {title} — not available for this run</div>"
+        f"<p>{what_happened}</p>"
+        f"<p class='ev-unavailable-hint'>{how_to_get_it}</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_sidebar(root: Path, session: dict[str, Any]) -> int:
@@ -1195,20 +1230,22 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
             for name in chart_names:
                 referenced_charts.add(name)
                 if name in charts_by_name:
-                    found_charts.append(("chart", charts_by_name[name]))
+                    found_charts.append((name, "chart", charts_by_name[name]))
                 elif name in plots_by_stem:
-                    found_charts.append(("plot", plots_by_stem[name]))
+                    found_charts.append((name, "plot", plots_by_stem[name]))
             if found_charts:
                 # Always a two-column grid: a takeaway with a single chart gets a
                 # half-width card, not a full-page blow-up — keeps every
                 # takeaway's evidence at the same visual scale.
                 cols = st.columns(2)
-                for idx, (kind, item) in enumerate(found_charts):
+                for idx, (artifact_name, kind, item) in enumerate(found_charts):
                     with cols[idx % 2]:
                         if kind == "chart":
                             _render_chart_card(item, turn_dir, heading_level="caption", key_prefix=f"takeaway{i}")
+                            _render_visual_explanation(report, name=artifact_name, chart=item)
                         else:
                             _render_plot_card(item, turn_dir)
+                            _render_visual_explanation(report, name=artifact_name)
             for name in table_names:
                 referenced_tables.add(name)
                 source = tables.get(name)
@@ -1240,18 +1277,9 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
     orphan_plots = [p for stem, p in plots_by_stem.items() if stem not in referenced_charts]
     orphan_tables = {k: v for k, v in tables.items() if k not in referenced_tables}
     if orphan_charts or orphan_plots or orphan_tables:
-        with st.expander("Additional charts & tables (not tied to a specific takeaway)", expanded=False):
-            _render_chart_grid(orphan_charts, turn_dir, key_prefix="orphan_chart")
-            if orphan_plots:
-                plot_cols = st.columns(2)
-                for idx, path in enumerate(orphan_plots):
-                    with plot_cols[idx % 2]:
-                        _render_plot_card(path, turn_dir)
-            for name, source in orphan_tables.items():
-                df = _table_to_dataframe(source, turn_dir)
-                if df is not None:
-                    st.markdown(f"**{display_name(name)}**")
-                    st.dataframe(df, width="stretch", height=220)
+        _render_unlinked_exploratory_material(
+            report, turn_dir, orphan_charts, orphan_plots, orphan_tables
+        )
 
     signals = _candidate_signals(report)
     with st.expander("Run details", expanded=False):
@@ -1261,6 +1289,144 @@ def _render_standalone_analysis(report: dict[str, Any], turn_dir: Path, root: Pa
             f"{len(takeaways)} takeaway(s)."
         )
         _render_visual_plan(report)
+
+
+def _render_unlinked_exploratory_material(
+    report: dict[str, Any],
+    turn_dir: Path,
+    charts: list[dict[str, Any]],
+    plots: list[Path],
+    tables: dict[str, Any],
+) -> None:
+    """Show uncited artifacts as an explicit QA review, never as conclusions.
+
+    The explorer generates a broad visual inventory before ranking takeaways.
+    This keeps that audit trail visible, while making the missing link or the
+    agent-recorded supporting purpose obvious to the reader.
+    """
+    plan = {
+        str(item.get("name")): item
+        for item in report.get("visual_plan") or []
+        if isinstance(item, dict) and item.get("name")
+    }
+    n_artifacts = len(charts) + len(plots) + len(tables)
+    with st.expander(
+        f"Supporting exploratory material (not a conclusion) — {n_artifacts}",
+        expanded=False,
+    ):
+        st.caption(
+            "These artifacts were generated during broad exploration but were not cited as evidence for a ranked takeaway. "
+            "Treat them as context or a QA item, not as an additional finding."
+        )
+        st.caption(
+            "For new runs, the reason for retaining a supporting visual is recorded below. "
+            "If an item says its linkage is missing, ask a follow-up to analyze or promote it explicitly."
+        )
+
+        def _context(name: str) -> None:
+            item = plan.get(name)
+            if item is None:
+                st.info(
+                    "Linkage missing: this artifact has no matching visualization-plan entry, "
+                    "so the report does not explain why it was retained."
+                )
+                return
+            question = str(item.get("question") or "an exploratory question")
+            rationale = str(item.get("rationale") or "")
+            disposition = str(item.get("disposition") or "").lower()
+            reason = str(item.get("not_promoted_reason") or "")
+            if disposition == "primary":
+                st.warning(
+                    "Linkage missing: the analysis plan marked this as a primary visual, "
+                    "but no takeaway cites it. Review it before treating it as a conclusion."
+                )
+            elif disposition == "supporting":
+                st.caption(
+                    "Supporting purpose — " + (reason or "context/diagnostic evidence; not promoted to a ranked takeaway.")
+                )
+            else:
+                st.caption(
+                    "The report did not classify this visual as primary or supporting; it is shown for audit only."
+                )
+            details = f"It was designed to answer: {question}."
+            if rationale:
+                details += f" Why this form: {rationale}"
+            st.caption(details)
+
+        for idx, chart in enumerate(charts):
+            name = str(chart.get("name") or "")
+            st.markdown(f"**{display_name(name) if name else 'Unnamed chart'}**")
+            _context(name)
+            _render_chart_card(chart, turn_dir, heading_level="caption", key_prefix=f"orphan_chart_{idx}")
+            _render_visual_explanation(report, name=name, chart=chart)
+        for idx, path in enumerate(plots):
+            name = path.stem
+            st.markdown(f"**{display_name(name)}**")
+            _context(name)
+            _render_plot_card(path, turn_dir)
+            _render_visual_explanation(report, name=name)
+        for name, source in tables.items():
+            st.markdown(f"**{display_name(name)}**")
+            _context(name)
+            df = _table_to_dataframe(source, turn_dir)
+            if df is not None:
+                st.dataframe(df, width="stretch", height=220)
+
+
+def _visual_key(value: Any) -> str:
+    """Loose but deterministic matching for chart names, titles, and PNG stems."""
+    raw = Path(str(value or "")).stem.lower()
+    return "".join(ch for ch in raw if ch.isalnum())
+
+
+def _render_visual_explanation(
+    report: dict[str, Any], *, name: str, chart: dict[str, Any] | None = None
+) -> None:
+    """Give every rendered visual an interpretation and a boundary on inference.
+
+    Agent-authored readings are the authoritative interpretation. Older reports
+    sometimes lack them, so we still orient the reader to the chart's encoding
+    without inventing a data finding.
+    """
+    keys = {_visual_key(name)}
+    if chart is not None:
+        keys.update(
+            _visual_key(chart.get(field))
+            for field in ("name", "title", "display_name", "figure_path")
+        )
+    keys.discard("")
+    matched: dict[str, Any] | None = None
+    for reading in report.get("chart_readings") or []:
+        if not isinstance(reading, dict):
+            continue
+        if _visual_key(reading.get("chart")) in keys:
+            matched = reading
+            break
+
+    st.markdown("**How to read this visual**")
+    if matched and str(matched.get("reading") or "").strip():
+        st.markdown(f"**What it shows:** {str(matched['reading']).strip()}")
+        boundary = str(matched.get("do_not_infer") or "").strip()
+        if boundary:
+            st.caption(f"Do not infer: {boundary}")
+        return
+
+    # Structural fallback: useful for legacy artifacts, but deliberately does
+    # not claim a pattern the agent did not record.
+    if chart is not None and chart.get("x") and chart.get("y"):
+        kind = str(chart.get("kind") or "chart").lower()
+        st.markdown(
+            f"**What it shows:** This {kind} encodes `{chart['y']}` against `{chart['x']}`. "
+            "Compare levels, trends, or spread across the displayed values."
+        )
+    else:
+        st.markdown(
+            "**What it shows:** This is a supplementary visual from the exploratory pass; "
+            "read its axes, legend, and annotations before drawing a conclusion."
+        )
+    st.caption(
+        "No agent-authored reading was saved for this visual, so the dashboard is not assigning it a finding."
+    )
 
 
 def _load_sibling_json(turn_dir: Path, name: str) -> dict[str, Any] | None:
@@ -2768,13 +2934,24 @@ def _plot_lookup(report: dict[str, Any]) -> dict[str, str]:
     return {Path(str(p)).stem: str(p) for p in (report.get("plots") or [])}
 
 
-def _render_chart_grid(charts: list[dict[str, Any]], turn_dir: Path, *, key_prefix: str, columns: int = 2) -> None:
+def _render_chart_grid(
+    charts: list[dict[str, Any]],
+    turn_dir: Path,
+    *,
+    key_prefix: str,
+    columns: int = 2,
+    report: dict[str, Any] | None = None,
+) -> None:
     if not charts:
         return
     cols = st.columns(columns)
     for idx, chart in enumerate(charts):
         with cols[idx % columns]:
             _render_chart_card(chart, turn_dir, key_prefix=f"{key_prefix}{idx}")
+            if report is not None:
+                _render_visual_explanation(
+                    report, name=str(chart.get("name") or chart.get("title") or ""), chart=chart
+                )
 
 
 def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
@@ -2787,7 +2964,7 @@ def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
 
     if charts:
         st.markdown("### Interactive Charts")
-        _render_chart_grid(charts, turn_dir, key_prefix="chart_and_plot")
+        _render_chart_grid(charts, turn_dir, key_prefix="chart_and_plot", report=report)
 
     if plots:
         st.markdown("### Generated Figures")
@@ -2795,6 +2972,7 @@ def _render_charts_and_plots(report: dict[str, Any], turn_dir: Path) -> None:
         for idx, item in enumerate(plots):
             with plot_cols[idx % 2]:
                 _render_plot_card(item, turn_dir)
+                _render_visual_explanation(report, name=Path(str(item)).stem)
 
 
 def _render_chart_card(
@@ -3004,6 +3182,19 @@ def _inject_css() -> None:
     st.markdown(
         """
         <style>
+        /* Greyed placeholder for pipeline stages a run never reached
+           (held-out verdicts / fix) — present but visibly dormant. */
+        .ev-unavailable {
+          border: 1.5px dashed var(--ev-border-strong);
+          border-radius: var(--ev-radius);
+          background: color-mix(in srgb, var(--ev-muted) 7%, var(--ev-panel));
+          color: var(--ev-muted);
+          padding: 1.1rem 1.3rem;
+          margin: .4rem 0 1rem 0;
+        }
+        .ev-unavailable-title { font-weight: 600; margin-bottom: .35rem; }
+        .ev-unavailable p { margin: .15rem 0; color: var(--ev-muted); }
+        .ev-unavailable-hint { font-size: .86rem; opacity: .85; }
         /* Color values are the validated dataviz-skill reference palette
            (references/palette.md) plugged straight into these token names —
            status/accent hex are unchanged across light/dark by design, only
@@ -3065,6 +3256,17 @@ def _inject_css() -> None:
         [data-testid="stMainMenu"], [data-testid="stMainMenuButton"] {
           visibility: hidden;
           height: 0;
+        }
+        /* The sidebar open/close chevrons live in the same header chrome the
+           rules above purge. They must survive it: Streamlit auto-collapses
+           the sidebar on narrow windows, and with the reopen button hidden a
+           collapsed sidebar is unreachable forever ("the sidebar vanished").
+           visibility:visible on the child overrides the hidden ancestor. */
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"] {
+          visibility: visible !important;
+          height: auto !important;
         }
         html, body, .stApp {
           font-family: -apple-system, "Segoe UI", "Inter", system-ui, sans-serif;

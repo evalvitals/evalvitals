@@ -14,7 +14,7 @@ import re
 import zlib
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from evalvitals.agent_runtime.json_shape import validate_json_shape
 
@@ -41,6 +41,12 @@ class FailureMode:
     exemplars: list[dict[str, Any]] = field(default_factory=list)
     size: int = 0
     top_terms: list[str] = field(default_factory=list)
+    # Boundary-aware induction (opt-in via cluster_failures(boundary_aware=True)):
+    # each entry is {"fail": <row>, "nearest_pass": <row>, "similarity": float} —
+    # a peripheral failing case paired with its nearest verified non-failure, so
+    # an LLM can be shown *where* the failure boundary sits, not just what the
+    # failing cases have in common. Empty when boundary_aware is off.
+    boundary_pairs: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +56,7 @@ class FailureMode:
             "exemplars": self.exemplars,
             "size": self.size,
             "top_terms": self.top_terms,
+            "boundary_pairs": self.boundary_pairs,
         }
 
 
@@ -106,6 +113,99 @@ def _row_signal_flags(row: dict[str, Any], signal_cols: "list[str] | None", excl
     return " ".join(f"{k}={row[k]}" for k in cols if k in row)
 
 
+_OUTPUT_COLS = ("output", "response", "observed")
+
+
+def _row_output(row: dict[str, Any]) -> str:
+    for col in _OUTPUT_COLS:
+        val = row.get(col)
+        if val not in (None, ""):
+            return str(val)
+    return ""
+
+
+def _error_signal_deterministic(row: dict[str, Any], expected_col: str) -> str:
+    """Failure-aware fallback with no LLM: a crude but always-available mismatch
+    signal ("expected X got Y"), so proximity in embedding space reflects *how*
+    the model failed a bit more than raw prompt text alone would."""
+    expected = row.get(expected_col)
+    if expected in (None, ""):
+        return ""
+    return f"expected={str(expected)[:80]} got={_row_output(row)[:80]}"
+
+
+def _error_signals_llm(
+    fail_rows: list[tuple[int, dict[str, Any]]],
+    expected_col: str,
+    judge: "Model",
+    *,
+    max_repairs: int = 1,
+) -> "list[str] | None":
+    """One batched call describing the failure mechanism for every FAIL row.
+
+    Returns a list aligned 1:1 with *fail_rows*, or None if the judge never
+    produced a parseable response (caller falls back to the deterministic
+    signal in that case).
+    """
+    from evalvitals.analysis.prompts.failure_modes import ERROR_SIGNAL_PROMPT
+
+    pairs_block = "\n".join(
+        f"{i}: expected={str(row.get(expected_col))[:150]!r} got={_row_output(row)[:150]!r}"
+        for i, (_, row) in enumerate(fail_rows)
+    )
+    prompt = ERROR_SIGNAL_PROMPT.format(pairs_block=pairs_block)
+    schema = {
+        "type": "array",
+        "items": {"type": "object", "required": ["index", "error"]},
+    }
+
+    for _attempt in range(max_repairs + 1):
+        raw = judge.generate(prompt)
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```\s*$", "", text)
+        try:
+            import json
+
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if validate_json_shape(data, schema):
+            continue
+        by_index = {int(item["index"]): str(item["error"]) for item in data if "index" in item}
+        return [by_index.get(i, "") for i in range(len(fail_rows))]
+    return None
+
+
+def _compute_error_signals(
+    fail_rows: list[tuple[int, dict[str, Any]]],
+    *,
+    expected_col: "str | None",
+    error_fn: "Callable[[dict[str, Any]], str] | None",
+    judge: "Model | None",
+) -> list[str]:
+    """Per-FAIL-row failure-mechanism strings, aligned with *fail_rows*.
+
+    Dispatch order: injected *error_fn* > batched LLM (if *judge* + *expected_col*
+    given) > deterministic expected-vs-output fallback > "" (no signal at all,
+    i.e. today's topic-only clustering) when neither is configured.
+    """
+    if error_fn is not None:
+        return [error_fn(row) for _, row in fail_rows]
+    if not expected_col:
+        return ["" for _ in fail_rows]
+    if judge is not None:
+        try:
+            signals = _error_signals_llm(fail_rows, expected_col, judge)
+        except Exception as exc:  # noqa: BLE001 — error-signal generation is best-effort
+            logger.warning("cluster_failures: LLM error-signal generation failed: %s", exc)
+            signals = None
+        if signals is not None:
+            return signals
+    return [_error_signal_deterministic(row, expected_col) for _, row in fail_rows]
+
+
 def _tokenize(text: str) -> list[str]:
     return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 2 and t not in _STOPWORDS]
 
@@ -128,15 +228,35 @@ def _top_terms(cluster_texts: list[str], corpus_doc_freq: Counter, n_docs: int, 
 
 
 def _hash_vectorize(texts: list[str], n_features: int = 256):
-    """Pure-numpy fallback: char-3gram hashing vectorizer, L2-normalized rows."""
+    """Pure-numpy fallback mirroring sklearn's TfidfVectorizer: word 1-2gram
+    hashing, smoothed IDF weighting, L2-normalized rows.
+
+    Word-level (2+ char tokens, like sklearn's default ``\\b\\w\\w+\\b``) plus
+    IDF is what keeps the two tiers consistent: shared boilerplate ("expected",
+    "got", …) is down-weighted so distinguishing content drives similarity, the
+    same way the TF-IDF path does. A raw char-3gram count instead lets common
+    character runs dominate, collapsing genuinely distinct failures together.
+    """
     import numpy as np
 
-    X = np.zeros((len(texts), n_features), dtype=float)
+    def _terms(text: str) -> list[str]:
+        words = re.findall(r"\w\w+", text.lower())
+        if not words:
+            # No 2+ char word tokens (e.g. "q", punctuation): fall back to the
+            # raw text as a single term so identical short texts still map to
+            # identical non-zero vectors (and group) rather than empty rows.
+            return [text.lower().strip() or " "]
+        return words + [f"{words[k]} {words[k + 1]}" for k in range(len(words) - 1)]
+
+    counts = np.zeros((len(texts), n_features), dtype=float)
     for i, text in enumerate(texts):
-        text = text.lower().strip()
-        grams = [text[j:j + 3] for j in range(max(1, len(text) - 2))] or [text or " "]
-        for g in grams:
-            X[i, zlib.crc32(g.encode("utf-8")) % n_features] += 1.0
+        for term in _terms(text):
+            counts[i, zlib.crc32(term.encode("utf-8")) % n_features] += 1.0
+    # Smoothed IDF (sklearn smooth_idf default): terms present in every doc keep
+    # weight 1 rather than vanishing; rarer terms are up-weighted.
+    df = (counts > 0).sum(axis=0)
+    idf = np.log((1.0 + len(texts)) / (1.0 + df)) + 1.0
+    X = counts * idf
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     return X / norms
@@ -220,6 +340,47 @@ def _vectorize(texts: list[str]) -> tuple[Any, str]:
         return _hash_vectorize(texts), "hashing"
 
 
+def _rank_by_centroid_distance(
+    idxs: list[int], X: Any, n_core: int, n_boundary: int
+) -> tuple[list[int], list[int]]:
+    """Split cluster member indices (into *X*) into (core, boundary): the
+    *n_core* closest to the cluster centroid (most representative) and the
+    *n_boundary* farthest (peripheral — nearest the failure/success edge)."""
+    import numpy as np
+
+    centroid = X[idxs].mean(axis=0)
+    order = sorted(idxs, key=lambda i: float(np.linalg.norm(X[i] - centroid)))
+    core = order[:n_core]
+    boundary = order[-n_boundary:] if len(order) > n_core else []
+    return core, boundary
+
+
+def _boundary_contrast_pairs(
+    boundary_idxs: list[int],
+    X: Any,
+    fail_rows: list[tuple[int, dict[str, Any]]],
+    pass_rows: list[dict[str, Any]],
+    X_pass: Any,
+) -> list[dict[str, Any]]:
+    """For each boundary FAIL index, pair it with its nearest PASS row (cosine
+    similarity in the same vector space — rows are L2-normalized by both
+    vectorizer tiers, so a dot product approximates cosine similarity)."""
+    if not boundary_idxs or not pass_rows or len(X_pass) == 0:
+        return []
+    import numpy as np
+
+    pairs = []
+    for i in boundary_idxs:
+        sims = X_pass @ X[i]
+        best = int(np.argmax(sims))
+        pairs.append({
+            "fail": fail_rows[i][1],
+            "nearest_pass": pass_rows[best],
+            "similarity": float(sims[best]),
+        })
+    return pairs
+
+
 def _name_clusters_with_llm(
     judge: "Model", clusters: list[FailureMode], *, max_repairs: int = 1
 ) -> bool:
@@ -230,10 +391,17 @@ def _name_clusters_with_llm(
     blocks = []
     for i, c in enumerate(clusters):
         exemplar_texts = [str(e) for e in c.exemplars[:3]]
-        blocks.append(
+        block = (
             f"Cluster {i} (n={c.size}, top terms: {', '.join(c.top_terms)}):\n"
             + "\n".join(f"  - {t[:200]}" for t in exemplar_texts)
         )
+        if c.boundary_pairs:
+            contrast_lines = [
+                f"  - FAIL: {str(bp['fail'])[:150]} | nearest PASS: {str(bp['nearest_pass'])[:150]}"
+                for bp in c.boundary_pairs[:3]
+            ]
+            block += "\n  Boundary contrast (failure vs. nearest success):\n" + "\n".join(contrast_lines)
+        blocks.append(block)
     prompt = NAME_CLUSTERS_PROMPT.format(clusters_block="\n\n".join(blocks))
 
     schema = {
@@ -282,13 +450,17 @@ def cluster_failures(
     max_clusters: int = 8,
     n_exemplars: int = 3,
     method: str = "auto",
+    expected_col: "str | None" = None,
+    error_fn: "Callable[[dict[str, Any]], str] | None" = None,
+    boundary_aware: bool = False,
+    n_boundary: int = 2,
 ) -> FailureModeReport:
     """Cluster FAIL cases in *records* into interpretable failure modes.
 
     Two tiers, no required dependency:
 
-    - Deterministic: TF-IDF (sklearn, if installed) or a pure-numpy char-3gram
-      hashing vectorizer over each case's text + active signal flags, then
+    - Deterministic: TF-IDF (sklearn, if installed) or a pure-numpy word-1-2gram
+      IDF hashing vectorizer over each case's text + active signal flags, then
       hdbscan / sklearn Agglomerative / a numpy cosine-greedy fallback —
       whichever is available, in that preference order (or force one via
       *method*: ``"hdbscan"``, ``"agglomerative"``, ``"cosine_greedy"``).
@@ -299,6 +471,24 @@ def cluster_failures(
     *text_cols*/*signal_cols* default to auto-detected columns (common text
     field names; all numeric/boolean columns for signals). *outcome_col*/
     *fail_value* select which records count as FAIL (case-insensitive).
+
+    Two opt-in, off-by-default extensions (ProbeLLM-style failure-mode
+    synthesis) — both no-ops unless explicitly requested, so existing callers
+    see byte-identical output:
+
+    - *expected_col*/*error_fn*: fold a failure-*mechanism* signal into each
+      FAIL case's vectorized text, so grouping reflects how the model failed
+      rather than only what the prompt was about. *error_fn* (row -> str) is
+      used verbatim when given; otherwise, if *judge* and *expected_col* are
+      both set, one batched LLM call describes each mismatch, falling back to
+      a deterministic "expected=... got=..." string on any judge/parse
+      failure. With neither, behavior is unchanged (topic-only clustering).
+    - *boundary_aware*: also collect non-FAIL rows as a contrast pool. For
+      each cluster, the *n_boundary* cases farthest from the cluster centroid
+      are paired with their nearest verified non-failure (by cosine
+      similarity in the same vector space) into ``FailureMode.boundary_pairs``
+      — surfaced to the LLM namer (when *judge* is given) to describe *where*
+      the failure boundary sits, not just what the failing cases share.
     """
     params = {
         "outcome_col": outcome_col, "fail_value": fail_value,
@@ -311,11 +501,24 @@ def cluster_failures(
     if not fail_rows:
         return FailureModeReport(n_fail_cases=0, method="none", params=params)
 
+    pass_rows: list[dict[str, Any]] = []
+    if boundary_aware:
+        pass_rows = [
+            r for i, r in enumerate(records)
+            if str(r.get(outcome_col, "")).strip().lower() != fail_value.strip().lower()
+        ]
+
     ids = [_row_id(r, i, id_key) for i, r in fail_rows]
     exclude = {outcome_col, id_key, *(text_cols or [])}
+    error_signals = _compute_error_signals(
+        fail_rows, expected_col=expected_col, error_fn=error_fn, judge=judge,
+    )
     texts = [
-        (_row_text(r, text_cols) + " " + _row_signal_flags(r, signal_cols, exclude)).strip()
-        for _, r in fail_rows
+        (
+            _row_text(r, text_cols) + " " + _row_signal_flags(r, signal_cols, exclude)
+            + " " + err
+        ).strip()
+        for (_, r), err in zip(fail_rows, error_signals)
     ]
 
     if len(fail_rows) < max(2, min_cluster_size):
@@ -340,7 +543,17 @@ def cluster_failures(
                 logger.warning("cluster_failures: LLM naming failed: %s", exc)
         return report
 
-    X, vec_method = _vectorize(texts)
+    pass_texts = [
+        (_row_text(r, text_cols) + " " + _row_signal_flags(r, signal_cols, exclude)).strip()
+        for r in pass_rows
+    ]
+    if pass_texts:
+        X_combined, vec_method = _vectorize(texts + pass_texts)
+        X, X_pass = X_combined[: len(texts)], X_combined[len(texts):]
+    else:
+        X, vec_method = _vectorize(texts)
+        X_pass = X[:0]  # empty, same width — no contrast pool available
+
     labels, cluster_method = _cluster_labels(
         X, method=method, min_cluster_size=min_cluster_size, max_clusters=max_clusters
     )
@@ -362,6 +575,7 @@ def cluster_failures(
             continue
         cluster_texts = [texts[i] for i in idxs]
         top_terms = _top_terms(cluster_texts, corpus_freq, len(texts))
+        core_idxs, boundary_idxs = _rank_by_centroid_distance(idxs, X, n_exemplars, n_boundary)
         clusters.append(FailureMode(
             name=f"cluster_{label}_" + ("_".join(top_terms[:2]) or "misc"),
             description=(
@@ -369,9 +583,13 @@ def cluster_failures(
                 if top_terms else f"{len(idxs)} FAIL case(s) with no distinguishing terms."
             ),
             case_ids=cluster_ids,
-            exemplars=[fail_rows[i][1] for i in idxs[:n_exemplars]],
+            exemplars=[fail_rows[i][1] for i in core_idxs],
             size=len(idxs),
             top_terms=top_terms,
+            boundary_pairs=(
+                _boundary_contrast_pairs(boundary_idxs, X, fail_rows, pass_rows, X_pass)
+                if boundary_aware else []
+            ),
         ))
 
     report = FailureModeReport(

@@ -12,8 +12,11 @@ import pytest
 from evalvitals.analysis.failure_modes import (
     FailureMode,
     FailureModeReport,
+    _boundary_contrast_pairs,
     _cluster_cosine_greedy,
+    _compute_error_signals,
     _hash_vectorize,
+    _rank_by_centroid_distance,
     cluster_failures,
 )
 
@@ -193,7 +196,9 @@ def test_llm_naming_repairs_once_then_falls_back_to_top_terms(monkeypatch):
 
 def test_failure_mode_to_dict_has_stable_keys():
     fm = FailureMode(name="n", description="d", case_ids=["a"], exemplars=[{"x": 1}], size=1, top_terms=["t"])
-    assert set(fm.to_dict()) == {"name", "description", "case_ids", "exemplars", "size", "top_terms"}
+    assert set(fm.to_dict()) == {
+        "name", "description", "case_ids", "exemplars", "size", "top_terms", "boundary_pairs",
+    }
 
 
 def test_failure_mode_report_to_dict_has_stable_keys():
@@ -214,3 +219,159 @@ def test_as_hypothesis_context_summarizes_clusters():
     )
     text = report.as_hypothesis_context()
     assert "small_obj" in text and "too small" in text and "n=5" in text
+
+
+# ---------------------------------------------------------------------------
+# Failure-aware embedding (expected_col / error_fn) — opt-in, default off
+# ---------------------------------------------------------------------------
+
+def test_compute_error_signals_prefers_injected_error_fn():
+    fail_rows = [(0, {"expected": "a", "output": "b"})]
+    signals = _compute_error_signals(
+        fail_rows, expected_col="expected", error_fn=lambda r: "CUSTOM", judge=None,
+    )
+    assert signals == ["CUSTOM"]
+
+
+def test_compute_error_signals_empty_when_unconfigured():
+    """Default behavior (no expected_col, no error_fn): today's topic-only path."""
+    fail_rows = [(0, {"expected": "a", "output": "b"})]
+    signals = _compute_error_signals(fail_rows, expected_col=None, error_fn=None, judge=None)
+    assert signals == [""]
+
+
+def test_compute_error_signals_deterministic_fallback_without_judge():
+    fail_rows = [(0, {"expected": "a", "output": "b"})]
+    signals = _compute_error_signals(fail_rows, expected_col="expected", error_fn=None, judge=None)
+    assert signals == ["expected=a got=b"]
+
+
+def test_compute_error_signals_llm_batched_success():
+    judge = _FakeJudge([
+        '[{"index": 0, "error": "off by one"}, {"index": 1, "error": "wrong entity"}]'
+    ])
+    fail_rows = [(0, {"expected": "10", "output": "9"}), (1, {"expected": "dog", "output": "cat"})]
+    signals = _compute_error_signals(fail_rows, expected_col="expected", error_fn=None, judge=judge)
+    assert signals == ["off by one", "wrong entity"]
+    assert judge.calls == 1
+
+
+def test_compute_error_signals_llm_falls_back_to_deterministic_on_malformed():
+    judge = _FakeJudge(["not json at all", "still not json"])
+    fail_rows = [(0, {"expected": "10", "output": "9"})]
+    signals = _compute_error_signals(fail_rows, expected_col="expected", error_fn=None, judge=judge)
+    assert signals == ["expected=10 got=9"]
+    assert judge.calls == 2
+
+
+def _same_topic_two_mechanisms_records() -> list[dict]:
+    records = []
+    for i in range(4):
+        records.append({"case_id": f"a{i}", "label": "FAIL", "prompt": "q", "output": "5", "expected": "10"})
+    for i in range(4):
+        records.append({"case_id": f"b{i}", "label": "FAIL", "prompt": "q", "output": "cat", "expected": "dog"})
+    for i in range(3):
+        records.append({"case_id": f"p{i}", "label": "PASS", "prompt": "q", "output": "ok", "expected": "ok"})
+    return records
+
+
+def test_error_fn_lets_clustering_separate_same_topic_different_mechanisms():
+    records = _same_topic_two_mechanisms_records()
+    # Restrict to the (identical, "q") prompt text only, so "output"/"expected"
+    # can't leak in via _row_text's auto-detected default text columns — the
+    # only way the mismatch can reach clustering is through error_fn itself.
+    plain = cluster_failures(
+        records, text_cols=["prompt"], method="cosine_greedy", min_cluster_size=3, max_clusters=4,
+    )
+    assert len(plain.clusters) == 1
+
+    # With error_fn folding in the mismatch, the two mechanisms separate.
+    aware = cluster_failures(
+        records, text_cols=["prompt"], method="cosine_greedy", min_cluster_size=3, max_clusters=4,
+        error_fn=lambda r: f"expected {r['expected']} got {r['output']}",
+    )
+    assert len(aware.clusters) == 2
+    sizes = sorted(c.size for c in aware.clusters)
+    assert sizes == [4, 4]
+
+
+# ---------------------------------------------------------------------------
+# Boundary-aware induction (boundary_aware=True) — opt-in, default off
+# ---------------------------------------------------------------------------
+
+def test_rank_by_centroid_distance_separates_outlier_into_boundary():
+    import numpy as np
+
+    X = np.array([[0.0, 0.0], [0.1, 0.0], [5.0, 5.0], [0.0, 0.1]])
+    core, boundary = _rank_by_centroid_distance([0, 1, 2, 3], X, n_core=2, n_boundary=1)
+    assert 2 not in core
+    assert boundary == [2]
+
+
+def test_boundary_contrast_pairs_picks_nearest_pass_by_cosine():
+    import numpy as np
+
+    X = np.array([[1.0, 0.0], [0.0, 1.0]])
+    fail_rows = [(0, {"id": "f0"}), (1, {"id": "f1"})]
+    pass_rows = [{"id": "p0"}, {"id": "p1"}]
+    X_pass = np.array([[0.9, 0.1], [0.1, 0.9]])
+    pairs = _boundary_contrast_pairs([0, 1], X, fail_rows, pass_rows, X_pass)
+    assert pairs[0]["fail"]["id"] == "f0" and pairs[0]["nearest_pass"]["id"] == "p0"
+    assert pairs[1]["fail"]["id"] == "f1" and pairs[1]["nearest_pass"]["id"] == "p1"
+
+
+def test_boundary_contrast_pairs_empty_without_pass_rows():
+    import numpy as np
+
+    X = np.array([[1.0, 0.0]])
+    assert _boundary_contrast_pairs([0], X, [(0, {"id": "f0"})], [], X[:0]) == []
+
+
+def test_boundary_pairs_empty_by_default():
+    report = cluster_failures(_two_mode_records(), method="cosine_greedy", min_cluster_size=3, max_clusters=4)
+    assert all(c.boundary_pairs == [] for c in report.clusters)
+
+
+def test_boundary_aware_produces_nearest_pass_contrast_pairs():
+    report = cluster_failures(
+        _two_mode_records(), method="cosine_greedy", min_cluster_size=3, max_clusters=4,
+        boundary_aware=True,
+    )
+    assert report.n_fail_cases == 16
+    for cluster in report.clusters:
+        assert cluster.boundary_pairs
+        for bp in cluster.boundary_pairs:
+            assert bp["nearest_pass"]["label"] == "PASS"
+            assert "similarity" in bp
+
+
+def test_boundary_aware_with_no_pass_rows_does_not_crash():
+    records = [r for r in _two_mode_records() if r["label"] == "FAIL"]
+    report = cluster_failures(
+        records, method="cosine_greedy", min_cluster_size=3, max_clusters=4, boundary_aware=True,
+    )
+    assert all(c.boundary_pairs == [] for c in report.clusters)
+
+
+class _CapturingJudge:
+    """Like _FakeJudge, but records the prompt it was last called with."""
+
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.last_prompt = ""
+
+    def generate(self, prompt, **kwargs) -> str:
+        self.last_prompt = prompt
+        return self.response
+
+
+def test_boundary_pairs_included_in_naming_prompt():
+    judge = _CapturingJudge(
+        '[{"cluster_id": 0, "name": "n0", "description": "d0"},'
+        ' {"cluster_id": 1, "name": "n1", "description": "d1"}]'
+    )
+    cluster_failures(
+        _two_mode_records(), method="cosine_greedy", min_cluster_size=3, max_clusters=2,
+        boundary_aware=True, judge=judge,
+    )
+    assert "Boundary contrast" in judge.last_prompt

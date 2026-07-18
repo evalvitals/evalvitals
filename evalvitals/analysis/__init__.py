@@ -57,6 +57,14 @@ from evalvitals.analysis.stats_tools import (
     fdr_correct,
     run_stats_tool,
 )
+from evalvitals.analysis.workbench import (
+    DatasetBundle,
+    EventSink,
+    ThreadStore,
+    UploadLimits,
+    extract_archive,
+    ingest_directory,
+)
 from evalvitals.reporting.compiler import compile_diagnostic_report
 from evalvitals.reporting.model import Claim, DiagnosticReport, Evidence, ReportStep
 
@@ -111,4 +119,10 @@ __all__ = [
     "default_plan",
     "fdr_correct",
     "run_stats_tool",
+    "DatasetBundle",
+    "EventSink",
+    "ThreadStore",
+    "UploadLimits",
+    "extract_archive",
+    "ingest_directory",
 ]

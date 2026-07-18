@@ -79,6 +79,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip M3 (falsifiable hypotheses proposed from the M2 takeaways). "
              "Runs by default after a successful explore.",
     )
+    explore.add_argument(
+        "--holdout-frac", type=float, default=0.0,
+        help="Fraction of rows to hold out BEFORE exploration (outcome-"
+             "stratified, deterministic). 0 disables (default).",
+    )
+    explore.add_argument(
+        "--holdout-confirm", action="store_true",
+        help="After exploring, re-test the frozen recipes + hypotheses on the "
+             "held-out rows (writes confirm_report.json — the dashboard's "
+             "Held-out Verdicts tab). Requires --holdout-frac > 0.",
+    )
+    explore.add_argument("--holdout-seed", type=int, default=0,
+                         help="Seed for the held-out split (default 0).")
+    explore.add_argument(
+        "--judge-model", default="claude-opus-4-8",
+        help="LLM judge grading each hypothesis against the held-out table "
+             "(only used with --holdout-confirm).",
+    )
+    explore.add_argument("--progress-path", default="",
+                         help="Append durable workbench progress events to this JSONL path.")
+    explore.add_argument("--thread-id", default="", help=argparse.SUPPRESS)
+    explore.add_argument("--turn-id", default="", help=argparse.SUPPRESS)
 
     dashboard = sub.add_parser(
         "dashboard",
@@ -109,12 +131,27 @@ def main(argv: list[str] | None = None) -> int:
                      help="Default model id pre-filled in the upload form.")
     web.add_argument("--timeout-sec", type=int, default=1200,
                      help="Default per-attempt explorer timeout in the upload form.")
+    web.add_argument(
+        "--attach", action="append", default=[], metavar="DIR",
+        help="Existing result directory (explore output or loop run) to list "
+             "in the sidebar alongside uploads. Repeatable.",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "explore":
         if not args.path:
             parser.error("evalvitals explore requires a results path")
-        return run_explore(
+        progress_sink = None
+        if args.progress_path:
+            from evalvitals.analysis.workbench import EventSink
+
+            progress_sink = EventSink(
+                args.progress_path,
+                thread_id=args.thread_id or "standalone",
+                turn_id=args.turn_id or "explore",
+            )
+            progress_sink.emit("job", "started", "Analysis worker started")
+        code = run_explore(
             args.path,
             question=args.question,
             out=args.out,
@@ -133,7 +170,18 @@ def main(argv: list[str] | None = None) -> int:
             use_bundled_skills=args.use_bundled_skills,
             outcome_col=args.outcome_col,
             propose_hypotheses=args.propose_hypotheses,
+            holdout_frac=args.holdout_frac,
+            holdout_seed=args.holdout_seed,
+            holdout_confirm=args.holdout_confirm,
+            judge_model=args.judge_model,
+            progress_sink=progress_sink,
         )
+        if progress_sink is not None:
+            progress_sink.emit(
+                "job", "completed" if code == 0 else "failed",
+                "Analysis worker completed" if code == 0 else "Analysis worker failed",
+            )
+        return code
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)
     if args.command == "web":
@@ -143,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             backend=args.coder_provider,
             model=args.coder_model,
             timeout_sec=args.timeout_sec,
+            attach=args.attach,
         )
 
     parser.print_help()

@@ -236,6 +236,7 @@ class ExploratoryAnalysisAgent:
         timeout_sec: int = 60,
         max_attempts: int = 2,
         use_bundled_skills: bool = True,
+        progress_sink: Any = None,
     ) -> None:
         self._judge = judge
         self._inspector = inspector
@@ -259,6 +260,7 @@ class ExploratoryAnalysisAgent:
         self._sandbox = sandbox or ExperimentSandbox(cleanup=False)
         self._timeout_sec = timeout_sec
         self._max_attempts = max(1, max_attempts)
+        self._progress_sink = progress_sink
 
     @property
     def available(self) -> bool:
@@ -365,7 +367,22 @@ class ExploratoryAnalysisAgent:
         if root.is_file():
             shutil.copy2(root, dest_root / root.name)
         else:
-            files, _ = _discover_json_files(root, max_files=max_files, include_tool_calls=include_tool_calls)
+            # A workbench DatasetBundle contains normalized records.json plus
+            # optional original media.  Keep the old JSON selection semantics
+            # for regular result folders, but include known table/media files
+            # so a CLI coding agent can inspect the same bundle the UI reports.
+            from evalvitals.analysis.workbench import SUPPORTED_SUFFIXES
+
+            files = [
+                p for p in sorted(root.rglob("*"))
+                if p.is_file()
+                and p.suffix.lower() in SUPPORTED_SUFFIXES
+                and (include_tool_calls or not p.name.startswith("tool_calls_"))
+            ]
+            # Normalized rows are the primary analysis input and must not be
+            # crowded out by a large media directory.
+            files.sort(key=lambda p: (p.name != RECORDS_FILENAME, str(p)))
+            files = files[:max_files]
             for f in files:
                 dest = dest_root / f.relative_to(root)
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -398,6 +415,10 @@ class ExploratoryAnalysisAgent:
 
         for attempt in range(1, self._max_attempts + 1):
             try:
+                if self._progress_sink is not None:
+                    self._progress_sink.emit(
+                        "m2_codegen", "started", "Generating analysis code", attempt=attempt
+                    )
                 if attempt == 1:
                     code, raw = write_first()
                 else:
@@ -405,16 +426,33 @@ class ExploratoryAnalysisAgent:
                         question, profile, code, last_result, last_error
                     )
                 raw_outputs.append(raw)
+                if self._progress_sink is not None:
+                    self._progress_sink.emit(
+                        "m2_codegen", "completed", "Analysis code is ready", attempt=attempt
+                    )
             except Exception as exc:  # noqa: BLE001
                 last_error = f"code writing failed: {exc}"
                 logger.warning("ExploratoryAnalysisAgent: %s", last_error)
+                if self._progress_sink is not None:
+                    self._progress_sink.emit("m2_codegen", "failed", last_error, attempt=attempt)
                 break
 
             if not code.strip():
                 last_error = "backend produced no code"
                 continue
 
+            if self._progress_sink is not None:
+                self._progress_sink.emit(
+                    "m2_execute", "started", "Running generated analysis", attempt=attempt
+                )
             last_result = self._sandbox.run(code, timeout_sec=self._timeout_sec)
+            if self._progress_sink is not None:
+                self._progress_sink.emit(
+                    "m2_execute", "completed" if last_result.ok else "failed",
+                    "Generated analysis finished" if last_result.ok else "Generated analysis needs repair",
+                    attempt=attempt,
+                    metrics={"elapsed_sec": last_result.elapsed_sec, "returncode": last_result.returncode},
+                )
             report, last_error = _report_from_sandbox(
                 question=question,
                 profile=profile,
@@ -1035,12 +1073,15 @@ def _normalize_visual_plan(raw: Any) -> list[dict[str, Any]]:
         cleaned: dict[str, Any] = {}
         for key in (
             "name",
+            "display_name",
             "question",
             "data_shape",
             "plot_kind",
             "fallback_kind",
             "rationale",
             "status",
+            "disposition",
+            "not_promoted_reason",
         ):
             if item.get(key) is not None:
                 cleaned[key] = str(item.get(key))
