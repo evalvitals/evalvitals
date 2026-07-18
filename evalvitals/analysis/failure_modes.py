@@ -228,15 +228,35 @@ def _top_terms(cluster_texts: list[str], corpus_doc_freq: Counter, n_docs: int, 
 
 
 def _hash_vectorize(texts: list[str], n_features: int = 256):
-    """Pure-numpy fallback: char-3gram hashing vectorizer, L2-normalized rows."""
+    """Pure-numpy fallback mirroring sklearn's TfidfVectorizer: word 1-2gram
+    hashing, smoothed IDF weighting, L2-normalized rows.
+
+    Word-level (2+ char tokens, like sklearn's default ``\\b\\w\\w+\\b``) plus
+    IDF is what keeps the two tiers consistent: shared boilerplate ("expected",
+    "got", …) is down-weighted so distinguishing content drives similarity, the
+    same way the TF-IDF path does. A raw char-3gram count instead lets common
+    character runs dominate, collapsing genuinely distinct failures together.
+    """
     import numpy as np
 
-    X = np.zeros((len(texts), n_features), dtype=float)
+    def _terms(text: str) -> list[str]:
+        words = re.findall(r"\w\w+", text.lower())
+        if not words:
+            # No 2+ char word tokens (e.g. "q", punctuation): fall back to the
+            # raw text as a single term so identical short texts still map to
+            # identical non-zero vectors (and group) rather than empty rows.
+            return [text.lower().strip() or " "]
+        return words + [f"{words[k]} {words[k + 1]}" for k in range(len(words) - 1)]
+
+    counts = np.zeros((len(texts), n_features), dtype=float)
     for i, text in enumerate(texts):
-        text = text.lower().strip()
-        grams = [text[j:j + 3] for j in range(max(1, len(text) - 2))] or [text or " "]
-        for g in grams:
-            X[i, zlib.crc32(g.encode("utf-8")) % n_features] += 1.0
+        for term in _terms(text):
+            counts[i, zlib.crc32(term.encode("utf-8")) % n_features] += 1.0
+    # Smoothed IDF (sklearn smooth_idf default): terms present in every doc keep
+    # weight 1 rather than vanishing; rarer terms are up-weighted.
+    df = (counts > 0).sum(axis=0)
+    idf = np.log((1.0 + len(texts)) / (1.0 + df)) + 1.0
+    X = counts * idf
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     return X / norms
@@ -439,8 +459,8 @@ def cluster_failures(
 
     Two tiers, no required dependency:
 
-    - Deterministic: TF-IDF (sklearn, if installed) or a pure-numpy char-3gram
-      hashing vectorizer over each case's text + active signal flags, then
+    - Deterministic: TF-IDF (sklearn, if installed) or a pure-numpy word-1-2gram
+      IDF hashing vectorizer over each case's text + active signal flags, then
       hdbscan / sklearn Agglomerative / a numpy cosine-greedy fallback —
       whichever is available, in that preference order (or force one via
       *method*: ``"hdbscan"``, ``"agglomerative"``, ``"cosine_greedy"``).
