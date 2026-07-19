@@ -47,6 +47,11 @@ Report:
         result = CodegenRunner(CliAgentConfig(provider=provider, model=model, timeout_sec=timeout_sec)).run(
             prompt, workdir=turn_dir, timeout_sec=timeout_sec
         )
+        if result.audit:
+            (turn_dir / "agent_audit.json").write_text(
+                json.dumps({"schema_version": 1, "attempts": [result.audit]}, indent=2),
+                encoding="utf-8",
+            )
         answer = (result.raw_output or result.error or "The provider returned no answer.").strip()
     except Exception as exc:  # noqa: BLE001 - a background job must persist a useful error
         sink.emit("route", "failed", f"Follow-up provider failed: {exc}")

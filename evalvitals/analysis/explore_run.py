@@ -272,6 +272,11 @@ def write_report_artifacts(
             "\n\n--- attempt ---\n\n".join(report.raw_outputs),
             encoding="utf-8",
         )
+    if report.agent_audits:
+        (out_dir / "agent_audit.json").write_text(
+            json.dumps({"schema_version": 1, "attempts": report.agent_audits}, indent=2),
+            encoding="utf-8",
+        )
 
 
 def _copy_artifact_dirs(report: Any, out_dir: Path) -> None:

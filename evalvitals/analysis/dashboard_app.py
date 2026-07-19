@@ -1295,7 +1295,7 @@ def _render_unlinked_exploratory_material(
     report: dict[str, Any],
     turn_dir: Path,
     charts: list[dict[str, Any]],
-    plots: list[Path],
+    plots: list[Any],
     tables: dict[str, Any],
 ) -> None:
     """Show uncited artifacts as an explicit QA review, never as conclusions.
@@ -1360,7 +1360,10 @@ def _render_unlinked_exploratory_material(
             _render_chart_card(chart, turn_dir, heading_level="caption", key_prefix=f"orphan_chart_{idx}")
             _render_visual_explanation(report, name=name, chart=chart)
         for idx, path in enumerate(plots):
-            name = path.stem
+            # ``_plot_lookup`` deliberately retains the report's serialized
+            # string path.  Do not assume a Path here: agent-authored reports
+            # may also contain a Path-like object or another JSON scalar.
+            name = Path(str(path)).stem
             st.markdown(f"**{display_name(name)}**")
             _context(name)
             _render_plot_card(path, turn_dir)
