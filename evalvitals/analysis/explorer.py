@@ -179,6 +179,7 @@ class ExploratoryAnalysisReport:
     attempts: int = 0
     workdir: str = ""
     raw_outputs: list[str] = field(default_factory=list)
+    agent_audits: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def candidate_signal_names(self) -> list[str]:
@@ -210,6 +211,7 @@ class ExploratoryAnalysisReport:
             "error": self.error,
             "attempts": self.attempts,
             "workdir": self.workdir,
+            "agent_audits": self.agent_audits,
         }
 
 
@@ -261,6 +263,7 @@ class ExploratoryAnalysisAgent:
         self._timeout_sec = timeout_sec
         self._max_attempts = max(1, max_attempts)
         self._progress_sink = progress_sink
+        self._last_agent_audit: dict[str, Any] | None = None
 
     @property
     def available(self) -> bool:
@@ -409,6 +412,7 @@ class ExploratoryAnalysisAgent:
             )
 
         raw_outputs: list[str] = []
+        agent_audits: list[dict[str, Any]] = []
         code = ""
         last_result: SandboxResult | None = None
         last_error = ""
@@ -426,7 +430,10 @@ class ExploratoryAnalysisAgent:
                         question, profile, code, last_result, last_error
                     )
                 raw_outputs.append(raw)
-                if self._progress_sink is not None:
+                if self._last_agent_audit is not None:
+                    agent_audits.append(self._last_agent_audit)
+                    self._last_agent_audit = None
+                if code.strip() and self._progress_sink is not None:
                     self._progress_sink.emit(
                         "m2_codegen", "completed", "Analysis code is ready", attempt=attempt
                     )
@@ -439,6 +446,10 @@ class ExploratoryAnalysisAgent:
 
             if not code.strip():
                 last_error = "backend produced no code"
+                if self._progress_sink is not None:
+                    self._progress_sink.emit(
+                        "m2_codegen", "failed", last_error, attempt=attempt
+                    )
                 continue
 
             if self._progress_sink is not None:
@@ -462,6 +473,7 @@ class ExploratoryAnalysisAgent:
                 workdir=Path(self._sandbox.workdir),
             )
             report.raw_outputs = raw_outputs
+            report.agent_audits = agent_audits
             if report.ok:
                 return report
 
@@ -478,6 +490,7 @@ class ExploratoryAnalysisAgent:
             attempts=min(self._max_attempts, len(raw_outputs)),
             workdir=str(self._sandbox.workdir),
             raw_outputs=raw_outputs,
+            agent_audits=agent_audits,
         )
 
     def _write_input(self, rows: list[dict[str, Any]]) -> None:
@@ -561,6 +574,7 @@ class ExploratoryAnalysisAgent:
             preferred_filenames=("analysis.py",),
             include_error_in_raw=True,
         )
+        self._last_agent_audit = result.audit
         return result.code, result.raw_output
 
 

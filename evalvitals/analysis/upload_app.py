@@ -446,6 +446,58 @@ def _render_timeline(st: Any, run_dir: Path, *, turn_id: str = "", run_state: st
     st.markdown('<div class="ev-timeline">' + "".join(rows) + "</div>", unsafe_allow_html=True)
 
 
+def _render_agent_audit(st: Any, out_dir: Path) -> None:
+    """Show only provider-verifiable skill-use evidence, never inferred use."""
+    path = out_dir / "agent_audit.json"
+    if not path.exists():
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        attempts = payload.get("attempts", []) if isinstance(payload, dict) else []
+    except (OSError, ValueError, TypeError):
+        return
+    if not isinstance(attempts, list) or not attempts:
+        return
+
+    with st.expander("Agent & skill audit", expanded=False):
+        for index, audit in enumerate(attempts, start=1):
+            if not isinstance(audit, dict):
+                continue
+            execution = audit.get("execution") if isinstance(audit.get("execution"), dict) else {}
+            provider = str(audit.get("provider") or "unknown")
+            st.markdown(
+                f"**Attempt {index} · {provider}** — "
+                f"{execution.get('status', 'unknown')} · "
+                f"{execution.get('elapsed_sec', '?')} s"
+            )
+            requested = {str(name) for name in audit.get("skills_requested", [])}
+            installed = {str(name) for name in audit.get("skills_installed", [])}
+            invoked = {str(name) for name in audit.get("skills_invoked", [])}
+            if requested:
+                rows = []
+                for skill in sorted(requested):
+                    rows.append({
+                        "skill": skill,
+                        "installed": "yes" if skill in installed else "no",
+                        "verified use": "yes" if skill in invoked else "no",
+                    })
+                st.dataframe(rows, hide_index=True, use_container_width=True)
+            observation = str(audit.get("skill_observability") or "not_observable")
+            if observation == "not_observable":
+                st.caption("This provider exposes no machine-readable skill trace. "
+                           "Installed is not proof of use.")
+            elif requested and not invoked:
+                st.caption("No provider-verifiable skill use was observed in this attempt.")
+            evidence = audit.get("evidence")
+            if isinstance(evidence, list) and evidence:
+                st.caption("Evidence")
+                st.json(evidence)
+            if execution.get("error"):
+                st.error(str(execution["error"]))
+            elif execution.get("stderr"):
+                st.code(str(execution["stderr"]), language="text")
+
+
 def _inject_workbench_css(st: Any) -> None:
     """Small motion language for live events; respects reduced-motion settings."""
     st.markdown(
@@ -905,6 +957,7 @@ def _render_run(st: Any, dapp: Any, run_dir: Path) -> None:
     if not turn["report"].get("ok", True):
         st.warning("The explorer finished with an error — rendering whatever "
                    f"was produced. Error: {turn['report'].get('error') or 'unknown'}")
+    _render_agent_audit(st, out_dir)
     with st.chat_message("assistant"):
         dapp.render_explore_report(Path(session["root"]), turn)
     _render_followup_input(st, run_dir, job)

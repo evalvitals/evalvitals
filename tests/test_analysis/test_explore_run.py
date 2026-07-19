@@ -61,6 +61,23 @@ def test_write_report_artifacts_persists_and_renders(tmp_path):
     assert chart["description"]                         # text fallback always present
 
 
+def test_write_report_artifacts_persists_agent_audit(tmp_path):
+    workdir = tmp_path / "wd"
+    out = tmp_path / "out"
+    report = _report_with_workdir(workdir)
+    report.agent_audits = [{
+        "provider": "codex", "skills_requested": ["nature-figure"],
+        "skills_installed": ["nature-figure"], "skills_invoked": [],
+        "skill_observability": "json_command_events", "evidence": [],
+        "execution": {"status": "completed", "elapsed_sec": 2},
+    }]
+
+    write_report_artifacts(report, out)
+
+    audit = json.loads((out / "agent_audit.json").read_text())
+    assert audit["attempts"][0]["provider"] == "codex"
+
+
 def test_verdict_suffix_tags_descriptive_vs_adjudicated():
     descriptive = CandidateSignal(name="s", sufficient={"kind": "two_group", "a": [0], "b": [1]})
     assert _verdict_suffix(descriptive) == "  [descriptive]"
