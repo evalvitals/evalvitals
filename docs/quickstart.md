@@ -171,6 +171,46 @@ evalvitals web my_runs --port 8500 --attach evalvitals_explore_output
 See [Exploratory Analysis (M2/M3)](m2_analysis.md) for the full standalone
 explore + hypothesis-generation workflow.
 
+## Run a Codebase, Then Explore
+
+If you don't have result logs yet — only an existing evaluation/inference
+codebase — `run_codebase` bridges the gap: a CLI coding agent runs the
+codebase for you inside an isolated copy (your original directory is never
+modified), harvests the per-case results it produces, and hands them
+straight to the same M2/M3 explore pipeline above.
+
+```bash
+evalvitals run-codebase ./my_eval_repo \
+  --backend claude_code \
+  -q "Where does the model fail and why?" \
+  --out evalvitals_run_codebase_output \
+  --dashboard          # optional
+```
+
+Or from Python:
+
+```python
+import evalvitals
+
+result = evalvitals.run_codebase("./my_eval_repo", out="run_output")
+print(result.ran_ok, len(result.records))
+print(result.explore.report.observations)
+```
+
+**Output contract:** the run agent is instructed to write `records.json` (a
+JSON array or JSON-Lines file, one row per evaluation case) in the codebase's
+working copy, each row carrying a `label` (e.g. `PASS`/`FAIL`) plus the
+case's input/prediction/target fields. If the codebase already writes
+per-case outputs, the agent converts them into this format rather than
+re-running everything. One repair turn is attempted if nothing usable was
+produced (`max_attempts`, default 2) before giving up with `ran_ok=False`
+and an `error` explaining why.
+
+Whatever environment the codebase needs — API keys, GPU, installed
+dependencies — is the user's responsibility; the agent runs with your local
+environment and does not provision infrastructure. Pass `analyze=False` /
+`--no-explore` to only run + harvest without the M2/M3 step.
+
 ## Convenience Shim
 
 Models expose `call_<analysis>` methods dynamically through the analyzer

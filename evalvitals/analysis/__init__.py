@@ -45,6 +45,7 @@ from evalvitals.analysis.profile import (
     profile_records,
     profile_stats_input,
 )
+from evalvitals.analysis.run_codebase import CodebaseRunResult, run_codebase, run_codebase_cli
 from evalvitals.analysis.stats_agent import StatsAnalysisAgent, StatsAnalysisReport
 from evalvitals.analysis.stats_tools import (
     STATS_TOOL_CATALOG,
@@ -71,6 +72,9 @@ from evalvitals.reporting.model import Claim, DiagnosticReport, Evidence, Report
 __all__ = [
     "explore",
     "ExploreRunResult",
+    "run_codebase",
+    "run_codebase_cli",
+    "CodebaseRunResult",
     "cluster_failures",
     "FailureMode",
     "FailureModeReport",

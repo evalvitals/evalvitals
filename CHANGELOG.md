@@ -6,6 +6,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `run_codebase`: run a user's codebase, then explore the results
+
+New standalone entry point bridging the run infrastructure
+(`evalvitals.agent_runtime`) and the analysis entry (`evalvitals.explore`):
+given a path to an existing evaluation/inference codebase, a CLI coding agent
+runs it inside an isolated copy (the original is never modified), harvests
+the per-case results it writes (`records.json`, one row per case with a
+`label` plus input/prediction/target fields — one repair turn if nothing
+usable was produced), and hands them straight to `explore()` (M2 + M3).
+
+- `evalvitals.run_codebase(path, ...)` / `evalvitals.analysis.run_codebase`
+  (library) — returns a `CodebaseRunResult` (`records`, `ran_ok`, `explore`,
+  `error`, ...).
+- `evalvitals run-codebase ./my_repo [--backend ...] [--out ...] [--dashboard]`
+  (CLI) — persists the workspace, harvested records, and explore artifacts
+  under `--out`; `--no-explore` skips the M2/M3 step.
+- See [quickstart.md#run-a-codebase-then-explore](docs/quickstart.md).
+
 ### Added — ProbeLLM-style failure-mode synthesis: failure-aware clustering + hierarchical MCTS probe search (VLM)
 
 Deeper integration of arXiv 2602.12966 ("ProbeLLM"), which already inspired

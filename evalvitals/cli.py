@@ -6,6 +6,7 @@ import argparse
 
 from evalvitals.analysis.dashboard import launch_dashboard, launch_upload_app
 from evalvitals.analysis.explore_run import run_explore
+from evalvitals.analysis.run_codebase import run_codebase_cli
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -102,6 +103,47 @@ def main(argv: list[str] | None = None) -> int:
     explore.add_argument("--thread-id", default="", help=argparse.SUPPRESS)
     explore.add_argument("--turn-id", default="", help=argparse.SUPPRESS)
 
+    run_codebase = sub.add_parser(
+        "run-codebase",
+        help="Run a user's evaluation codebase, then explore the results it produces.",
+        description="A CLI coding agent runs the codebase at PATH inside an isolated copy, "
+                    "harvests its per-case records (a records.json/.jsonl output contract), "
+                    "and runs `evalvitals explore` (M2+M3) over them.",
+    )
+    run_codebase.add_argument("path", help="Directory containing the codebase to run.")
+    run_codebase.add_argument(
+        "-q", "--question",
+        default="Explore this dataset and surface the patterns that matter.",
+        help="Natural-language analysis question, also given to the run agent as task context.",
+    )
+    run_codebase.add_argument(
+        "--outcome-col", default=None,
+        help="Name of the target/outcome column, if any (e.g. 'label'). Omit to auto-detect.",
+    )
+    run_codebase.add_argument("--out", default="evalvitals_run_codebase_output",
+                              help="Output directory for workspace/records/report/figures/tables.")
+    run_codebase.add_argument(
+        "--backend", "--coder-provider", dest="coder_provider", default="claude_code",
+        choices=["antigravity", "codex", "claude_code", "opencode", "gemini_cli", "kimi_cli"],
+        help="Local CLI coding-agent backend used both to run the codebase and to explore it.",
+    )
+    run_codebase.add_argument("--model", "--coder-model", dest="coder_model", default="")
+    run_codebase.add_argument("--coder-binary", default="")
+    run_codebase.add_argument("--records-name", default=None,
+                              help="Output-contract filename the run agent must write "
+                                   "(default: records.json).")
+    run_codebase.add_argument("--timeout-sec", type=int, default=1200)
+    run_codebase.add_argument("--max-attempts", type=int, default=2)
+    run_codebase.add_argument(
+        "--no-explore", dest="analyze", action="store_false", default=True,
+        help="Only run the codebase and harvest records; skip the explore (M2+M3) step.",
+    )
+    run_codebase.add_argument(
+        "--dashboard", action="store_true",
+        help="Open the Streamlit dashboard on the output directory when done.",
+    )
+    run_codebase.add_argument("--port", type=int, default=None, help="Optional dashboard port.")
+
     dashboard = sub.add_parser(
         "dashboard",
         help="Open a Streamlit dashboard for an explore output or loop-run directory.",
@@ -182,6 +224,24 @@ def main(argv: list[str] | None = None) -> int:
                 "Analysis worker completed" if code == 0 else "Analysis worker failed",
             )
         return code
+    if args.command == "run-codebase":
+        from evalvitals.analysis.explorer import RECORDS_FILENAME
+
+        return run_codebase_cli(
+            args.path,
+            out=args.out,
+            coder_provider=args.coder_provider,
+            coder_model=args.coder_model,
+            coder_binary=args.coder_binary,
+            outcome_col=args.outcome_col,
+            records_name=args.records_name or RECORDS_FILENAME,
+            timeout_sec=args.timeout_sec,
+            max_attempts=args.max_attempts,
+            question=args.question,
+            analyze=args.analyze,
+            dashboard=args.dashboard,
+            dashboard_port=args.port,
+        )
     if args.command == "dashboard":
         return launch_dashboard(args.run_dir, port=args.port)
     if args.command == "web":
