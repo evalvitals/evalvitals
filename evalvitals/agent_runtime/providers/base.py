@@ -8,6 +8,7 @@ from pathlib import Path
 from evalvitals.agent_runtime.cli_runtime import ProcessRun, SubprocessRunner, collect_py_files
 from evalvitals.agent_runtime.cli_transcript import RAW_OUTPUT_CAP
 from evalvitals.agent_runtime.cli_types import CliAgentResult
+from evalvitals.agent_runtime.skill_audit import build_agent_audit
 from evalvitals.agent_runtime.skills.installer import SkillInstaller
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,18 @@ class CliAgentBase:
             error = f"Exited {run.returncode}: {run.stderr[:500]}"
 
         raw_output, usage = self._postprocess_output(run.stdout)
+        audit = build_agent_audit(
+            provider=self._provider_name,
+            skills=self._skills,
+            workdir=workdir,
+            stdout=run.stdout,
+            stderr=run.stderr,
+            returncode=run.returncode,
+            timed_out=run.timed_out,
+            elapsed_sec=run.elapsed_sec,
+            files=files,
+            error=error,
+        )
         logger.debug(
             "%s: rc=%d files=%s elapsed=%.1fs timed_out=%s",
             self._provider_name,
@@ -94,4 +107,5 @@ class CliAgentBase:
             raw_output=raw_output,
             usage=usage,
             error=error,
+            audit=audit,
         )

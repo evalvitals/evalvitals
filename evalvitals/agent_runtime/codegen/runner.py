@@ -18,6 +18,7 @@ class CodegenCodeResult:
     files: dict[str, str] = field(default_factory=dict)
     error: str | None = None
     elapsed_sec: float = 0.0
+    audit: dict | None = None
 
     @property
     def ok(self) -> bool:
@@ -85,4 +86,5 @@ class CodegenRunner:
             files=result.files,
             error=result.error,
             elapsed_sec=result.elapsed_sec,
+            audit=result.audit,
         )

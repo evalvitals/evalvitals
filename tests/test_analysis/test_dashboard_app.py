@@ -277,6 +277,22 @@ def test_standalone_dashboard_explains_unlinked_exploratory_material(tmp_path):
     assert any("Supporting exploratory material (not a conclusion)" in label for label in labels)
 
 
+def test_standalone_dashboard_renders_unlinked_serialized_plot_path(tmp_path):
+    """Agent reports store plot paths as JSON strings, not ``Path`` objects."""
+    (tmp_path / "fused_report.json").write_text(json.dumps({
+        "takeaways": [{
+            "title": "Primary finding.", "chart_names": [], "table_names": [],
+            "analysis": "A descriptive finding.", "caveat": "",
+        }],
+        "plots": ["figures/unlinked_context.png"],
+    }), encoding="utf-8")
+
+    at = _run_app(tmp_path)
+
+    assert not at.exception
+    assert any("Supporting exploratory material (not a conclusion)" in e.label for e in at.expander)
+
+
 def test_standalone_dashboard_falls_back_gracefully_with_no_takeaways(tmp_path):
     (tmp_path / "fused_report.json").write_text(json.dumps({
         "observations": ["No structured takeaways in this older report."],

@@ -57,6 +57,7 @@ class CliAgentResult:
     raw_output: str = ""
     usage: dict | None = None
     error: str | None = None
+    audit: dict | None = None
 
     @property
     def ok(self) -> bool:

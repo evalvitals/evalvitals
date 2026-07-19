@@ -75,6 +75,7 @@ __all__ = [
     "list_specs",
     "run",
     "explore",
+    "run_codebase",
     "AnalysisConfig",
     "Model",
     "Analyzer",
@@ -93,6 +94,10 @@ def __getattr__(name: str):
         from evalvitals.analysis import explore
 
         return explore
+    if name == "run_codebase":
+        from evalvitals.analysis import run_codebase
+
+        return run_codebase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
