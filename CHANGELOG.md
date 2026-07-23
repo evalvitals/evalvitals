@@ -6,6 +6,54 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — one chart authority across the bundled skills; nature-figure palette synced
+
+Deduplicates the overlapping style/chart rules the skill audit surfaced:
+
+- **eval-chart-style (v0.4.0) is now the single chart authority.** Its policy
+  table absorbed the figure kinds outcome-driver-analysis used to prescribe —
+  one-variable EDA distributions (histogram / count bars), regression
+  odds-ratio forests, predicted-probability curves with CI bands, and ROC +
+  calibration plots — and gained an explicit arbitration clause: when another
+  installed skill calls for a specific chart, keep its statistical intent but
+  render it under this table's chart types and §1's palette. The staged
+  `skills_hint` carries the same precedence sentence.
+- **outcome-driver-analysis (v0.2.0) keeps the WHAT, defers the HOW**: a new
+  "chart types and palettes" clause makes its step-2/3/7 figure prescriptions
+  the standalone fallback (used only when no chart-style skill is installed);
+  step 3's boxplot wording now names the deference explicitly. Also removes
+  the dangling reference to a never-bundled `clear-technical-writing` skill.
+- **nature-figure's canonical palette constants synced** (Apache-2.0
+  modification, notice added to its README): `PALETTE`/`DEFAULT_COLORS` in
+  `references/api.md` + `references/design-theory.md` re-valued to the
+  dataviz-validated palette — key names and family semantics unchanged, ramps
+  (`#7ec07e→#4ca74b→#008300`, `#ee9999→#e97675→#e34948`) and the 5 chromatic
+  series slots re-validated with the dataviz checker; the 6th series slot is
+  now muted ink `#898781`, documented as reference/background only. Because
+  the host spec renderer (`viz/style.py::load_nature_style`) parses those
+  constants at runtime, host-rendered spec PNGs now share the same palette as
+  agent figures and host plotly charts — closing the last palette divergence
+  (`NATURE_COLORS_FALLBACK` mirrored). Tutorial/example hexes elsewhere in
+  the vendored skill are illustrative and were deliberately not rewritten.
+
+### Added — `run_codebase`: run a user's codebase, then explore the results
+
+New standalone entry point bridging the run infrastructure
+(`evalvitals.agent_runtime`) and the analysis entry (`evalvitals.explore`):
+given a path to an existing evaluation/inference codebase, a CLI coding agent
+runs it inside an isolated copy (the original is never modified), harvests
+the per-case results it writes (`records.json`, one row per case with a
+`label` plus input/prediction/target fields — one repair turn if nothing
+usable was produced), and hands them straight to `explore()` (M2 + M3).
+
+- `evalvitals.run_codebase(path, ...)` / `evalvitals.analysis.run_codebase`
+  (library) — returns a `CodebaseRunResult` (`records`, `ran_ok`, `explore`,
+  `error`, ...).
+- `evalvitals run-codebase ./my_repo [--backend ...] [--out ...] [--dashboard]`
+  (CLI) — persists the workspace, harvested records, and explore artifacts
+  under `--out`; `--no-explore` skips the M2/M3 step.
+- See [quickstart.md#run-a-codebase-then-explore](docs/quickstart.md).
+
 ### Added — ProbeLLM-style failure-mode synthesis: failure-aware clustering + hierarchical MCTS probe search (VLM)
 
 Deeper integration of arXiv 2602.12966 ("ProbeLLM"), which already inspired
