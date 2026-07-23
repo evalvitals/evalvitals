@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/analyzers/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/architecture/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/extending/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/intervention/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/m2_analysis/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/quickstart/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+    <url>
+         <loc>https://evalvitals.github.io/evalvitals/roadmap/</loc>
+         <lastmod>2026-07-23</lastmod>
+    </url>
+</urlset>
